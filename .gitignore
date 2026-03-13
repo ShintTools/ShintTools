@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+.venv
+env/
+venv/
+
+# Modelos NLP (no subir al repo, son muy pesados)
+core/models/*
+!core/models/.gitkeep
+
+# Pytest
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Unreal Engine
+Binaries/
+Build/
+DerivedDataCache/
+Intermediate/
+Saved/
+*.VC.db
+*.opensdf
+*.sdf
+*.sln
+*.suo
+
+# Unity
+Library/
+Temp/
+Logs/
+UserSettings/
+*.csproj
+*.unityproj
+
+# Docker
+.dockerignore
+
+# OS
+.DS_Store
+Thumbs.db
