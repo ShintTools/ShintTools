@@ -1,0 +1,3 @@
+[submodule "plugins/unreal"]
+	path = plugins/unreal
+	url = https://github.com/Noctxas97Dev/ShintTools_UE5.git
