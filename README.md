@@ -1,6 +1,6 @@
 # ShintTools:
-Ecosistema modular de herramientas de IA Aplicada para Unreal Engine 5 y Unity 6.
-Automatiza validación de código, optimización de assets y QA para estudios de videojuegos.
+- Ecosistema modular de herramientas de IA Aplicada para Unreal Engine 5 y Unity 6.
+- Automatiza validación de código, optimización de assets y QA para estudios de videojuegos.
 
 ## Estructura del repositorio
 
