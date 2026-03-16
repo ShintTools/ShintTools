@@ -42,3 +42,6 @@ UserSettings/
 # OS
 .DS_Store
 Thumbs.db
+
+# pyenv installer
+install-pyenv-win.ps1
