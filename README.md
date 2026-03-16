@@ -100,3 +100,17 @@ Rama --> Uso
 - main: Código estable. Requiere 2 aprobaciones para merge
 - develop: Integración. Requiere 1 aprobación para merge
 - feature/ST-XXX-descripcion Trabajo en curso
+
+## Docker
+
+### Construir la imagen del Core Engine
+```bash
+docker build -t shinttools-core .
+```
+
+### Ejecutar el Core Engine
+```bash
+docker run -p 18200:18200 shinttools-core
+```
+
+El Core Engine arranca en `localhost:18200`.
