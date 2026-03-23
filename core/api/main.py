@@ -4,7 +4,8 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from api.routes import health
+from api.middleware import setup_middlewares
+from api.routes import config, health, validate
 from fastapi import FastAPI
 
 
@@ -28,6 +29,24 @@ def find_config_path() -> Path | None:
     return None
 
 
+def detect_modules() -> list[str]:
+    """
+    Scans the modules directory and returns a list of available modules.
+    A module is considered available if it contains an __init__.py file.
+    """
+    modules_path = Path(__file__).resolve().parent.parent / "modules"
+    available: list[str] = []
+
+    if not modules_path.exists():
+        return available
+
+    for folder in modules_path.iterdir():
+        if folder.is_dir() and (folder / "__init__.py").exists():
+            available.append(folder.name)
+
+    return sorted(available)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -41,6 +60,10 @@ async def lifespan(app: FastAPI):
     else:
         print("shinttools.config.json not found")
 
+    # Detect available modules
+    app.state.modules = detect_modules()
+    print(f"Modules detected: {app.state.modules}")
+
     # TODO Sprint 4: Load NLP models at startup
     yield
     # TODO Sprint 4: NLP resources cleanup
@@ -52,4 +75,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Register middlewares
+setup_middlewares(app)
+
+# Register routes
 app.include_router(health.router)  # GET /status
+app.include_router(config.router)  # GET/POST /config
+app.include_router(validate.router)  # POST /validate/*
