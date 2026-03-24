@@ -64,6 +64,17 @@ async def lifespan(app: FastAPI):
     app.state.modules = detect_modules()
     print(f"Modules detected: {app.state.modules}")
 
+    # Check MongoDB connection
+    from api.database import ping_database
+
+    db_connected = await ping_database()
+    app.state.db_connected = db_connected
+
+    if db_connected:
+        print("MongoDB connected successfully")
+    else:
+        print("WARNING: MongoDB not available")
+
     # TODO Sprint 4: Load NLP models at startup
     yield
     # TODO Sprint 4: NLP resources cleanup
