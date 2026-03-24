@@ -1,0 +1,28 @@
+{
+  "_comment": "Sample configuration file for testing purposes. Copy and adapt to your project.",
+  "$schema": "./shared/schemas/config.schema.json",
+  "version": "1.0",
+  "project_name": "MyGame",
+  "engine": "unreal",
+  "modules": {
+    "naming": { "enabled": true },
+    "code_validator": { "enabled": true }
+  },
+  "naming": {
+    "textures": {
+      "prefix": "T_",
+      "allowed_suffixes": ["_D", "_N", "_R", "_M", "_E"],
+      "separator": "_",
+      "case": "PascalCase"
+    },
+    "meshes": {
+      "prefix": "SM_",
+      "case": "PascalCase"
+    }
+  },
+  "code_validator": {
+    "max_cyclomatic_complexity": 15,
+    "max_file_lines": 500,
+    "exclude_paths": ["Content/ThirdParty/", "Plugins/"]
+  }
+}
