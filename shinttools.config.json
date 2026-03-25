@@ -4,6 +4,8 @@
   "version": "1.0",
   "project_name": "MyGame",
   "engine": "unreal",
+  "core_port": 18200,
+  "auto_start_core": false,
   "modules": {
     "naming": { "enabled": true },
     "code_validator": { "enabled": true }

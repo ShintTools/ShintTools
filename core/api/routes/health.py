@@ -1,22 +1,50 @@
+# GET /health  <- consumed by UE5 plugin (ShintCoreClient::CheckHealth)
+# GET /ping    <- consumed by UE5 plugin (ShintCoreClient::Ping)
+# GET /status  <- consumed by the web dashboard (unchanged)
+
 from fastapi import APIRouter, Request
 
 router = APIRouter()
 
 
+@router.get("/health")
+async def get_health(request: Request):
+    """
+    Primary health-check endpoint for plugins.
+    Returns 200 OK so that the UE5 plugin status indicator turns Online.
+    """
+    db_connected = getattr(request.app.state, "db_connected", False)
+    return {
+        "status": "ok",
+        "version": "0.1.0",
+        "database": "ok" if db_connected else "unavailable",
+    }
+
+
+@router.get("/ping")
+async def ping():
+    """
+    Lightweight round-trip test.
+    No DB access, no app.state reads — always returns instantly.
+    """
+    return {"pong": True}
+
+
 @router.get("/status")
 async def get_status(request: Request):
     """
-    Returns the current status of the Core Engine.
-    Includes version, available modules and MongoDB connection status.
+    Detailed status endpoint for the web dashboard.
+    Includes version, detected modules and MongoDB connection status.
     """
-    db_status = "ok" if request.app.state.db_connected else "unavailable"
+    db_connected = getattr(request.app.state, "db_connected", False)
+    modules = getattr(request.app.state, "modules", [])
 
     return {
         "status": "ok",
         "version": "0.1.0",
-        "modules": request.app.state.modules,
+        "modules": modules,
         "database": {
-            "connected": request.app.state.db_connected,
-            "status": db_status,
+            "connected": db_connected,
+            "status": "ok" if db_connected else "unavailable",
         },
     }
