@@ -1,0 +1,5 @@
+{
+  "file_path": "WeaponSystem.cpp",
+  "engine": "unreal",
+  "content": "void AWeaponSystem::Tick(float DeltaTime) {\n    Super::Tick(DeltaTime);\n    UTexture2D* Texture = StaticLoadObject(\n        UTexture2D::StaticClass(),\n        nullptr,\n        TEXT(\"/Game/Textures/WeaponSkin\")\n    );\n}"
+}

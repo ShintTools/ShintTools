@@ -1,0 +1,5 @@
+{
+  "file_path": "PlayerController.cpp",
+  "engine": "unreal",
+  "content": "void APlayerController::Tick(float DeltaTime) {\n    Super::Tick(DeltaTime);\n    AEnemy* Enemy = FindObjectOfType<AEnemy>();\n}"
+}

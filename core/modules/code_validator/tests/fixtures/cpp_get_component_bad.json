@@ -1,0 +1,5 @@
+{
+  "file_path": "EnemyCharacter.cpp",
+  "engine": "unreal",
+  "content": "void AEnemyCharacter::Tick(float DeltaTime) {\n    Super::Tick(DeltaTime);\n    UHealthComponent* Health = GetComponent<UHealthComponent>();\n    Health->TakeDamage(10.0f);\n}"
+}

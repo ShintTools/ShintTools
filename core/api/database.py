@@ -1,5 +1,4 @@
 import os
-
 import motor.motor_asyncio
 
 # MongoDB connection URL — reads from environment variable or to localhost
