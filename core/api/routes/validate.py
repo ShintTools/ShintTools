@@ -18,13 +18,14 @@ from pydantic import BaseModel, Field
 # Add modules path to import code_validator rules
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "modules"))
 
-from code_validator.rules.ue5_cpp_rules import run_all_cpp_rules        # noqa: E402
 from code_validator.rules.blueprint_rules import run_all_blueprint_rules  # noqa: E402
+from code_validator.rules.ue5_cpp_rules import run_all_cpp_rules  # noqa: E402
 
 router = APIRouter()
 
 
-# ── Request models ────────────────────────────────────────────────────────────
+# Request models
+
 
 class ValidateAssetsRequest(BaseModel):
     # List of asset paths to validate
@@ -46,25 +47,25 @@ class ValidateCodeRequest(BaseModel):
 
 class FileEntry(BaseModel):
     file_path: str = ""
-    content:   str = ""
+    content: str = ""
 
 
 class ValidateProjectRequest(BaseModel):
-    files:  list[FileEntry] = Field(default_factory=list)
+    files: list[FileEntry] = Field(default_factory=list)
     engine: str = "unreal"
 
 
 class ValidateBlueprintsRequest(BaseModel):
     asset_paths: list[str] = Field(default_factory=list)
-    engine:      str = "unreal"
+    engine: str = "unreal"
 
 
 class IssueEntry(BaseModel):
-    rule_id:   str = ""
-    severity:  str = "warning"
-    message:   str = ""
+    rule_id: str = ""
+    severity: str = "warning"
+    message: str = ""
     file_path: str = ""
-    line:      int = 0
+    line: int = 0
 
 
 class ApplyFixesRequest(BaseModel):
@@ -79,13 +80,13 @@ _CPP_EXTENSIONS = {".cpp", ".h", ".hpp", ".cc"}
 
 def _build_summary(issues: list[dict], files_scanned: int = 1) -> dict:
     """Build a standard summary dict from a list of issues."""
-    errors   = sum(1 for i in issues if i.get("severity") == "error")
+    errors = sum(1 for i in issues if i.get("severity") == "error")
     warnings = sum(1 for i in issues if i.get("severity") == "warning")
     return {
-        "total":         len(issues),
-        "issues":        len(issues),
-        "errors":        errors,
-        "warnings":      warnings,
+        "total": len(issues),
+        "issues": len(issues),
+        "errors": errors,
+        "warnings": warnings,
         "files_scanned": files_scanned,
     }
 
@@ -112,9 +113,9 @@ async def _persist_result(report_type: str, summary: dict, issues: list[dict]) -
     try:
         doc = {
             "report_type": report_type,
-            "timestamp":   datetime.now(timezone.utc).isoformat(),
-            "summary":     summary,
-            "issues":      issues,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "summary": summary,
+            "issues": issues,
         }
         await analysis_results.insert_one(doc)
     except Exception:
@@ -122,6 +123,7 @@ async def _persist_result(report_type: str, summary: dict, issues: list[dict]) -
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
 
 @router.post("/validate/assets")
 async def validate_assets(payload: ValidateAssetsRequest):
@@ -210,7 +212,7 @@ async def apply_fixes(payload: ApplyFixesRequest):
     """
     fixable_rules = {"CV004", "CV007"}
 
-    files_fixed:  set[str] = set()
+    files_fixed: set[str] = set()
     issues_fixed: int = 0
 
     for issue in payload.issues:
@@ -219,6 +221,6 @@ async def apply_fixes(payload: ApplyFixesRequest):
             issues_fixed += 1
 
     return {
-        "files_fixed":  len(files_fixed),
+        "files_fixed": len(files_fixed),
         "issues_fixed": issues_fixed,
     }
