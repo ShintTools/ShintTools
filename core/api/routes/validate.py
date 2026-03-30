@@ -4,8 +4,8 @@
 #   POST /validate/assets      — validate asset naming (mock, Sprint 4 pending)
 #   POST /validate/code        — single file analysis
 #   POST /validate/project     — batch of source files (full project scan)
-#   POST /validate/blueprints  — batch of Blueprint asset paths
-#   POST /validate/fix         — apply auto-fixes
+#   POST /validate/blueprints  — full Blueprint export from UE5 plugin
+#   POST /validate/fix         — apply auto-fixes (stub, Sprint 5 pending)
 
 import sys
 from datetime import datetime, timezone
@@ -18,13 +18,15 @@ from pydantic import BaseModel, Field
 # Add modules path to import code_validator rules
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "modules"))
 
-from code_validator.rules.blueprint_rules import run_all_blueprint_rules  # noqa: E402
+from code_validator.rules.blueprint_rules import (  # noqa: E402
+    run_all_blueprint_rules_from_export,
+)
 from code_validator.rules.ue5_cpp_rules import run_all_cpp_rules  # noqa: E402
 
 router = APIRouter()
 
 
-# Request models
+# ── Request models ────────────────────────────────────
 
 
 class ValidateAssetsRequest(BaseModel):
@@ -56,8 +58,33 @@ class ValidateProjectRequest(BaseModel):
 
 
 class ValidateBlueprintsRequest(BaseModel):
-    asset_paths: list[str] = Field(default_factory=list)
-    engine: str = "unreal"
+    # Full Blueprint export JSON from the UE5 plugin.
+    # Expected structure:
+    # {
+    #   "project_id": "...",
+    #   "files": [
+    #     {
+    #       "name": "BP_PlayerCharacter",
+    #       "path": "/Game/Blueprints/...",
+    #       "type": "blueprint",
+    #       "graphs": [...],
+    #       "variables": [...],
+    #       "functions": [...],
+    #       "stats": {...}
+    #     }
+    #   ]
+    # }
+    project_id: str = Field(
+        default="", description="Project identifier from the plugin"
+    )
+    api_key: str = Field(default="", description="API key from the plugin")
+    project_name: str = Field(default="", description="Project name")
+    files: list[dict] = Field(
+        default_factory=list, description="Blueprint file dicts exported by the plugin"
+    )
+    engine: str = Field(
+        default="unreal", description="Target engine: 'unreal' | 'unity'"
+    )
 
 
 class IssueEntry(BaseModel):
@@ -72,13 +99,20 @@ class ApplyFixesRequest(BaseModel):
     issues: list[IssueEntry] = Field(default_factory=list)
 
 
-# ── Shared helpers ────────────────────────────────────────────────────────────
+# ── Shared helpers ────────────────────────────────────
 
 # Extensions we support for C++ analysis
 _CPP_EXTENSIONS = {".cpp", ".h", ".hpp", ".cc"}
 
+# Rules that support auto-fix — updated to new rule IDs
+# CB006 = printf, MT001 = GEngine debug message
+_FIXABLE_RULES = {"CB006", "MT001"}
 
-def _build_summary(issues: list[dict], files_scanned: int = 1) -> dict:
+
+def _build_summary(
+    issues: list[dict],
+    files_scanned: int = 1,
+) -> dict:
     """Build a standard summary dict from a list of issues."""
     errors = sum(1 for i in issues if i.get("severity") == "error")
     warnings = sum(1 for i in issues if i.get("severity") == "warning")
@@ -91,24 +125,33 @@ def _build_summary(issues: list[dict], files_scanned: int = 1) -> dict:
     }
 
 
-def _analyse_file(file_path: str, content: str, engine: str = "unreal") -> list[dict]:
+def _analyse_file(
+    file_path: str,
+    content: str,
+    engine: str = "unreal",
+) -> list[dict]:
     """
     Run rules against a single source file.
     Currently supports C++ files for Unreal Engine.
+    Unity and other engines pending Phase 2.
     """
     file_ext = Path(file_path).suffix.lower()
 
     if engine == "unreal" and file_ext in _CPP_EXTENSIONS:
         return run_all_cpp_rules(content, file_path)
 
-    # Unity and other engines — pending Phase 2
     return []
 
 
-async def _persist_result(report_type: str, summary: dict, issues: list[dict]) -> None:
+async def _persist_result(
+    report_type: str,
+    summary: dict,
+    issues: list[dict],
+) -> None:
     """
     Save result to MongoDB for the dashboard.
-    Dashboard persistence is best-effort; never block the response.
+    Best-effort — never blocks the response if MongoDB
+    is unavailable.
     """
     try:
         doc = {
@@ -122,19 +165,17 @@ async def _persist_result(report_type: str, summary: dict, issues: list[dict]) -
         pass
 
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
+# ── Endpoints ─────────────────────────────────────────
 
 
 @router.post("/validate/assets")
 async def validate_assets(payload: ValidateAssetsRequest):
     """
     Validates asset naming conventions.
-    Returns mock response until Sprint 4 is fully implemented.
-    NOTE: The real asset scan now lives in POST /assets/scan.
-    This endpoint is kept for backward compatibility with
-    existing plugin versions.
+    Kept for backward compatibility with existing plugin
+    versions. Real analysis lives in POST /assets/scan.
     """
-    # TODO Sprint 4: Remove this mock once all plugins migrate to /assets/scan
+    # TODO Sprint 4: Remove once all plugins use /assets/scan
     return {
         "summary": {
             "total": 0,
@@ -143,7 +184,7 @@ async def validate_assets(payload: ValidateAssetsRequest):
             "warnings": 0,
         },
         "issues": [],
-        "message": "Mock response — use /assets/scan for real analysis",
+        "message": ("Mock response — use /assets/scan for real analysis"),
     }
 
 
@@ -156,7 +197,11 @@ async def validate_code(payload: ValidateCodeRequest):
     The response structure must not change — the plugin
     depends on this exact format.
     """
-    issues = _analyse_file(payload.file_path, payload.content, payload.engine)
+    issues = _analyse_file(
+        payload.file_path,
+        payload.content,
+        payload.engine,
+    )
     summary = _build_summary(issues, files_scanned=1)
     await _persist_result("code_validator", summary, issues)
 
@@ -167,36 +212,50 @@ async def validate_code(payload: ValidateCodeRequest):
 async def validate_project(payload: ValidateProjectRequest):
     """
     Validate all source files in the project (batch).
-    The plugin collects every .cpp / .h, reads them, and sends them here.
+    The plugin collects every .cpp / .h, reads them,
+    and sends them all here in a single request.
     """
     all_issues: list[dict] = []
 
     for file_entry in payload.files:
         file_issues = _analyse_file(
-            file_entry.file_path, file_entry.content, payload.engine
+            file_entry.file_path,
+            file_entry.content,
+            payload.engine,
         )
         all_issues.extend(file_issues)
 
-    summary = _build_summary(all_issues, files_scanned=len(payload.files))
+    summary = _build_summary(
+        all_issues,
+        files_scanned=len(payload.files),
+    )
     await _persist_result("code_validator_project", summary, all_issues)
 
     return {"summary": summary, "issues": all_issues}
 
 
 @router.post("/validate/blueprints")
-async def validate_blueprints(payload: ValidateBlueprintsRequest):
+async def validate_blueprints(
+    payload: ValidateBlueprintsRequest,
+):
     """
-    Validate Blueprint assets.
-    Sprint 5: replace with real Blueprint parser (uses UHT reflection data).
-    Currently applies naming + structure heuristics from asset path alone.
+    Validate Blueprint assets from the full UE5 plugin export.
+    Receives the complete JSON exported by the plugin
+    (graphs, variables, functions, stats per Blueprint)
+    and runs all deterministic Blueprint rules.
+    Saves results to MongoDB after analysis.
     """
-    all_issues: list[dict] = []
+    # Build the export dict that the runner expects
+    plugin_export = {"files": payload.files}
 
-    for asset_path in payload.asset_paths:
-        bp_issues = run_all_blueprint_rules(asset_path)
-        all_issues.extend(bp_issues)
+    all_issues = run_all_blueprint_rules_from_export(plugin_export)
 
-    summary = _build_summary(all_issues, files_scanned=len(payload.asset_paths))
+    blueprints_scanned = sum(1 for f in payload.files if f.get("type") == "blueprint")
+
+    summary = _build_summary(
+        all_issues,
+        files_scanned=blueprints_scanned,
+    )
     await _persist_result("code_validator_blueprints", summary, all_issues)
 
     return {"summary": summary, "issues": all_issues}
@@ -207,16 +266,16 @@ async def apply_fixes(payload: ApplyFixesRequest):
     """
     Apply auto-fixes server-side.
     Sprint 5: wire to real AST-based fixer.
-    Currently only CV004 (printf) and CV007 (debug message)
-    are fixable.
+    Currently only CB006 (printf) and MT001 (GEngine debug
+    message) are marked as fixable.
+    All fixes are opt-in — the developer approves each one
+    in the plugin panel before the fix is applied.
     """
-    fixable_rules = {"CV004", "CV007"}
-
     files_fixed: set[str] = set()
     issues_fixed: int = 0
 
     for issue in payload.issues:
-        if issue.rule_id in fixable_rules:
+        if issue.rule_id in _FIXABLE_RULES:
             files_fixed.add(issue.file_path)
             issues_fixed += 1
 
