@@ -6,35 +6,51 @@
 # POST /assets/fix - apply renaming corrections
 
 import time
+from datetime import datetime, timezone
 
+from api.database import analysis_results
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
-from api.database import analysis_results
-from datetime import datetime, timezone
 
 router = APIRouter()
 
 
-# Models
+# ── Models ────────────────────────────────────────────
+
+
+class AssetEntry(BaseModel):
+    # Single asset entry as sent by the UE5 plugin
+    asset_path: str = ""
+    name: str = ""
+    type: str = ""
+    category: str = ""
+
 
 class AssetScanRequest(BaseModel):
-    asset_paths: list[str] = Field(default_factory=list)
-    engine:      str = "unreal"
+    # Full scan request from the UE5 plugin.
+    # The plugin sends asset objects in 'assets[]',
+    # not a plain list of paths.
+    project_id: str = ""
+    api_key: str = ""
+    project_name: str = ""
+    assets: list[AssetEntry] = Field(default_factory=list)
+    engine: str = "unreal"
 
 
 class AssetIssueEntry(BaseModel):
-    asset_path:     str = ""
-    current_name:   str = ""
+    asset_path: str = ""
+    current_name: str = ""
     suggested_name: str = ""
-    reason:         str = ""
-    asset_type:     str = ""
+    reason: str = ""
+    asset_type: str = ""
 
 
 class AssetFixRequest(BaseModel):
     issues: list[AssetIssueEntry] = Field(default_factory=list)
 
 
-# Endpoints
+# ── Endpoints ─────────────────────────────────────────
+
 
 @router.post("/assets/scan")
 async def scan_assets(payload: AssetScanRequest):
@@ -42,28 +58,33 @@ async def scan_assets(payload: AssetScanRequest):
     Scan all asset paths for naming convention violations.
 
     UE5 naming conventions enforced:
-      - Textures:     T_  prefix
-      - Static Mesh:  SM_ prefix
+      - Textures:      T_  prefix
+      - Static Mesh:   SM_ prefix
       - Skeletal Mesh: SK_ prefix
-      - Material:     M_  prefix
-      - Blueprint:    BP_ prefix
-      - Sound:        S_  or SFX_ prefix
-      - Particle:     P_  prefix
-      - Widget BP:    WBP_ prefix
-      - DataTable:    DT_ prefix
-      - DataAsset:    DA_ prefix
+      - Material:      M_  prefix
+      - Blueprint:     BP_ prefix
+      - Sound:         S_  or SFX_ prefix
+      - Particle:      P_  prefix
+      - Widget BP:     WBP_ prefix
+      - DataTable:     DT_ prefix
+      - DataAsset:     DA_ prefix
 
-    Sprint 4: replace type inference with real AssetRegistry lookups.
+    Sprint 4: replace type inference with real
+    AssetRegistry lookups.
     """
     from modules.naming import scan_asset_paths
 
+    # Extract asset_path strings from the asset objects
+    # sent by the plugin
+    asset_paths = [asset.asset_path for asset in payload.assets if asset.asset_path]
+
     t0 = time.perf_counter()
-    issues = scan_asset_paths(payload.asset_paths)
+    issues = scan_asset_paths(asset_paths)
     scan_time = round(time.perf_counter() - t0, 4)
 
     summary = {
-        "total_assets":    len(payload.asset_paths),
-        "invalid_assets":  len(issues),
+        "total_assets": len(asset_paths),
+        "invalid_assets": len(issues),
         "scan_time_seconds": scan_time,
     }
 
@@ -71,9 +92,9 @@ async def scan_assets(payload: AssetScanRequest):
     try:
         doc = {
             "report_type": "asset_naming",
-            "timestamp":   datetime.now(timezone.utc).isoformat(),
-            "summary":     summary,
-            "issues":      [i if isinstance(i, dict) else dict(i) for i in issues],
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "summary": summary,
+            "issues": [i if isinstance(i, dict) else dict(i) for i in issues],
         }
         await analysis_results.insert_one(doc)
     except Exception:
@@ -86,7 +107,8 @@ async def scan_assets(payload: AssetScanRequest):
 async def fix_assets(payload: AssetFixRequest):
     """
     Apply asset renaming corrections.
-    Sprint 4: replace with real AssetRegistry rename via Python UE bindings.
+    Sprint 4: replace with real AssetRegistry rename
+    via Python UE bindings.
     Currently returns a mock acknowledgement.
     """
     from modules.naming import apply_asset_rename
