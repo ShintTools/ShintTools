@@ -80,14 +80,16 @@ async def scan_assets(payload: AssetScanRequest):
 
     # Extract asset_path strings from the asset objects
     # sent by the plugin
-    asset_paths = [asset.asset_path for asset in payload.assets if asset.asset_path]
+    extracted_paths = [
+        entry.asset_path for entry in payload.asset_paths if entry.asset_path
+    ]
 
     t0 = time.perf_counter()
-    issues = scan_asset_paths(asset_paths)
+    issues = scan_asset_paths(extracted_paths)
     scan_time = round(time.perf_counter() - t0, 4)
 
     summary = {
-        "total_assets": len(asset_paths),
+        "total_assets": len(extracted_paths),
         "invalid_assets": len(issues),
         "scan_time_seconds": scan_time,
     }
