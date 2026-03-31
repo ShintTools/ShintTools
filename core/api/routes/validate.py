@@ -48,11 +48,18 @@ class ValidateCodeRequest(BaseModel):
 
 
 class FileEntry(BaseModel):
-    file_path: str = ""
+    # Fields matching the UE5 plugin JSON structure
+    name: str = ""
+    path: str = ""
+    type: str = ""
     content: str = ""
+    lines_count: int = 0
 
 
 class ValidateProjectRequest(BaseModel):
+    project_id: str = ""
+    api_key: str = ""
+    project_name: str = ""
     files: list[FileEntry] = Field(default_factory=list)
     engine: str = "unreal"
 
@@ -219,7 +226,7 @@ async def validate_project(payload: ValidateProjectRequest):
 
     for file_entry in payload.files:
         file_issues = _analyse_file(
-            file_entry.file_path,
+            file_entry.path,
             file_entry.content,
             payload.engine,
         )
