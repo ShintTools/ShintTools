@@ -113,7 +113,7 @@ _CPP_EXTENSIONS = {".cpp", ".h", ".hpp", ".cc"}
 
 # Rules that support auto-fix — updated to new rule IDs
 # CB006 = printf, MT001 = GEngine debug message
-_FIXABLE_RULES = {"CB006", "MT001"}
+_FIXABLE_RULES = {"CB006", "CM001"}
 
 
 def _build_summary(

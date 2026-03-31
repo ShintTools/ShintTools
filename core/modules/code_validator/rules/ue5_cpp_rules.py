@@ -298,7 +298,7 @@ def detect_infinite_loop(
                     "line": line_no,
                     "class": class_name,
                     "severity": "error",
-                    "rule_id": "BP001",
+                    "rule_id": "CB001",
                     "category": "Best Practices",
                     "message": (
                         "Infinite loop without break/return. " "Game thread will freeze"
@@ -357,7 +357,7 @@ def detect_runtime_load(
                     "line": line_no,
                     "class": class_name,
                     "severity": "warning",
-                    "rule_id": "BP002",
+                    "rule_id": "CB002",
                     "category": "Best Practices",
                     "message": (
                         "Synchronous asset load outside "
@@ -396,7 +396,7 @@ def detect_raw_new(
                         _char_pos_for_line(source_lines, line_no),
                     ),
                     "severity": "error",
-                    "rule_id": "BP003",
+                    "rule_id": "CB003",
                     "category": "Best Practices",
                     "message": (
                         "Raw 'new' detected — use NewObject<T>()"
@@ -433,7 +433,7 @@ def detect_raw_delete(
                         _char_pos_for_line(source_lines, line_no),
                     ),
                     "severity": "error",
-                    "rule_id": "BP004",
+                    "rule_id": "CB004",
                     "category": "Best Practices",
                     "message": (
                         "Raw 'delete' detected — UObjects are "
@@ -471,7 +471,7 @@ def detect_stl_usage(
                         _char_pos_for_line(source_lines, line_no),
                     ),
                     "severity": "warning",
-                    "rule_id": "BP005",
+                    "rule_id": "CB005",
                     "category": "Best Practices",
                     "message": (
                         "STL type detected — prefer UE "
@@ -508,7 +508,7 @@ def detect_printf(
                         _char_pos_for_line(source_lines, line_no),
                     ),
                     "severity": "warning",
-                    "rule_id": "BP006",
+                    "rule_id": "CB006",
                     "category": "Best Practices",
                     "message": ("printf() detected — use UE_LOG() " "instead."),
                 }
@@ -541,7 +541,7 @@ def detect_system_headers(
                     "line": line_no,
                     "class": "Unknown",
                     "severity": "warning",
-                    "rule_id": "BP007",
+                    "rule_id": "CB007",
                     "category": "Best Practices",
                     "message": (
                         "System header included — " "prefer UE module headers."
@@ -581,7 +581,7 @@ def detect_float_no_suffix(
                         _char_pos_for_line(source_lines, line_no),
                     ),
                     "severity": "warning",
-                    "rule_id": "BP008",
+                    "rule_id": "CB008",
                     "category": "Best Practices",
                     "message": (
                         "Float literal without 'f' suffix — "
@@ -623,7 +623,7 @@ def detect_uproperty_nullptr(
                         _char_pos_for_line(source_lines, line_no),
                     ),
                     "severity": "error",
-                    "rule_id": "BP009",
+                    "rule_id": "CB009",
                     "category": "Best Practices",
                     "message": (
                         "UPROPERTY initialized to nullptr in "
@@ -665,7 +665,7 @@ def detect_getworld_no_check(
                         _char_pos_for_line(source_lines, line_no),
                     ),
                     "severity": "warning",
-                    "rule_id": "SC001",
+                    "rule_id": "CS001",
                     "category": "Security",
                     "message": (
                         "GetWorld() called without null-check — "
@@ -720,7 +720,7 @@ def detect_spawnactor_no_check(
                             "line": line_no,
                             "class": class_name,
                             "severity": "error",
-                            "rule_id": "SC002",
+                            "rule_id": "CS002",
                             "category": "Security",
                             "message": (
                                 f"SpawnActor result '{var_name}'"
@@ -777,7 +777,7 @@ def detect_cast_no_check(
                             "line": line_no,
                             "class": class_name,
                             "severity": "error",
-                            "rule_id": "SC003",
+                            "rule_id": "CS003",
                             "category": "Security",
                             "message": (
                                 f"Cast result '{var_name}' used "
@@ -822,7 +822,7 @@ def detect_debug_message(
                         _char_pos_for_line(source_lines, line_no),
                     ),
                     "severity": "error",
-                    "rule_id": "MT001",
+                    "rule_id": "CM001",
                     "category": "Maintainability",
                     "message": (
                         "GEngine debug message left in code — "
@@ -885,7 +885,7 @@ def detect_long_function(
                         "line": start_line,
                         "class": class_name,
                         "severity": "warning",
-                        "rule_id": "MT002",
+                        "rule_id": "CM002",
                         "category": "Maintainability",
                         "message": (
                             f"Function '{func_name}' is "
@@ -937,7 +937,7 @@ def detect_todo_comments(
                         _char_pos_for_line(source_lines, line_no),
                     ),
                     "severity": "info",
-                    "rule_id": "MT003",
+                    "rule_id": "CM003",
                     "category": "Maintainability",
                     "message": (
                         f"{tag_found} comment detected — track "
@@ -960,9 +960,9 @@ def run_all_cpp_rules(
     file content and returns a merged list of issues.
 
     Performance (CP):      CP001, CP002, CP003, CP004
-    Best Practices (BP):   BP001-BP009
-    Security (SC):         SC001, SC002, SC003
-    Maintainability (MT):  MT001, MT002, MT003
+    Best Practices (CB):   CB001-CB009
+    Security (CS):         CS001, CS002, CS003
+    Maintainability (CM):  CM001, CM002, CM003
     """
     issues: List[Issue] = []
 

@@ -28,13 +28,17 @@ class AssetEntry(BaseModel):
 
 class AssetScanRequest(BaseModel):
     # Full scan request from the UE5 plugin.
-    # The plugin sends asset objects in 'assets[]',
-    # not a plain list of paths.
+    # Raúl sends the array under 'asset_paths' (not 'assets').
     project_id: str = ""
     api_key: str = ""
     project_name: str = ""
-    assets: list[AssetEntry] = Field(default_factory=list)
+    asset_paths: list[AssetEntry] = Field(
+        default_factory=list,
+        alias="asset_paths",
+    )
     engine: str = "unreal"
+
+    model_config = {"populate_by_name": True}
 
 
 class AssetIssueEntry(BaseModel):
