@@ -112,7 +112,7 @@ class ApplyFixesRequest(BaseModel):
 _CPP_EXTENSIONS = {".cpp", ".h", ".hpp", ".cc"}
 
 # Rules that support auto-fix — updated to new rule IDs
-# CB006 = printf, MT001 = GEngine debug message
+# CB006 = printf, CM001 = GEngine debug message
 _FIXABLE_RULES = {"CB006", "CM001"}
 
 
