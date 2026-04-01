@@ -33,12 +33,26 @@
 #   CB008 — Float literal without 'f' suffix
 #   CB009 — UPROPERTY initialized to nullptr
 #
-# SECURITY (SC)
+# BEST PRACTICES (CB) — continued
+#   CB010 — Magic number literal
+#   CB011 — Empty if-body (dead branch)
+#   CB012 — C-style cast
+#   CB013 — Nullptr dereference risk
+#   CB014 — Hardcoded absolute path
+#   CB015 — Auto without obvious type
+#   CB016 — String concatenation in loop
+#   CB017 — Public member without UPROPERTY
+#   CB018 — Raw C array (use TArray)
+#
+# PERFORMANCE (CP) — continued
+#   CP005 — FPlatformProcess::Sleep on game thread
+#
+# SECURITY (CS)
 #   CS001 — GetWorld() without null-check
 #   CS002 — SpawnActor without null-check
 #   CS003 — Cast<T> without null-check
 #
-# MAINTAINABILITY (MT)
+# MAINTAINABILITY (CM)
 #   CM001 — GEngine debug message left in code
 #   CM002 — Function body exceeds 80 lines
 #   CM003 — TODO / FIXME / HACK comments
@@ -127,6 +141,11 @@ def detect_find_object_in_tick(
         if find_match:
             body_start = tick_match.start(2)
             line_no = _get_line_number(content, body_start + find_match.start())
+            snippet_line = (
+                content.splitlines()[line_no - 1].strip()
+                if line_no <= len(content.splitlines())
+                else ""
+            )
             issues.append(
                 {
                     "asset_path": file_path,
@@ -139,6 +158,9 @@ def detect_find_object_in_tick(
                         "FindObjectOfType called inside Tick(). "
                         "Cache the reference in BeginPlay instead"
                     ),
+                    "snippet": snippet_line,
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
                 }
             )
     return issues
@@ -167,6 +189,11 @@ def detect_get_component_in_tick(
         if comp_match:
             body_start = tick_match.start(2)
             line_no = _get_line_number(content, body_start + comp_match.start())
+            snippet_line = (
+                content.splitlines()[line_no - 1].strip()
+                if line_no <= len(content.splitlines())
+                else ""
+            )
             issues.append(
                 {
                     "asset_path": file_path,
@@ -179,6 +206,9 @@ def detect_get_component_in_tick(
                         "GetComponent called inside Tick(). "
                         "Cache the reference in BeginPlay instead"
                     ),
+                    "snippet": snippet_line,
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
                 }
             )
     return issues
@@ -206,6 +236,11 @@ def detect_large_tick(
     if tick_match:
         class_name = tick_match.group(1)
         line_no = _get_line_number(content, tick_match.start())
+        snippet_line = (
+            content.splitlines()[line_no - 1].strip()
+            if line_no <= len(content.splitlines())
+            else ""
+        )
         issues.append(
             {
                 "asset_path": file_path,
@@ -218,6 +253,9 @@ def detect_large_tick(
                     "Tick() body appears very large — "
                     "move logic to helpers or timers."
                 ),
+                "snippet": snippet_line,
+                "fix_suggestion": "",
+                "is_auto_fixable": False,
             }
         )
     return issues
@@ -262,6 +300,9 @@ def detect_log_error_in_tick(
                             "every frame and destroys performance."
                             " Use a flag to log only once."
                         ),
+                        "snippet": body_line.strip(),
+                        "fix_suggestion": "",
+                        "is_auto_fixable": False,
                     }
                 )
     return issues
@@ -292,6 +333,11 @@ def detect_infinite_loop(
         if not has_exit:
             line_no = _get_line_number(content, loop_match.start())
             class_name = _extract_class_name(content, loop_match.start())
+            snippet_line = (
+                content.splitlines()[line_no - 1].strip()
+                if line_no <= len(content.splitlines())
+                else ""
+            )
             issues.append(
                 {
                     "asset_path": file_path,
@@ -303,6 +349,9 @@ def detect_infinite_loop(
                     "message": (
                         "Infinite loop without break/return. " "Game thread will freeze"
                     ),
+                    "snippet": snippet_line,
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
                 }
             )
     return issues
@@ -351,6 +400,11 @@ def detect_runtime_load(
         if not inside_init:
             line_no = _get_line_number(content, call_pos)
             class_name = _extract_class_name(content, call_pos)
+            snippet_line = (
+                content.splitlines()[line_no - 1].strip()
+                if line_no <= len(content.splitlines())
+                else ""
+            )
             issues.append(
                 {
                     "asset_path": file_path,
@@ -364,6 +418,9 @@ def detect_runtime_load(
                         "BeginPlay/Constructor. "
                         "Use async loading instead"
                     ),
+                    "snippet": snippet_line,
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
                 }
             )
     return issues
@@ -387,6 +444,18 @@ def detect_raw_new(
     source_lines = content.splitlines()
     for line_no, source_line in enumerate(source_lines, start=1):
         if re.search(r"\bnew\s+\w", source_line):
+            # Build fix: replace "new Type(...)" with "NewObject<Type>(this)"
+            fix = source_line.strip()
+            new_match = re.search(
+                r"\bnew\s+(\w+)\s*(?:\([^)]*\)|\[[^\]]*\])", source_line
+            )
+            if new_match:
+                type_name = new_match.group(1)
+                fix = re.sub(
+                    r"\bnew\s+\w+\s*(?:\([^)]*\)|\[[^\]]*\])",
+                    f"NewObject<{type_name}>(this)",
+                    source_line,
+                ).strip()
             issues.append(
                 {
                     "asset_path": file_path,
@@ -402,6 +471,9 @@ def detect_raw_new(
                         "Raw 'new' detected — use NewObject<T>()"
                         " or CreateDefaultSubobject<T>() instead."
                     ),
+                    "snippet": source_line.strip(),
+                    "fix_suggestion": fix,
+                    "is_auto_fixable": True,
                 }
             )
     return issues
@@ -424,6 +496,12 @@ def detect_raw_delete(
     source_lines = content.splitlines()
     for line_no, source_line in enumerate(source_lines, start=1):
         if re.search(r"\bdelete\s+\w", source_line):
+            # Fix: comment out the delete line
+            fix = (
+                "// "
+                + source_line.strip()
+                + "  // REMOVED: UObjects are garbage-collected"
+            )
             issues.append(
                 {
                     "asset_path": file_path,
@@ -440,6 +518,9 @@ def detect_raw_delete(
                         "garbage-collected; manual delete will "
                         "crash."
                     ),
+                    "snippet": source_line.strip(),
+                    "fix_suggestion": fix,
+                    "is_auto_fixable": True,
                 }
             )
     return issues
@@ -477,6 +558,9 @@ def detect_stl_usage(
                         "STL type detected — prefer UE "
                         "equivalents (TArray, TMap, FString...)."
                     ),
+                    "snippet": source_line.strip(),
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
                 }
             )
     return issues
@@ -499,6 +583,12 @@ def detect_printf(
     source_lines = content.splitlines()
     for line_no, source_line in enumerate(source_lines, start=1):
         if re.search(r"\bprintf\s*\(", source_line):
+            # Fix: replace printf(...) with UE_LOG(LogTemp, Log, ...)
+            fix = re.sub(
+                r"\bprintf\s*\(",
+                "UE_LOG(LogTemp, Log, ",
+                source_line,
+            ).strip()
             issues.append(
                 {
                     "asset_path": file_path,
@@ -511,6 +601,9 @@ def detect_printf(
                     "rule_id": "CB006",
                     "category": "Best Practices",
                     "message": ("printf() detected — use UE_LOG() " "instead."),
+                    "snippet": source_line.strip(),
+                    "fix_suggestion": fix,
+                    "is_auto_fixable": True,
                 }
             )
     return issues
@@ -546,6 +639,9 @@ def detect_system_headers(
                     "message": (
                         "System header included — " "prefer UE module headers."
                     ),
+                    "snippet": source_line.strip(),
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
                 }
             )
     return issues
@@ -572,6 +668,12 @@ def detect_float_no_suffix(
             r"\bfloat\b\s+\w+\s*=\s*[0-9]+\.[0-9]+[^f]",
             source_line,
         ):
+            # Fix: add 'f' suffix to float literals missing it
+            fix = re.sub(
+                r"(\d+\.\d+)(?!f)",
+                r"\1f",
+                source_line,
+            ).strip()
             issues.append(
                 {
                     "asset_path": file_path,
@@ -588,6 +690,9 @@ def detect_float_no_suffix(
                         "add 'f' (e.g. 1.0f) to avoid double "
                         "promotion."
                     ),
+                    "snippet": source_line.strip(),
+                    "fix_suggestion": fix,
+                    "is_auto_fixable": True,
                 }
             )
     return issues
@@ -630,6 +735,615 @@ def detect_uproperty_nullptr(
                         "declaration — initialize in constructor "
                         "body."
                     ),
+                    "snippet": source_line.strip(),
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
+                }
+            )
+    return issues
+
+
+# CP005: FPlatformProcess::Sleep on game thread
+def detect_sleep_on_game_thread(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects FPlatformProcess::Sleep calls outside of worker
+    threads. Sleeping on the game thread blocks rendering and
+    input processing for the entire duration of the sleep.
+    Use timers, async tasks or latent actions instead.
+    """
+    if not _is_cpp(file_path):
+        return []
+
+    issues = []
+    source_lines = content.splitlines()
+    for line_no, source_line in enumerate(source_lines, start=1):
+        if re.search(r"\bFPlatformProcess::Sleep\s*\(", source_line):
+            issues.append(
+                {
+                    "asset_path": file_path,
+                    "line": line_no,
+                    "class": _extract_class_name(
+                        content,
+                        _char_pos_for_line(source_lines, line_no),
+                    ),
+                    "severity": "error",
+                    "rule_id": "CP005",
+                    "category": "Performance",
+                    "message": (
+                        "FPlatformProcess::Sleep on game thread — "
+                        "blocks rendering. Use timers or async "
+                        "tasks instead."
+                    ),
+                    "snippet": source_line.strip(),
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
+                }
+            )
+    return issues
+
+
+# ── BEST PRACTICES (CB) — continued ──────────────────
+
+
+# CB010: Magic number literal
+def detect_magic_numbers(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects numeric literals used directly in expressions
+    without being assigned to a named constant.
+    Magic numbers reduce readability and make the code hard
+    to maintain. Extract them to named constexpr constants.
+    Skips 0, 1, -1 and values inside array declarations.
+    """
+    if not _is_cpp(file_path):
+        return []
+
+    issues = []
+    source_lines = content.splitlines()
+
+    # Matches a bare numeric literal in an expression context.
+    # Excludes: 0, 1, -1, array sizes, loop counters.
+    magic_pattern = re.compile(
+        r"(?<![A-Za-z0-9_])"
+        r"(?<!\.)"
+        r"(-?\b(?:[2-9]\d*|1\d+)\b(?:\.\d+)?f?)"
+        r"(?!\s*\])"
+        r"(?![A-Za-z0-9_])"
+    )
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        stripped = source_line.strip()
+        # Skip comments, includes, define lines
+        if stripped.startswith("//") or stripped.startswith("#"):
+            continue
+        # Skip constexpr / const declarations — they ARE the named constant
+        if re.search(r"\bconstexpr\b|\bconst\b.*=", stripped):
+            continue
+
+        magic_match = magic_pattern.search(stripped)
+        if magic_match:
+            issues.append(
+                {
+                    "asset_path": file_path,
+                    "line": line_no,
+                    "class": _extract_class_name(
+                        content,
+                        _char_pos_for_line(source_lines, line_no),
+                    ),
+                    "severity": "warning",
+                    "rule_id": "CB010",
+                    "category": "Best Practices",
+                    "message": (
+                        f"Magic number '{magic_match.group(1)}' — "
+                        "extract to a named constexpr constant."
+                    ),
+                    "snippet": source_line.strip(),
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
+                }
+            )
+    return issues
+
+
+# CB011: Empty if-body (dead branch)
+def detect_empty_if_body(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects if-statements with an empty body {}.
+    Empty branches are dead code — they either indicate
+    unfinished logic or a forgotten implementation.
+    Remove the branch or add the intended logic.
+    """
+    if not _is_cpp(file_path):
+        return []
+
+    issues = []
+    source_lines = content.splitlines()
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        # Detect: if (...) followed by opening brace on same or next line,
+        # then immediately a closing brace with nothing in between.
+        if not re.search(r"\bif\s*\(", source_line):
+            continue
+
+        # Check same-line empty body: if (...) {}
+        if re.search(r"\bif\s*\([^)]*\)\s*\{\s*\}", source_line):
+            issues.append(
+                {
+                    "asset_path": file_path,
+                    "line": line_no,
+                    "class": _extract_class_name(
+                        content,
+                        _char_pos_for_line(source_lines, line_no),
+                    ),
+                    "severity": "warning",
+                    "rule_id": "CB011",
+                    "category": "Best Practices",
+                    "message": (
+                        "Empty if-body detected — remove the "
+                        "branch or add the intended logic."
+                    ),
+                    "snippet": source_line.strip(),
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
+                }
+            )
+            continue
+
+        # Check multi-line empty body: if (...)\n{\n}
+        if line_no + 2 <= len(source_lines):
+            next_line = source_lines[line_no].strip()
+            after_next = source_lines[line_no + 1].strip()
+            if next_line == "{" and after_next == "}":
+                issues.append(
+                    {
+                        "asset_path": file_path,
+                        "line": line_no,
+                        "class": _extract_class_name(
+                            content,
+                            _char_pos_for_line(source_lines, line_no),
+                        ),
+                        "severity": "warning",
+                        "rule_id": "CB011",
+                        "category": "Best Practices",
+                        "message": (
+                            "Empty if-body detected — remove the "
+                            "branch or add the intended logic."
+                        ),
+                        "snippet": source_line.strip(),
+                        "fix_suggestion": "",
+                        "is_auto_fixable": False,
+                    }
+                )
+    return issues
+
+
+# CB012: C-style cast
+def detect_c_style_cast(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects C-style casts like (int32)value or (float)x.
+    In UE5, prefer static_cast<T>(), Cast<T>() for UObjects,
+    or StaticCast<T>() for checked casts. C-style casts bypass
+    type safety checks and hide bugs.
+    """
+    if not _is_cpp(file_path):
+        return []
+
+    issues = []
+    source_lines = content.splitlines()
+    # Matches (TypeName)variable — avoids matching function calls
+    cast_pattern = re.compile(
+        r"\(\s*(?:int8|int16|int32|int64|uint8|uint16|uint32|uint64"
+        r"|float|double|bool|char|TCHAR|SIZE_T)\s*\)\s*\w"
+    )
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        stripped = source_line.strip()
+        if stripped.startswith("//"):
+            continue
+        cast_match = cast_pattern.search(source_line)
+        if cast_match:
+            cast_text = cast_match.group(0).strip()
+            # Suggest static_cast equivalent
+            type_match = re.search(r"\(\s*(\w+)\s*\)", cast_text)
+            type_name = type_match.group(1) if type_match else "T"
+            fix = cast_pattern.sub(
+                f"static_cast<{type_name}>(", source_line, count=1
+            ).strip()
+            issues.append(
+                {
+                    "asset_path": file_path,
+                    "line": line_no,
+                    "class": _extract_class_name(
+                        content,
+                        _char_pos_for_line(source_lines, line_no),
+                    ),
+                    "severity": "warning",
+                    "rule_id": "CB012",
+                    "category": "Best Practices",
+                    "message": (
+                        "C-style cast detected — use "
+                        "static_cast<T>() or Cast<T>() instead."
+                    ),
+                    "snippet": source_line.strip(),
+                    "fix_suggestion": fix,
+                    "is_auto_fixable": True,
+                }
+            )
+    return issues
+
+
+# CB013: Nullptr dereference risk
+def detect_nullptr_deref(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects pointers assigned nullptr that are then dereferenced
+    on the next non-empty line without a null-check guard.
+    Dereferencing nullptr crashes the game immediately.
+    Always check pointers before use.
+    """
+    if not _is_cpp(file_path):
+        return []
+
+    issues = []
+    source_lines = content.splitlines()
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        # Find: Type* VarName = nullptr;
+        null_assign = re.search(
+            r"\b(\w+)\s*\*\s*(\w+)\s*=\s*nullptr\s*;",
+            source_line,
+        )
+        if not null_assign:
+            continue
+
+        var_name = null_assign.group(2)
+
+        # Check the next 5 non-empty lines for unguarded dereference
+        for next_line in source_lines[line_no : line_no + 5]:
+            next_stripped = next_line.strip()
+            if not next_stripped:
+                continue
+            if re.search(rf"\b{re.escape(var_name)}\s*->", next_stripped):
+                if not re.search(r"\bif\b", next_stripped):
+                    issues.append(
+                        {
+                            "asset_path": file_path,
+                            "line": line_no,
+                            "class": _extract_class_name(
+                                content,
+                                _char_pos_for_line(source_lines, line_no),
+                            ),
+                            "severity": "error",
+                            "rule_id": "CB013",
+                            "category": "Best Practices",
+                            "message": (
+                                f"'{var_name}' assigned nullptr "
+                                "and dereferenced without null-"
+                                "check — will crash at runtime."
+                            ),
+                            "snippet": source_line.strip(),
+                            "fix_suggestion": "",
+                            "is_auto_fixable": False,
+                        }
+                    )
+            break
+    return issues
+
+
+# CB014: Hardcoded absolute path
+def detect_hardcoded_path(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects hardcoded absolute paths in string literals.
+    Hardcoded paths break cross-platform builds and team
+    collaboration. Use FPaths helpers (FPaths::ProjectDir(),
+    FPaths::GameDir()) or relative paths instead.
+    """
+    if not _is_cpp(file_path):
+        return []
+
+    issues = []
+    source_lines = content.splitlines()
+    # Matches Windows or Unix absolute paths inside TEXT("...") or "..."
+    path_pattern = re.compile(
+        r'TEXT\s*\(\s*"(?:[A-Za-z]:\\|/(?:home|usr|var|tmp|Users)'
+        r')[^"]*"\s*\)'
+        r'|"(?:[A-Za-z]:\\|/(?:home|usr|var|tmp|Users))[^"]*"'
+    )
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        stripped = source_line.strip()
+        if stripped.startswith("//"):
+            continue
+        if path_pattern.search(source_line):
+            issues.append(
+                {
+                    "asset_path": file_path,
+                    "line": line_no,
+                    "class": _extract_class_name(
+                        content,
+                        _char_pos_for_line(source_lines, line_no),
+                    ),
+                    "severity": "warning",
+                    "rule_id": "CB014",
+                    "category": "Best Practices",
+                    "message": (
+                        "Hardcoded absolute path detected — "
+                        "use FPaths::ProjectDir() or relative "
+                        "paths instead."
+                    ),
+                    "snippet": source_line.strip(),
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
+                }
+            )
+    return issues
+
+
+# CB015: Auto without obvious type
+def detect_auto_without_obvious_type(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects use of 'auto' where the assigned type is not
+    immediately obvious from the right-hand side.
+    Auto is acceptable for iterators and complex template
+    types, but hurts readability when the type is unclear.
+    Use explicit types where possible.
+    """
+    if not _is_cpp(file_path):
+        return []
+
+    issues = []
+    source_lines = content.splitlines()
+    # Flag 'auto' assignments where the RHS is a function call
+    # (not a cast, not a literal, not a make_* call)
+    auto_pattern = re.compile(
+        r"\bauto\s+\w+\s*=\s*(?!.*(?:Cast\s*<|static_cast\s*<"
+        r"|MakeShared\s*<|MakeUnique\s*<|NewObject\s*<"
+        r"|TArray\s*<|TMap\s*<|std::make_))"
+        r"\w[\w.:>]*\s*\("
+    )
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        stripped = source_line.strip()
+        if stripped.startswith("//"):
+            continue
+        if auto_pattern.search(source_line):
+            issues.append(
+                {
+                    "asset_path": file_path,
+                    "line": line_no,
+                    "class": _extract_class_name(
+                        content,
+                        _char_pos_for_line(source_lines, line_no),
+                    ),
+                    "severity": "warning",
+                    "rule_id": "CB015",
+                    "category": "Best Practices",
+                    "message": (
+                        "'auto' used where type is not obvious "
+                        "— use an explicit type for readability."
+                    ),
+                    "snippet": source_line.strip(),
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
+                }
+            )
+    return issues
+
+
+# CB016: String concatenation in loop
+def detect_string_concat_in_loop(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects FString += or FString::Printf concatenation
+    inside for/while loops. Each concatenation allocates
+    a new FString — use TStringBuilder or FString::Reserve
+    before the loop to avoid repeated allocations.
+    """
+    if not _is_cpp(file_path):
+        return []
+
+    issues = []
+    # Find for/while loop bodies and check for FString +=
+    loop_pattern = re.compile(
+        r"(?:for|while)\s*\([^)]*\)\s*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
+        re.DOTALL,
+    )
+
+    for loop_match in loop_pattern.finditer(content):
+        loop_body = loop_match.group(1)
+        concat_match = re.search(
+            r"\bFString\b.*\+=" r"|\+=\s*FString" r"|\bFString::Printf\b",
+            loop_body,
+        )
+        if concat_match:
+            line_no = _get_line_number(
+                content,
+                loop_match.start(1) + concat_match.start(),
+            )
+            source_lines = content.splitlines()
+            snippet_line = (
+                source_lines[line_no - 1].strip()
+                if line_no <= len(source_lines)
+                else ""
+            )
+            issues.append(
+                {
+                    "asset_path": file_path,
+                    "line": line_no,
+                    "class": _extract_class_name(
+                        content,
+                        _char_pos_for_line(source_lines, line_no),
+                    ),
+                    "severity": "warning",
+                    "rule_id": "CB016",
+                    "category": "Best Practices",
+                    "message": (
+                        "FString concatenation inside loop — "
+                        "use TStringBuilder or FString::Reserve "
+                        "before the loop to avoid allocations."
+                    ),
+                    "snippet": snippet_line,
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
+                }
+            )
+    return issues
+
+
+# CB017: Public member without UPROPERTY
+def detect_public_member_without_uproperty(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects public member variables in UCLASS headers that
+    lack a UPROPERTY macro. Without UPROPERTY, the variable
+    is invisible to the GC, the editor, and Blueprint.
+    Add UPROPERTY() with appropriate specifiers.
+    """
+    if not _is_header(file_path):
+        return []
+
+    issues = []
+    source_lines = content.splitlines()
+    in_public_section = False
+
+    # Basic UE5 primitive and common types to flag
+    member_pattern = re.compile(
+        r"^\s*(?:float|int32|int64|bool|uint8|FString|FName"
+        r"|FVector|FRotator|FTransform|TArray|TMap)\s+\w+\s*;"
+    )
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        stripped = source_line.strip()
+
+        if stripped.startswith("public:"):
+            in_public_section = True
+        elif stripped.startswith("protected:") or stripped.startswith("private:"):
+            in_public_section = False
+
+        if not in_public_section:
+            continue
+        if stripped.startswith("//"):
+            continue
+
+        # Check if the previous non-empty line has UPROPERTY
+        prev_line = ""
+        for prev_idx in range(line_no - 2, max(line_no - 5, -1), -1):
+            prev_stripped = source_lines[prev_idx].strip()
+            if prev_stripped:
+                prev_line = prev_stripped
+                break
+
+        if member_pattern.match(source_line):
+            if not prev_line.startswith("UPROPERTY"):
+                issues.append(
+                    {
+                        "asset_path": file_path,
+                        "line": line_no,
+                        "class": _extract_class_name(
+                            content,
+                            _char_pos_for_line(source_lines, line_no),
+                        ),
+                        "severity": "warning",
+                        "rule_id": "CB017",
+                        "category": "Best Practices",
+                        "message": (
+                            f"Public member '{stripped}' lacks "
+                            "UPROPERTY — invisible to GC, editor "
+                            "and Blueprint."
+                        ),
+                        "snippet": source_line.strip(),
+                        "fix_suggestion": (
+                            "UPROPERTY(EditAnywhere, BlueprintReadWrite)"
+                            f"\n\t{stripped}"
+                        ),
+                        "is_auto_fixable": True,
+                    }
+                )
+    return issues
+
+
+# CB018: Raw C array (use TArray)
+def detect_raw_c_array(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects raw C-style array declarations (e.g. int32 Arr[10]).
+    Raw arrays have fixed size, no bounds checking, and don't
+    integrate with UE5 serialization or Blueprint.
+    Use TArray<T> instead.
+    """
+    if not _is_cpp(file_path):
+        return []
+
+    issues = []
+    source_lines = content.splitlines()
+    # Matches: TypeName VarName[size];
+    array_pattern = re.compile(
+        r"\b(?:int8|int16|int32|int64|uint8|uint16|uint32|uint64"
+        r"|float|double|bool|char|TCHAR|FString|FName)\s+"
+        r"(\w+)\s*\[\s*\d+\s*\]\s*;"
+    )
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        stripped = source_line.strip()
+        if stripped.startswith("//"):
+            continue
+        array_match = array_pattern.search(source_line)
+        if array_match:
+            var_name = array_match.group(1)
+            # Extract type and size for the suggestion
+            type_match = re.search(
+                r"\b(\w+)\s+" + re.escape(var_name) + r"\s*\[\s*(\d+)",
+                source_line,
+            )
+            if type_match:
+                elem_type = type_match.group(1)
+                fix = f"TArray<{elem_type}> {var_name};"
+            else:
+                fix = ""
+            issues.append(
+                {
+                    "asset_path": file_path,
+                    "line": line_no,
+                    "class": _extract_class_name(
+                        content,
+                        _char_pos_for_line(source_lines, line_no),
+                    ),
+                    "severity": "warning",
+                    "rule_id": "CB018",
+                    "category": "Best Practices",
+                    "message": (
+                        f"Raw C array '{var_name}[]' — use "
+                        "TArray<T> for bounds checking and "
+                        "UE5 serialization support."
+                    ),
+                    "snippet": source_line.strip(),
+                    "fix_suggestion": fix,
+                    "is_auto_fixable": bool(fix),
                 }
             )
     return issues
@@ -672,6 +1386,9 @@ def detect_getworld_no_check(
                         "guard with "
                         "'if (UWorld* W = GetWorld())'."
                     ),
+                    "snippet": source_line.strip(),
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
                 }
             )
     return issues
@@ -727,6 +1444,9 @@ def detect_spawnactor_no_check(
                                 " used without null-check — "
                                 "SpawnActor can return nullptr."
                             ),
+                            "snippet": source_line.strip(),
+                            "fix_suggestion": "",
+                            "is_auto_fixable": False,
                         }
                     )
             break
@@ -785,6 +1505,9 @@ def detect_cast_no_check(
                                 "returns nullptr if type does not"
                                 " match."
                             ),
+                            "snippet": source_line.strip(),
+                            "fix_suggestion": "",
+                            "is_auto_fixable": False,
                         }
                     )
             break
@@ -813,6 +1536,8 @@ def detect_debug_message(
     source_lines = content.splitlines()
     for line_no, source_line in enumerate(source_lines, start=1):
         if re.search(r"GEngine->AddOnScreenDebugMessage", source_line):
+            # Fix: comment out the debug message
+            fix = "// " + source_line.strip() + "  // REMOVED: debug message"
             issues.append(
                 {
                     "asset_path": file_path,
@@ -828,6 +1553,9 @@ def detect_debug_message(
                         "GEngine debug message left in code — "
                         "remove before shipping."
                     ),
+                    "snippet": source_line.strip(),
+                    "fix_suggestion": fix,
+                    "is_auto_fixable": True,
                 }
             )
     return issues
@@ -879,6 +1607,11 @@ def detect_long_function(
                     content,
                     _char_pos_for_line(source_lines, start_line),
                 )
+                snippet_line = (
+                    source_lines[start_line - 1].strip()
+                    if start_line <= len(source_lines)
+                    else ""
+                )
                 issues.append(
                     {
                         "asset_path": file_path,
@@ -892,6 +1625,9 @@ def detect_long_function(
                             f"{func_length} lines long — split "
                             "into smaller functions (max 80)."
                         ),
+                        "snippet": snippet_line,
+                        "fix_suggestion": "",
+                        "is_auto_fixable": False,
                     }
                 )
             line_idx = end_idx
@@ -943,6 +1679,9 @@ def detect_todo_comments(
                         f"{tag_found} comment detected — track "
                         "and resolve before shipping."
                     ),
+                    "snippet": source_line.strip(),
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
                 }
             )
     return issues
@@ -959,8 +1698,8 @@ def run_all_cpp_rules(
     Runs all deterministic C++ rules against the given
     file content and returns a merged list of issues.
 
-    Performance (CP):      CP001, CP002, CP003, CP004
-    Best Practices (CB):   CB001-CB009
+    Performance (CP):      CP001, CP002, CP003, CP004, CP005
+    Best Practices (CB):   CB001-CB018
     Security (CS):         CS001, CS002, CS003
     Maintainability (CM):  CM001, CM002, CM003
     """
@@ -971,6 +1710,7 @@ def run_all_cpp_rules(
     issues += detect_get_component_in_tick(content, file_path)
     issues += detect_large_tick(content, file_path)
     issues += detect_log_error_in_tick(content, file_path)
+    issues += detect_sleep_on_game_thread(content, file_path)
 
     # Best Practices
     issues += detect_infinite_loop(content, file_path)
@@ -982,6 +1722,15 @@ def run_all_cpp_rules(
     issues += detect_system_headers(content, file_path)
     issues += detect_float_no_suffix(content, file_path)
     issues += detect_uproperty_nullptr(content, file_path)
+    issues += detect_magic_numbers(content, file_path)
+    issues += detect_empty_if_body(content, file_path)
+    issues += detect_c_style_cast(content, file_path)
+    issues += detect_nullptr_deref(content, file_path)
+    issues += detect_hardcoded_path(content, file_path)
+    issues += detect_auto_without_obvious_type(content, file_path)
+    issues += detect_string_concat_in_loop(content, file_path)
+    issues += detect_public_member_without_uproperty(content, file_path)
+    issues += detect_raw_c_array(content, file_path)
 
     # Security
     issues += detect_getworld_no_check(content, file_path)

@@ -111,9 +111,10 @@ class ApplyFixesRequest(BaseModel):
 # Extensions we support for C++ analysis
 _CPP_EXTENSIONS = {".cpp", ".h", ".hpp", ".cc"}
 
-# Rules that support auto-fix — updated to new rule IDs
-# CB006 = printf, CM001 = GEngine debug message
-_FIXABLE_RULES = {"CB006", "CM001"}
+# Rules that support auto-fix (have snippet + fix_suggestion)
+# CB003 = raw new, CB004 = raw delete, CB006 = printf,
+# CB008 = float no suffix, CM001 = GEngine debug message
+_FIXABLE_RULES = {"CB003", "CB004", "CB006", "CB008", "CM001"}
 
 
 def _build_summary(
