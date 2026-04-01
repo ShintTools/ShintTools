@@ -1,61 +1,18 @@
 # core/modules/code_validator/rules/ue5_cpp_rules.py
 #
 # Deterministic C++ rules for Unreal Engine 5.
-# Each rule is a function that receives (content, file_path)
+# Each rule function receives (content, file_path)
 # and returns a list of issue dicts.
 #
-# Each issue contains:
-#   asset_path  — file where the issue was found
-#   line        — line number (1-indexed, 0 if not applicable)
-#   class       — UE5 class name from the function signature
-#   severity    — error | warning | info
-#   rule_id     — unique rule identifier
-#   category    — Performance | Best Practices | Security
-#                 | Maintainability
-#   message     — human-readable description
+# Issue fields: asset_path, line, class, severity,
+#               rule_id, category, message,
+#               snippet, fix_suggestion, is_auto_fixable
 #
 # ── Rule index ────────────────────────────────────────
-#
-# PERFORMANCE (CP)
-#   CP001 — FindObjectOfType inside Tick
-#   CP002 — GetComponent inside Tick
-#   CP003 — Large Tick() body
-#   CP004 — UE_LOG Error inside Tick
-#
-# BEST PRACTICES (CB)
-#   CB001 — Infinite loop without exit condition
-#   CB002 — Synchronous asset load outside init
-#   CB003 — Raw 'new'
-#   CB004 — Raw 'delete'
-#   CB005 — STL type usage
-#   CB006 — printf usage
-#   CB007 — System header included
-#   CB008 — Float literal without 'f' suffix
-#   CB009 — UPROPERTY initialized to nullptr
-#
-# BEST PRACTICES (CB) — continued
-#   CB010 — Magic number literal
-#   CB011 — Empty if-body (dead branch)
-#   CB012 — C-style cast
-#   CB013 — Nullptr dereference risk
-#   CB014 — Hardcoded absolute path
-#   CB015 — Auto without obvious type
-#   CB016 — String concatenation in loop
-#   CB017 — Public member without UPROPERTY
-#   CB018 — Raw C array (use TArray)
-#
-# PERFORMANCE (CP) — continued
-#   CP005 — FPlatformProcess::Sleep on game thread
-#
-# SECURITY (CS)
-#   CS001 — GetWorld() without null-check
-#   CS002 — SpawnActor without null-check
-#   CS003 — Cast<T> without null-check
-#
-# MAINTAINABILITY (CM)
-#   CM001 — GEngine debug message left in code
-#   CM002 — Function body exceeds 80 lines
-#   CM003 — TODO / FIXME / HACK comments
+# Performance (CP):     CP001-CP010
+# Best Practices (CB):  CB001-CB020
+# Security (CS):        CS001-CS008
+# Maintainability (CM): CM001-CM005
 # ──────────────────────────────────────────────────────
 
 import re
@@ -128,7 +85,7 @@ def detect_find_object_in_tick(
     This searches all scene objects every frame, destroying
     performance. Cache the reference in BeginPlay instead.
     """
-    issues = []
+    issues: List[Issue] = []
     tick_pattern = re.compile(
         r"void\s+(\w+)::(?:Tick|Update)\s*\([^)]*\)\s*"
         r"\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
@@ -176,7 +133,7 @@ def detect_get_component_in_tick(
     inside Tick or Update. The component should be cached
     in BeginPlay, not retrieved every frame.
     """
-    issues = []
+    issues: List[Issue] = []
     tick_pattern = re.compile(
         r"void\s+(\w+)::(?:Tick|Update)\s*\([^)]*\)\s*"
         r"\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
@@ -227,7 +184,7 @@ def detect_large_tick(
     if not _is_source(file_path):
         return []
 
-    issues = []
+    issues: List[Issue] = []
     tick_match = re.search(
         r"void\s+(\w+)::Tick\b.*\{[^}]{300,}",
         content,
@@ -275,7 +232,7 @@ def detect_log_error_in_tick(
     if not _is_source(file_path):
         return []
 
-    issues = []
+    issues: List[Issue] = []
     tick_pattern = re.compile(
         r"void\s+(\w+)::(?:Tick|Update)\s*\([^)]*\)\s*"
         r"\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
@@ -321,7 +278,7 @@ def detect_infinite_loop(
     return or goto statement inside the body.
     These will freeze the game thread indefinitely.
     """
-    issues = []
+    issues: List[Issue] = []
     loop_pattern = re.compile(
         r"(?:while\s*\(\s*true\s*\)|for\s*\(\s*;;\s*\))"
         r"\s*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
@@ -440,7 +397,7 @@ def detect_raw_new(
     if not _is_cpp(file_path):
         return []
 
-    issues = []
+    issues: List[Issue] = []
     source_lines = content.splitlines()
     for line_no, source_line in enumerate(source_lines, start=1):
         if re.search(r"\bnew\s+\w", source_line):
@@ -492,7 +449,7 @@ def detect_raw_delete(
     if not _is_cpp(file_path):
         return []
 
-    issues = []
+    issues: List[Issue] = []
     source_lines = content.splitlines()
     for line_no, source_line in enumerate(source_lines, start=1):
         if re.search(r"\bdelete\s+\w", source_line):
@@ -539,7 +496,7 @@ def detect_stl_usage(
     if not _is_cpp(file_path):
         return []
 
-    issues = []
+    issues: List[Issue] = []
     source_lines = content.splitlines()
     for line_no, source_line in enumerate(source_lines, start=1):
         if re.search(r"\bstd::\w", source_line):
@@ -579,7 +536,7 @@ def detect_printf(
     if not _is_cpp(file_path):
         return []
 
-    issues = []
+    issues: List[Issue] = []
     source_lines = content.splitlines()
     for line_no, source_line in enumerate(source_lines, start=1):
         if re.search(r"\bprintf\s*\(", source_line):
@@ -622,7 +579,7 @@ def detect_system_headers(
     if not _is_cpp(file_path):
         return []
 
-    issues = []
+    issues: List[Issue] = []
     for line_no, source_line in enumerate(content.splitlines(), start=1):
         if re.search(
             r"#include\s+<(?!stdint|limits|cmath|cassert)",
@@ -661,7 +618,7 @@ def detect_float_no_suffix(
     if not _is_cpp(file_path):
         return []
 
-    issues = []
+    issues: List[Issue] = []
     source_lines = content.splitlines()
     for line_no, source_line in enumerate(source_lines, start=1):
         if re.search(
@@ -712,7 +669,7 @@ def detect_uproperty_nullptr(
     if not _is_header(file_path):
         return []
 
-    issues = []
+    issues: List[Issue] = []
     source_lines = content.splitlines()
     for line_no, source_line in enumerate(source_lines, start=1):
         if re.search(
@@ -757,7 +714,7 @@ def detect_sleep_on_game_thread(
     if not _is_cpp(file_path):
         return []
 
-    issues = []
+    issues: List[Issue] = []
     source_lines = content.splitlines()
     for line_no, source_line in enumerate(source_lines, start=1):
         if re.search(r"\bFPlatformProcess::Sleep\s*\(", source_line):
@@ -785,6 +742,347 @@ def detect_sleep_on_game_thread(
     return issues
 
 
+# CP006: GetAllActorsOfClass inside Tick
+def detect_get_all_actors_in_tick(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects GetAllActorsOfClass or GetAllActorsWithInterface
+    calls inside Tick or Update. These iterate every actor
+    in the scene every frame — one of the most expensive
+    operations possible in UE5. Cache results in BeginPlay
+    or use an event-driven approach instead.
+    """
+    if not _is_source(file_path):
+        return []
+
+    issues: List[Issue] = []
+    tick_pattern = re.compile(
+        r"void\s+(\w+)::(?:Tick|Update)\s*\([^)]*\)\s*"
+        r"\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
+        re.DOTALL,
+    )
+    for tick_match in tick_pattern.finditer(content):
+        class_name = tick_match.group(1)
+        tick_body = tick_match.group(2)
+        actor_match = re.search(
+            r"\bGetAllActors(?:OfClass|WithInterface)\s*[<(]",
+            tick_body,
+        )
+        if actor_match:
+            body_start = tick_match.start(2)
+            line_no = _get_line_number(content, body_start + actor_match.start())
+            source_lines = content.splitlines()
+            snippet_line = (
+                source_lines[line_no - 1].strip()
+                if line_no <= len(source_lines)
+                else ""
+            )
+            issues.append(
+                {
+                    "asset_path": file_path,
+                    "line": line_no,
+                    "class": class_name,
+                    "severity": "error",
+                    "rule_id": "CP006",
+                    "category": "Performance",
+                    "message": (
+                        "GetAllActorsOfClass called inside "
+                        "Tick() — iterates every actor every "
+                        "frame. Cache results in BeginPlay or "
+                        "use an event-driven approach."
+                    ),
+                    "snippet": snippet_line,
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
+                }
+            )
+    return issues
+
+
+# CP007: bCanEverTick = true in constructor
+def detect_tick_enabled_in_constructor(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects PrimaryActorTick.bCanEverTick = true set in
+    the constructor. Tick is disabled by default in UE5
+    for good reason — every Actor with Tick enabled runs
+    its Tick function every frame. Only enable it if the
+    Actor genuinely needs per-frame updates. Use timers
+    or events for infrequent updates instead.
+    """
+    if not _is_source(file_path):
+        return []
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+
+    # Find constructor bodies
+    constructor_pattern = re.compile(r"\b(\w+)::\1\s*\([^)]*\)\s*\{")
+    in_constructor = False
+    brace_depth = 0
+    class_name = "Unknown"
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        ctor_match = constructor_pattern.search(source_line)
+        if ctor_match and not in_constructor:
+            in_constructor = True
+            class_name = ctor_match.group(1)
+            brace_depth = source_line.count("{") - source_line.count("}")
+            continue
+
+        if in_constructor:
+            brace_depth += source_line.count("{") - source_line.count("}")
+            if brace_depth <= 0:
+                in_constructor = False
+                continue
+
+            if re.search(
+                r"\bPrimaryActorTick\.bCanEverTick\s*=\s*true",
+                source_line,
+            ):
+                issues.append(
+                    {
+                        "asset_path": file_path,
+                        "line": line_no,
+                        "class": class_name,
+                        "severity": "warning",
+                        "rule_id": "CP007",
+                        "category": "Performance",
+                        "message": (
+                            "Tick enabled in constructor — "
+                            "disable it if per-frame updates "
+                            "are not needed. Use timers or "
+                            "events for infrequent logic."
+                        ),
+                        "snippet": source_line.strip(),
+                        "fix_suggestion": (
+                            source_line.replace("true", "false").strip()
+                        ),
+                        "is_auto_fixable": True,
+                    }
+                )
+    return issues
+
+
+# CP008: Heavy math operations inside Tick
+def detect_heavy_math_in_tick(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects expensive math calls (Sqrt, Sin, Cos, Atan2,
+    Pow) inside Tick or Update. These are not free on CPU
+    and should be cached or moved outside the hot path.
+    Precompute values in BeginPlay or use lookup tables.
+    """
+    if not _is_source(file_path):
+        return []
+
+    issues: List[Issue] = []
+    tick_pattern = re.compile(
+        r"void\s+(\w+)::(?:Tick|Update)\s*\([^)]*\)\s*"
+        r"\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
+        re.DOTALL,
+    )
+    # Heavy math functions to detect
+    heavy_math_pattern = re.compile(
+        r"\bFMath::" r"(?:Sqrt|Sin|Cos|Tan|Atan2|Pow|Exp|Log)\s*\("
+    )
+
+    for tick_match in tick_pattern.finditer(content):
+        class_name = tick_match.group(1)
+        tick_body = tick_match.group(2)
+        math_match = heavy_math_pattern.search(tick_body)
+        if math_match:
+            body_start = tick_match.start(2)
+            line_no = _get_line_number(content, body_start + math_match.start())
+            source_lines = content.splitlines()
+            snippet_line = (
+                source_lines[line_no - 1].strip()
+                if line_no <= len(source_lines)
+                else ""
+            )
+            func_name = math_match.group(0).strip("(")
+            issues.append(
+                {
+                    "asset_path": file_path,
+                    "line": line_no,
+                    "class": class_name,
+                    "severity": "warning",
+                    "rule_id": "CP008",
+                    "category": "Performance",
+                    "message": (
+                        f"Expensive math '{func_name}' called "
+                        "inside Tick() — precompute in "
+                        "BeginPlay or cache the result."
+                    ),
+                    "snippet": snippet_line,
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
+                }
+            )
+    return issues
+
+
+# CP009: FString operations inside Tick
+def detect_string_ops_in_tick(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects FString concatenation or FString::Printf calls
+    inside Tick or Update. FString operations allocate heap
+    memory every frame, causing GC pressure and frame spikes.
+    Move string operations outside Tick or cache the result.
+    """
+    if not _is_source(file_path):
+        return []
+
+    issues: List[Issue] = []
+    tick_pattern = re.compile(
+        r"void\s+(\w+)::(?:Tick|Update)\s*\([^)]*\)\s*"
+        r"\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
+        re.DOTALL,
+    )
+    string_op_pattern = re.compile(
+        r"\bFString\s*\+=" r"|\bFString::Printf\s*\(" r"|\bFString::Format\s*\("
+    )
+
+    for tick_match in tick_pattern.finditer(content):
+        class_name = tick_match.group(1)
+        tick_body = tick_match.group(2)
+        str_match = string_op_pattern.search(tick_body)
+        if str_match:
+            body_start = tick_match.start(2)
+            line_no = _get_line_number(content, body_start + str_match.start())
+            source_lines = content.splitlines()
+            snippet_line = (
+                source_lines[line_no - 1].strip()
+                if line_no <= len(source_lines)
+                else ""
+            )
+            issues.append(
+                {
+                    "asset_path": file_path,
+                    "line": line_no,
+                    "class": class_name,
+                    "severity": "warning",
+                    "rule_id": "CP009",
+                    "category": "Performance",
+                    "message": (
+                        "FString operation inside Tick() — "
+                        "allocates heap memory every frame. "
+                        "Cache the result or move outside Tick."
+                    ),
+                    "snippet": snippet_line,
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
+                }
+            )
+    return issues
+
+
+# CP010: FORCEINLINE on non-trivial function
+def detect_forceinline_large_function(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects FORCEINLINE used on functions with more than
+    5 lines in their body. FORCEINLINE expands all code
+    into the calling function — on large functions this
+    causes code bloat, increased build times and can hurt
+    instruction cache performance.
+    Epic Coding Standard: 'Be conservative in your use
+    of FORCEINLINE.'
+    """
+    if not _is_header(file_path):
+        return []
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+    total_lines = len(source_lines)
+
+    # Threshold for what is considered non-trivial
+    # Configurable: adjust if your studio uses larger inlines
+    _MAX_INLINE_LINES: int = 5
+
+    forceinline_pattern = re.compile(r"\bFORCEINLINE\b")
+
+    line_idx = 0
+    while line_idx < total_lines:
+        source_line = source_lines[line_idx]
+        if not forceinline_pattern.search(source_line):
+            line_idx += 1
+            continue
+
+        func_line_no = line_idx + 1
+
+        # Find the opening brace
+        brace_depth = 0
+        body_start_idx = line_idx
+        found_brace = False
+
+        for search_idx in range(line_idx, min(line_idx + 5, total_lines)):
+            brace_depth += source_lines[search_idx].count("{") - source_lines[
+                search_idx
+            ].count("}")
+            if brace_depth > 0:
+                body_start_idx = search_idx
+                found_brace = True
+                break
+
+        if not found_brace:
+            line_idx += 1
+            continue
+
+        # Count lines in the function body
+        end_idx = body_start_idx + 1
+        while end_idx < total_lines and brace_depth > 0:
+            brace_depth += source_lines[end_idx].count("{") - source_lines[
+                end_idx
+            ].count("}")
+            end_idx += 1
+
+        func_length = end_idx - body_start_idx
+
+        if func_length > _MAX_INLINE_LINES:
+            # Extract function name
+            name_match = re.search(r"\b(\w+)\s*\(", source_line)
+            func_name = name_match.group(1) if name_match else "Unknown"
+            issues.append(
+                {
+                    "asset_path": file_path,
+                    "line": func_line_no,
+                    "class": _extract_class_name(
+                        content,
+                        _char_pos_for_line(source_lines, func_line_no),
+                    ),
+                    "severity": "warning",
+                    "rule_id": "CP010",
+                    "category": "Performance",
+                    "message": (
+                        f"FORCEINLINE on '{func_name}' which "
+                        f"is {func_length} lines — use "
+                        "FORCEINLINE only for trivial "
+                        f"accessors (max {_MAX_INLINE_LINES} "
+                        "lines)."
+                    ),
+                    "snippet": source_line.strip(),
+                    "fix_suggestion": re.sub(
+                        r"\bFORCEINLINE\b", "inline", source_line
+                    ).strip(),
+                    "is_auto_fixable": True,
+                }
+            )
+        line_idx = end_idx
+    return issues
+
+
 # ── BEST PRACTICES (CB) — continued ──────────────────
 
 
@@ -803,7 +1101,7 @@ def detect_magic_numbers(
     if not _is_cpp(file_path):
         return []
 
-    issues = []
+    issues: List[Issue] = []
     source_lines = content.splitlines()
 
     # Matches a bare numeric literal in an expression context.
@@ -864,7 +1162,7 @@ def detect_empty_if_body(
     if not _is_cpp(file_path):
         return []
 
-    issues = []
+    issues: List[Issue] = []
     source_lines = content.splitlines()
 
     for line_no, source_line in enumerate(source_lines, start=1):
@@ -939,7 +1237,7 @@ def detect_c_style_cast(
     if not _is_cpp(file_path):
         return []
 
-    issues = []
+    issues: List[Issue] = []
     source_lines = content.splitlines()
     # Matches (TypeName)variable — avoids matching function calls
     cast_pattern = re.compile(
@@ -997,7 +1295,7 @@ def detect_nullptr_deref(
     if not _is_cpp(file_path):
         return []
 
-    issues = []
+    issues: List[Issue] = []
     source_lines = content.splitlines()
 
     for line_no, source_line in enumerate(source_lines, start=1):
@@ -1057,7 +1355,7 @@ def detect_hardcoded_path(
     if not _is_cpp(file_path):
         return []
 
-    issues = []
+    issues: List[Issue] = []
     source_lines = content.splitlines()
     # Matches Windows or Unix absolute paths inside TEXT("...") or "..."
     path_pattern = re.compile(
@@ -1110,7 +1408,7 @@ def detect_auto_without_obvious_type(
     if not _is_cpp(file_path):
         return []
 
-    issues = []
+    issues: List[Issue] = []
     source_lines = content.splitlines()
     # Flag 'auto' assignments where the RHS is a function call
     # (not a cast, not a literal, not a make_* call)
@@ -1163,7 +1461,7 @@ def detect_string_concat_in_loop(
     if not _is_cpp(file_path):
         return []
 
-    issues = []
+    issues: List[Issue] = []
     # Find for/while loop bodies and check for FString +=
     loop_pattern = re.compile(
         r"(?:for|while)\s*\([^)]*\)\s*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
@@ -1225,7 +1523,7 @@ def detect_public_member_without_uproperty(
     if not _is_header(file_path):
         return []
 
-    issues = []
+    issues: List[Issue] = []
     source_lines = content.splitlines()
     in_public_section = False
 
@@ -1299,7 +1597,7 @@ def detect_raw_c_array(
     if not _is_cpp(file_path):
         return []
 
-    issues = []
+    issues: List[Issue] = []
     source_lines = content.splitlines()
     # Matches: TypeName VarName[size];
     array_pattern = re.compile(
@@ -1349,6 +1647,128 @@ def detect_raw_c_array(
     return issues
 
 
+# CB019: Non-virtual destructor on polymorphic class
+def detect_non_virtual_destructor(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects non-virtual destructors in classes that inherit
+    from AActor or UObject. If a derived class is deleted
+    through a base pointer, a non-virtual destructor causes
+    undefined behaviour and memory leaks.
+    Declare the destructor as virtual.
+    """
+    if not _is_header(file_path):
+        return []
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+
+    # Check if file contains a class inheriting from AActor/UObject
+    is_actor_class = any(
+        re.search(
+            r"class\s+\w+\s*:\s*public\s+(?:AActor|UObject|APawn"
+            r"|ACharacter|AGameMode|UActorComponent)",
+            line,
+        )
+        for line in source_lines
+    )
+    if not is_actor_class:
+        return []
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        stripped = source_line.strip()
+        if stripped.startswith("//"):
+            continue
+        # Match destructor declaration without virtual keyword
+        if re.search(r"^\s*~\w+\s*\(\s*\)\s*;", source_line):
+            if not re.search(r"\bvirtual\b", source_line):
+                issues.append(
+                    {
+                        "asset_path": file_path,
+                        "line": line_no,
+                        "class": _extract_class_name(
+                            content,
+                            _char_pos_for_line(source_lines, line_no),
+                        ),
+                        "severity": "warning",
+                        "rule_id": "CB019",
+                        "category": "Best Practices",
+                        "message": (
+                            "Non-virtual destructor on a "
+                            "polymorphic UE5 class — declare "
+                            "it as 'virtual ~ClassName();' to "
+                            "prevent memory leaks."
+                        ),
+                        "snippet": source_line.strip(),
+                        "fix_suggestion": re.sub(
+                            r"~(\w+)",
+                            r"virtual ~\1",
+                            source_line,
+                        ).strip(),
+                        "is_auto_fixable": True,
+                    }
+                )
+    return issues
+
+
+# CB020: FString used for identifier (prefer FName)
+def detect_fstring_as_identifier(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects FString member variables whose name suggests
+    they are used as identifiers or tags (e.g. PlayerTag,
+    ActorId, SocketName). FName is more efficient for
+    comparisons and lookups — it is hashed and case-
+    insensitive. Use FName or FGameplayTag instead.
+    """
+    if not _is_header(file_path):
+        return []
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+    # Variable names that suggest identifier/tag usage
+    identifier_pattern = re.compile(
+        r"\bFString\s+(\w*(?:Tag|Id|Name|Key|Socket|" r"Category|Label|Slot)\w*)\s*;",
+        re.IGNORECASE,
+    )
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        stripped = source_line.strip()
+        if stripped.startswith("//"):
+            continue
+        id_match = identifier_pattern.search(source_line)
+        if id_match:
+            var_name = id_match.group(1)
+            issues.append(
+                {
+                    "asset_path": file_path,
+                    "line": line_no,
+                    "class": _extract_class_name(
+                        content,
+                        _char_pos_for_line(source_lines, line_no),
+                    ),
+                    "severity": "warning",
+                    "rule_id": "CB020",
+                    "category": "Best Practices",
+                    "message": (
+                        f"'{var_name}' looks like an identifier "
+                        "— use FName or FGameplayTag instead "
+                        "of FString for efficient comparisons."
+                    ),
+                    "snippet": source_line.strip(),
+                    "fix_suggestion": re.sub(
+                        r"\bFString\b", "FName", source_line
+                    ).strip(),
+                    "is_auto_fixable": True,
+                }
+            )
+    return issues
+
+
 # ── SECURITY (CS) ─────────────────────────────────────
 
 
@@ -1366,7 +1786,7 @@ def detect_getworld_no_check(
     if not _is_source(file_path):
         return []
 
-    issues = []
+    issues: List[Issue] = []
     source_lines = content.splitlines()
     for line_no, source_line in enumerate(source_lines, start=1):
         if re.search(r"\bGetWorld\(\)\s*->", source_line):
@@ -1408,7 +1828,7 @@ def detect_spawnactor_no_check(
     if not _is_source(file_path):
         return []
 
-    issues = []
+    issues: List[Issue] = []
     source_lines = content.splitlines()
 
     for line_no, source_line in enumerate(source_lines, start=1):
@@ -1468,7 +1888,7 @@ def detect_cast_no_check(
     if not _is_cpp(file_path):
         return []
 
-    issues = []
+    issues: List[Issue] = []
     source_lines = content.splitlines()
 
     for line_no, source_line in enumerate(source_lines, start=1):
@@ -1515,6 +1935,342 @@ def detect_cast_no_check(
     return issues
 
 
+# CS004: Division without zero-check
+def detect_division_no_zero_check(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects float or int division where the divisor is a
+    variable without a preceding zero-check guard.
+    Dividing by zero crashes the game. Always verify the
+    divisor is non-zero before dividing.
+    """
+    if not _is_cpp(file_path):
+        return []
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        stripped = source_line.strip()
+        if stripped.startswith("//"):
+            continue
+        # Match: something = something / variable
+        div_match = re.search(r"\b\w+\s*/\s*([A-Za-z_]\w*)\b", source_line)
+        if not div_match:
+            continue
+
+        divisor = div_match.group(1)
+        # Skip known safe divisors
+        if divisor in {"2", "100", "255"}:
+            continue
+
+        # Check if there is a zero-check for this variable
+        # in the 5 lines before the division
+        start_idx = max(0, line_no - 6)
+        preceding = " ".join(source_lines[start_idx : line_no - 1])
+        has_check = re.search(
+            rf"\b{re.escape(divisor)}\s*[!=]=\s*0"
+            rf"|\bFMath::IsNearlyZero\s*\(\s*{re.escape(divisor)}",
+            preceding,
+        )
+        if not has_check:
+            issues.append(
+                {
+                    "asset_path": file_path,
+                    "line": line_no,
+                    "class": _extract_class_name(
+                        content,
+                        _char_pos_for_line(source_lines, line_no),
+                    ),
+                    "severity": "warning",
+                    "rule_id": "CS004",
+                    "category": "Security",
+                    "message": (
+                        f"Division by '{divisor}' without "
+                        "zero-check — use "
+                        "FMath::IsNearlyZero() or check "
+                        f"'{divisor} != 0' before dividing."
+                    ),
+                    "snippet": source_line.strip(),
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
+                }
+            )
+    return issues
+
+
+# CS005: TArray access without bounds check
+def detect_array_no_bounds_check(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects TArray subscript access (Array[i]) where no
+    IsValidIndex() check appears in the preceding lines.
+    Out-of-bounds access on a TArray crashes immediately
+    in Debug builds and causes undefined behaviour in
+    Shipping. Use IsValidIndex(i) before accessing.
+    """
+    if not _is_cpp(file_path):
+        return []
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        stripped = source_line.strip()
+        if stripped.startswith("//"):
+            continue
+
+        # Match: ArrayVar[SomeVariable] — skip literals like [0]
+        access_match = re.search(
+            r"\b(\w+)\s*\[\s*([A-Za-z_]\w*)\s*\]",
+            source_line,
+        )
+        if not access_match:
+            continue
+
+        array_name = access_match.group(1)
+        index_var = access_match.group(2)
+
+        # Skip common loop variables that are typically safe
+        if index_var in {"i", "j", "k", "idx", "Index"}:
+            continue
+
+        # Check preceding 5 lines for IsValidIndex
+        start_idx = max(0, line_no - 6)
+        preceding = " ".join(source_lines[start_idx : line_no - 1])
+        has_check = re.search(
+            rf"\b{re.escape(array_name)}\s*\.\s*IsValidIndex\s*"
+            rf"\(\s*{re.escape(index_var)}",
+            preceding,
+        )
+        if not has_check:
+            issues.append(
+                {
+                    "asset_path": file_path,
+                    "line": line_no,
+                    "class": _extract_class_name(
+                        content,
+                        _char_pos_for_line(source_lines, line_no),
+                    ),
+                    "severity": "warning",
+                    "rule_id": "CS005",
+                    "category": "Security",
+                    "message": (
+                        f"TArray '{array_name}' accessed at "
+                        f"index '{index_var}' without "
+                        "IsValidIndex() check — will crash "
+                        "if index is out of bounds."
+                    ),
+                    "snippet": source_line.strip(),
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
+                }
+            )
+    return issues
+
+
+# CS006: GetOwner() without null-check
+def detect_getowner_no_check(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects GetOwner()-> calls without a null-check guard.
+    GetOwner() returns nullptr for Actors that have no owner,
+    during shutdown, or in editor utilities. Always guard
+    with 'if (AActor* Owner = GetOwner())' before use.
+    """
+    if not _is_source(file_path):
+        return []
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        stripped = source_line.strip()
+        if stripped.startswith("//"):
+            continue
+        if re.search(r"\bGetOwner\(\)\s*->", source_line):
+            issues.append(
+                {
+                    "asset_path": file_path,
+                    "line": line_no,
+                    "class": _extract_class_name(
+                        content,
+                        _char_pos_for_line(source_lines, line_no),
+                    ),
+                    "severity": "warning",
+                    "rule_id": "CS006",
+                    "category": "Security",
+                    "message": (
+                        "GetOwner() called without null-check "
+                        "— guard with "
+                        "'if (AActor* Owner = GetOwner())'."
+                    ),
+                    "snippet": source_line.strip(),
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
+                }
+            )
+    return issues
+
+
+# CS007: OtherActor used in overlap without null-check
+def detect_overlap_actor_no_check(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects OnComponentBeginOverlap or OnActorBeginOverlap
+    implementations that use OtherActor directly without a
+    null-check. Overlap events can fire with a nullptr
+    OtherActor during level streaming or actor destruction.
+    Always guard with 'if (OtherActor)' before use.
+    """
+    if not _is_source(file_path):
+        return []
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+
+    # Find overlap function bodies
+    overlap_pattern = re.compile(
+        r"void\s+\w+::On(?:Component|Actor)Begin(?:Overlap|" r"Hit)\s*\([^)]*\)\s*\{",
+    )
+
+    in_overlap_func = False
+    brace_depth = 0
+    func_start_line = 0
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        if overlap_pattern.search(source_line):
+            in_overlap_func = True
+            brace_depth = source_line.count("{") - source_line.count("}")
+            func_start_line = line_no
+            continue
+
+        if in_overlap_func:
+            brace_depth += source_line.count("{") - source_line.count("}")
+            if brace_depth <= 0:
+                in_overlap_func = False
+                continue
+
+            # Flag OtherActor-> without a preceding if check
+            if re.search(r"\bOtherActor\s*->", source_line):
+                # Check if there's a null-check in the function so far
+                func_lines = source_lines[func_start_line : line_no - 1]
+                preceding = " ".join(func_lines)
+                has_check = re.search(
+                    r"\bif\s*\(\s*(?:Other|OtherActor)\b",
+                    preceding,
+                )
+                if not has_check:
+                    issues.append(
+                        {
+                            "asset_path": file_path,
+                            "line": line_no,
+                            "class": _extract_class_name(
+                                content,
+                                _char_pos_for_line(source_lines, line_no),
+                            ),
+                            "severity": "warning",
+                            "rule_id": "CS007",
+                            "category": "Security",
+                            "message": (
+                                "OtherActor used in overlap "
+                                "callback without null-check "
+                                "— guard with "
+                                "'if (OtherActor)' first."
+                            ),
+                            "snippet": source_line.strip(),
+                            "fix_suggestion": "",
+                            "is_auto_fixable": False,
+                        }
+                    )
+    return issues
+
+
+# CS008: TWeakObjectPtr dereferenced without IsValid()
+def detect_weak_ptr_no_check(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects TWeakObjectPtr variables dereferenced with .Get()
+    or -> without a preceding IsValid() check.
+    TWeakObjectPtr can become invalid at any time if the
+    referenced UObject is garbage collected. Always check
+    IsValid() before dereferencing.
+    """
+    if not _is_cpp(file_path):
+        return []
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+
+    # Find TWeakObjectPtr variable declarations
+    weak_ptr_pattern = re.compile(r"\bTWeakObjectPtr\s*<[^>]+>\s*(\w+)\s*[;=]")
+
+    # Collect all weak ptr variable names in the file
+    weak_ptr_vars: List[str] = []
+    for source_line in source_lines:
+        weak_match = weak_ptr_pattern.search(source_line)
+        if weak_match:
+            weak_ptr_vars.append(weak_match.group(1))
+
+    if not weak_ptr_vars:
+        return issues
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        stripped = source_line.strip()
+        if stripped.startswith("//"):
+            continue
+
+        for var_name in weak_ptr_vars:
+            # Detect .Get() or -> dereference
+            if not re.search(
+                rf"\b{re.escape(var_name)}\s*(?:\.Get\(\)|->)",
+                source_line,
+            ):
+                continue
+
+            # Check preceding 5 lines for IsValid()
+            start_idx = max(0, line_no - 6)
+            preceding = " ".join(source_lines[start_idx : line_no - 1])
+            has_check = re.search(
+                rf"\b{re.escape(var_name)}\s*\.\s*IsValid\s*\(\)",
+                preceding,
+            )
+            if not has_check:
+                issues.append(
+                    {
+                        "asset_path": file_path,
+                        "line": line_no,
+                        "class": _extract_class_name(
+                            content,
+                            _char_pos_for_line(source_lines, line_no),
+                        ),
+                        "severity": "error",
+                        "rule_id": "CS008",
+                        "category": "Security",
+                        "message": (
+                            f"TWeakObjectPtr '{var_name}' "
+                            "dereferenced without IsValid() "
+                            "check — the object may have been "
+                            "garbage collected."
+                        ),
+                        "snippet": source_line.strip(),
+                        "fix_suggestion": "",
+                        "is_auto_fixable": False,
+                    }
+                )
+    return issues
+
+
 # ── MAINTAINABILITY (CM) ──────────────────────────────
 
 
@@ -1532,7 +2288,7 @@ def detect_debug_message(
     if not _is_cpp(file_path):
         return []
 
-    issues = []
+    issues: List[Issue] = []
     source_lines = content.splitlines()
     for line_no, source_line in enumerate(source_lines, start=1):
         if re.search(r"GEngine->AddOnScreenDebugMessage", source_line):
@@ -1575,7 +2331,7 @@ def detect_long_function(
     if not _is_cpp(file_path):
         return []
 
-    issues = []
+    issues: List[Issue] = []
     source_lines = content.splitlines()
     total_lines = len(source_lines)
 
@@ -1650,7 +2406,7 @@ def detect_todo_comments(
     if not _is_cpp(file_path):
         return []
 
-    issues = []
+    issues: List[Issue] = []
     source_lines = content.splitlines()
     for line_no, source_line in enumerate(source_lines, start=1):
         if re.search(
@@ -1687,6 +2443,138 @@ def detect_todo_comments(
     return issues
 
 
+# CM004: File too long (> 500 lines)
+def detect_file_too_long(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects source files exceeding the maximum line count.
+    Large files are hard to navigate and usually indicate
+    that a class has too many responsibilities.
+    Split into smaller, focused files.
+    Threshold defined in Tech Doc Section 12.1 (max_file_lines: 500).
+    """
+    if not _is_cpp(file_path):
+        return []
+
+    # Umbral de líneas por archivo — configurable por estudio en
+    # shinttools.config.json bajo code_validator.max_file_lines.
+    # 500 líneas es el valor por defecto del Tech Doc de ShintTools.
+    _MAX_FILE_LINES: int = 500
+
+    total_lines = len(content.splitlines())
+    if total_lines <= _MAX_FILE_LINES:
+        return []
+
+    return [
+        {
+            "asset_path": file_path,
+            "line": 1,
+            "class": "Unknown",
+            "severity": "warning",
+            "rule_id": "CM005",
+            "category": "Maintainability",
+            "message": (
+                f"File has {total_lines} lines "
+                f"(max: {_MAX_FILE_LINES}) — split into "
+                "smaller, focused files."
+            ),
+            "snippet": content.splitlines()[0].strip(),
+            "fix_suggestion": "",
+            "is_auto_fixable": False,
+        }
+    ]
+
+
+# CM005: Too many function parameters (> 5)
+def detect_too_many_parameters(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects functions with more parameters than the threshold.
+    Functions with many parameters are harder to call correctly,
+    test and maintain. Consider passing a dedicated struct instead.
+    Epic Coding Standard: 'Avoid overly-long function parameter lists.'
+    """
+    if not _is_cpp(file_path):
+        return []
+
+    # Número máximo de parámetros por función — configurable por estudio.
+    # 5 es el valor por defecto, usado como referencia en estudios AA.
+    # Modifícalo en shinttools.config.json bajo
+    # code_validator.max_function_parameters si tu estudio
+    # usa una convención diferente (algunos permiten hasta 6 o 7).
+    _MAX_PARAMS: int = 5
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+
+    # Matches function declarations/definitions with a parameter list.
+    # Captures: return type + name + full parameter list.
+    func_pattern = re.compile(
+        r"^\s*(?:[\w:<>*&~]+\s+)+(\w+)\s*\(([^;{}]*)\)\s*"
+        r"(?:const\s*)?(?:override\s*)?(?:noexcept\s*)?"
+        r"(?:\{|;)"
+    )
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        stripped = source_line.strip()
+        if stripped.startswith("//") or stripped.startswith("#"):
+            continue
+
+        func_match = func_pattern.match(source_line)
+        if not func_match:
+            continue
+
+        func_name = func_match.group(1)
+        param_list = func_match.group(2).strip()
+
+        # Skip empty parameter lists and void
+        if not param_list or param_list == "void":
+            continue
+
+        # Count parameters by splitting on commas, ignoring
+        # commas inside template angle brackets e.g. TMap<K, V>
+        depth = 0
+        param_count = 1
+        for char in param_list:
+            if char in "<([":
+                depth += 1
+            elif char in ">)]":
+                depth -= 1
+            elif char == "," and depth == 0:
+                param_count += 1
+
+        if param_count <= _MAX_PARAMS:
+            continue
+
+        issues.append(
+            {
+                "asset_path": file_path,
+                "line": line_no,
+                "class": _extract_class_name(
+                    content,
+                    _char_pos_for_line(source_lines, line_no),
+                ),
+                "severity": "warning",
+                "rule_id": "CM006",
+                "category": "Maintainability",
+                "message": (
+                    f"Function '{func_name}' has {param_count} "
+                    f"parameters (max: {_MAX_PARAMS}) — consider "
+                    "passing a dedicated struct instead."
+                ),
+                "snippet": source_line.strip(),
+                "fix_suggestion": "",
+                "is_auto_fixable": False,
+            }
+        )
+
+    return issues
+
+
 # ── RUNNER ────────────────────────────────────────────
 
 
@@ -1698,10 +2586,10 @@ def run_all_cpp_rules(
     Runs all deterministic C++ rules against the given
     file content and returns a merged list of issues.
 
-    Performance (CP):      CP001, CP002, CP003, CP004, CP005
-    Best Practices (CB):   CB001-CB018
-    Security (CS):         CS001, CS002, CS003
-    Maintainability (CM):  CM001, CM002, CM003
+    Performance (CP):      CP001 - CP005
+    Best Practices (CB):   CB001 - CB020
+    Security (CS):         CS001 - CS008
+    Maintainability (CM):  CM001 - CM005
     """
     issues: List[Issue] = []
 
@@ -1711,6 +2599,11 @@ def run_all_cpp_rules(
     issues += detect_large_tick(content, file_path)
     issues += detect_log_error_in_tick(content, file_path)
     issues += detect_sleep_on_game_thread(content, file_path)
+    issues += detect_get_all_actors_in_tick(content, file_path)
+    issues += detect_tick_enabled_in_constructor(content, file_path)
+    issues += detect_heavy_math_in_tick(content, file_path)
+    issues += detect_string_ops_in_tick(content, file_path)
+    issues += detect_forceinline_large_function(content, file_path)
 
     # Best Practices
     issues += detect_infinite_loop(content, file_path)
@@ -1731,15 +2624,24 @@ def run_all_cpp_rules(
     issues += detect_string_concat_in_loop(content, file_path)
     issues += detect_public_member_without_uproperty(content, file_path)
     issues += detect_raw_c_array(content, file_path)
+    issues += detect_non_virtual_destructor(content, file_path)
+    issues += detect_fstring_as_identifier(content, file_path)
 
     # Security
     issues += detect_getworld_no_check(content, file_path)
     issues += detect_spawnactor_no_check(content, file_path)
     issues += detect_cast_no_check(content, file_path)
+    issues += detect_division_no_zero_check(content, file_path)
+    issues += detect_array_no_bounds_check(content, file_path)
+    issues += detect_getowner_no_check(content, file_path)
+    issues += detect_overlap_actor_no_check(content, file_path)
+    issues += detect_weak_ptr_no_check(content, file_path)
 
     # Maintainability
     issues += detect_debug_message(content, file_path)
     issues += detect_long_function(content, file_path)
     issues += detect_todo_comments(content, file_path)
+    issues += detect_file_too_long(content, file_path)
+    issues += detect_too_many_parameters(content, file_path)
 
     return issues
