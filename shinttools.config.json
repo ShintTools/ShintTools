@@ -25,6 +25,7 @@
   "code_validator": {
     "max_cyclomatic_complexity": 15,
     "max_file_lines": 500,
+    "max_function_parameters": 5,
     "exclude_paths": ["Content/ThirdParty/", "Plugins/"]
   }
 }

@@ -5,29 +5,74 @@
 # Detects naming convention violations from asset paths.
 # All rules return severity "warning", category "Best Practices".
 #
-# Rule index:
-#   NM001 — detect_missing_prefix    : asset lacks required type prefix
-#   NM002 — detect_spaces_in_name    : name contains whitespace
-#   NM003 — detect_special_chars     : name contains illegal characters
-#   NM004 — detect_lowercase_names   : name starts with lowercase letter
-#   NM005 — detect_duplicate_names   : same base name in multiple folders
-#   NM006 — detect_missing_tex_suffix: Texture2D missing channel suffix
-#   NM007 — detect_non_pascal_case   : name not PascalCase after prefix
-#   NM008 — detect_name_too_long     : name exceeds max length (64 chars)
+# Each rule receives List[AssetRecord] where AssetRecord is:
+#   { "asset_path": str, "asset_type": str }
+# asset_type comes from UE5 AssetRegistry via the plugin.
+# Falls back to folder inference when asset_type is empty or Unknown.
 #
-# Sprint 4: replace _infer_folder_rule() with AssetRegistry lookups.
-# Current: pure Python, no I/O, folder-based type inference.
+# Rule index:
+#   NM001 — detect_missing_prefix         : asset lacks required type prefix
+#   NM002 — detect_spaces_in_name         : name contains whitespace
+#   NM003 — detect_special_chars          : name contains illegal characters
+#   NM004 — detect_lowercase_names        : name starts with lowercase letter
+#   NM005 — detect_duplicate_names        : same base name in multiple folders
+#   NM006 — detect_missing_tex_suffix     : Texture2D missing channel suffix
+#   NM007 — detect_non_pascal_case        : name not PascalCase after prefix
+#   NM008 — detect_name_too_long          : name exceeds max length (64 chars)
+#   NM009 — detect_wrong_folder           : asset type does not match folder
+#   NM010 — detect_double_prefix          : duplicated prefix (T_T_Hero)
+#   NM011 — detect_number_start           : name starts with a digit
+#   NM012 — detect_consecutive_underscores: double underscore in name
+#   NM013 — detect_trailing_underscore    : name ends with underscore
+#   NM014 — detect_generic_name           : placeholder or generic name
+#   NM015 — detect_version_suffix         : version suffix (_v2, _old)
 
 import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-# ---------------------------------------------------------------------------
-# Type alias
-# ---------------------------------------------------------------------------
+# Type aliases
 
 Issue = Dict[str, Any]
+AssetRecord = Dict[str, str]
+
+# ---------------------------------------------------------------------------
+# TYPE_TO_EXPECTED_FOLDER
+#
+# Maps UE5 asset class name → expected folder segment (lowercase).
+# Used by NM009 to detect assets in the wrong folder.
+# Only includes types where the convention is unambiguous.
+# ---------------------------------------------------------------------------
+
+_TYPE_TO_EXPECTED_FOLDER: Dict[str, str] = {
+    "Texture2D": "textures",
+    "RenderTarget": "rendertargets",
+    "TextureCube": "cubemaps",
+    "StaticMesh": "meshes",
+    "SkeletalMesh": "characters",
+    "Material": "materials",
+    "MaterialInstance": "materialinstances",
+    "MaterialInstanceConstant": "materialinstances",
+    "MaterialFunction": "materialfunctions",
+    "Blueprint": "blueprints",
+    "AnimBlueprint": "animblueprints",
+    "WidgetBlueprint": "widgets",
+    "SoundCue": "sounds",
+    "SoundWave": "audio",
+    "AnimSequence": "animations",
+    "AnimMontage": "montages",
+    "BlendSpace": "blendspaces",
+    "PhysicsAsset": "physics",
+    "ParticleSystem": "particles",
+    "NiagaraSystem": "vfx",
+    "DataTable": "datatables",
+    "DataAsset": "dataassets",
+    "CurveFloat": "curves",
+    "UserDefinedEnum": "enums",
+    "UserDefinedStruct": "structs",
+    "LevelSequence": "sequences",
+}
 
 # ---------------------------------------------------------------------------
 # Rule metadata
@@ -148,9 +193,8 @@ _ILLEGAL_CHAR_PATTERN: re.Pattern = re.compile(r"[^A-Za-z0-9_]")
 # Example: "tex_HeroSword" → strip "tex_" → suggest "T_HeroSword"
 _SHORT_PREFIX_PATTERN: re.Pattern = re.compile(r"^[a-zA-Z]{1,4}_")
 
-# ---------------------------------------------------------------------------
+
 # Shared helpers
-# ---------------------------------------------------------------------------
 
 
 def _build_issue(
@@ -216,53 +260,61 @@ def _suggest_prefixed_name(
     return f"{correct_prefix}{stripped_name}"
 
 
-# ---------------------------------------------------------------------------
 # NM001 — detect_missing_prefix
-# ---------------------------------------------------------------------------
 
 
-def detect_missing_prefix(asset_paths: List[str]) -> List[Issue]:
+def detect_missing_prefix(asset_records: List[AssetRecord]) -> List[Issue]:
     """NM001: flag assets that lack a valid UE5 type prefix.
 
-    Infers the expected prefix from the asset's folder name.
-    Assets in unrecognised folders are flagged with type 'Unknown'.
-    Sprint 4: replace folder inference with AssetRegistry lookups.
+    Uses asset_type from AssetRegistry when available, otherwise
+    infers from folder name. Assets in unrecognised folders are
+    flagged with type 'Unknown'.
     """
     issues: List[Issue] = []
 
-    for asset_path in asset_paths:
-        asset_path_obj = Path(asset_path)
-        asset_name = asset_path_obj.stem
+    for record in asset_records:
+        asset_path = record.get("asset_path", "")
+        asset_type = record.get("asset_type", "Unknown") or "Unknown"
+        asset_name = Path(asset_path).stem
         normalised_path = asset_path.lower().replace("\\", "/")
 
         if _has_valid_prefix(asset_name):
             continue
 
+        # Use real asset_type if available, else infer from folder
         folder_rule = _infer_folder_rule(normalised_path)
+        resolved_type = (
+            asset_type
+            if asset_type != "Unknown"
+            else (folder_rule["type"] if folder_rule else "Unknown")
+        )
+        required_prefix = next(
+            (rule["prefix"] for rule in _FOLDER_RULES if rule["type"] == resolved_type),
+            folder_rule["prefix"] if folder_rule else None,
+        )
 
-        if folder_rule is None:
+        if required_prefix is None:
             issues.append(
                 _build_issue(
                     rule_id="NM001",
                     asset_path=asset_path,
                     current_name=asset_name,
                     suggested_name=asset_name,
-                    asset_type="Unknown",
+                    asset_type=resolved_type,
                     message=("Asset name has no recognised UE5 naming prefix."),
                 )
             )
             continue
 
-        required_prefix = folder_rule["prefix"]
         issues.append(
             _build_issue(
                 rule_id="NM001",
                 asset_path=asset_path,
                 current_name=asset_name,
                 suggested_name=_suggest_prefixed_name(asset_name, required_prefix),
-                asset_type=folder_rule["type"],
+                asset_type=resolved_type,
                 message=(
-                    f"Missing prefix '{required_prefix}' " f"for {folder_rule['type']}."
+                    f"Missing prefix '{required_prefix}' " f"for {resolved_type}."
                 ),
             )
         )
@@ -270,12 +322,10 @@ def detect_missing_prefix(asset_paths: List[str]) -> List[Issue]:
     return issues
 
 
-# ---------------------------------------------------------------------------
 # NM002 — detect_spaces_in_name
-# ---------------------------------------------------------------------------
 
 
-def detect_spaces_in_name(asset_paths: List[str]) -> List[Issue]:
+def detect_spaces_in_name(asset_records: List[AssetRecord]) -> List[Issue]:
     """NM002: flag asset names that contain spaces.
 
     Spaces in asset names break code references and cause issues
@@ -284,9 +334,9 @@ def detect_spaces_in_name(asset_paths: List[str]) -> List[Issue]:
     """
     issues: List[Issue] = []
 
-    for asset_path in asset_paths:
-        asset_path_obj = Path(asset_path)
-        asset_name = asset_path_obj.stem
+    for record in asset_records:
+        asset_path = record.get("asset_path", "")
+        asset_name = Path(asset_path).stem
 
         if " " not in asset_name:
             continue
@@ -309,12 +359,10 @@ def detect_spaces_in_name(asset_paths: List[str]) -> List[Issue]:
     return issues
 
 
-# ---------------------------------------------------------------------------
 # NM003 — detect_special_chars
-# ---------------------------------------------------------------------------
 
 
-def detect_special_chars(asset_paths: List[str]) -> List[Issue]:
+def detect_special_chars(asset_records: List[AssetRecord]) -> List[Issue]:
     """NM003: flag names containing characters outside [A-Za-z0-9_].
 
     Special characters break UE5 asset references and cause errors
@@ -322,9 +370,9 @@ def detect_special_chars(asset_paths: List[str]) -> List[Issue]:
     """
     issues: List[Issue] = []
 
-    for asset_path in asset_paths:
-        asset_path_obj = Path(asset_path)
-        asset_name = asset_path_obj.stem
+    for record in asset_records:
+        asset_path = record.get("asset_path", "")
+        asset_name = Path(asset_path).stem
 
         illegal_chars = _ILLEGAL_CHAR_PATTERN.findall(asset_name)
         if not illegal_chars:
@@ -348,12 +396,10 @@ def detect_special_chars(asset_paths: List[str]) -> List[Issue]:
     return issues
 
 
-# ---------------------------------------------------------------------------
 # NM004 — detect_lowercase_names
-# ---------------------------------------------------------------------------
 
 
-def detect_lowercase_names(asset_paths: List[str]) -> List[Issue]:
+def detect_lowercase_names(asset_records: List[AssetRecord]) -> List[Issue]:
     """NM004: flag asset names that start with a lowercase letter.
 
     UE5 convention requires PascalCase or a valid uppercase prefix.
@@ -362,9 +408,9 @@ def detect_lowercase_names(asset_paths: List[str]) -> List[Issue]:
     """
     issues: List[Issue] = []
 
-    for asset_path in asset_paths:
-        asset_path_obj = Path(asset_path)
-        asset_name = asset_path_obj.stem
+    for record in asset_records:
+        asset_path = record.get("asset_path", "")
+        asset_name = Path(asset_path).stem
 
         if not asset_name:
             continue
@@ -392,12 +438,10 @@ def detect_lowercase_names(asset_paths: List[str]) -> List[Issue]:
     return issues
 
 
-# ---------------------------------------------------------------------------
 # NM005 — detect_duplicate_names
-# ---------------------------------------------------------------------------
 
 
-def detect_duplicate_names(asset_paths: List[str]) -> List[Issue]:
+def detect_duplicate_names(asset_records: List[AssetRecord]) -> List[Issue]:
     """NM005: flag assets sharing the same base name across folders.
 
     Duplicate names cause confusion when referencing assets in code
@@ -406,7 +450,8 @@ def detect_duplicate_names(asset_paths: List[str]) -> List[Issue]:
     Detection is case-insensitive.
     """
     name_to_paths: Dict[str, List[str]] = defaultdict(list)
-    for asset_path in asset_paths:
+    for record in asset_records:
+        asset_path = record.get("asset_path", "")
         asset_name = Path(asset_path).stem
         name_to_paths[asset_name.lower()].append(asset_path)
 
@@ -439,9 +484,7 @@ def detect_duplicate_names(asset_paths: List[str]) -> List[Issue]:
     return issues
 
 
-# ---------------------------------------------------------------------------
 # NM006 — detect_missing_tex_suffix
-# ---------------------------------------------------------------------------
 
 # Valid channel suffixes for Texture2D assets.
 # Confirm final list with Raúl / Tech Art before Sprint 5 freeze.
@@ -469,7 +512,7 @@ _TEXTURE_PREFIX: str = "T_"
 
 
 def detect_missing_tex_suffix(
-    asset_paths: List[str],
+    asset_records: List[AssetRecord],
 ) -> List[Issue]:
     """NM006: flag Texture2D assets that have no channel suffix.
 
@@ -480,7 +523,8 @@ def detect_missing_tex_suffix(
     """
     issues: List[Issue] = []
 
-    for asset_path in asset_paths:
+    for record in asset_records:
+        asset_path = record.get("asset_path", "")
         asset_name = Path(asset_path).stem
 
         if not asset_name.startswith(_TEXTURE_PREFIX):
@@ -526,7 +570,7 @@ _PREFIX_STRIP_PATTERN: re.Pattern = re.compile(r"^[A-Z]+_+")
 
 
 def detect_non_pascal_case(
-    asset_paths: List[str],
+    asset_records: List[AssetRecord],
 ) -> List[Issue]:
     """NM007: flag names that are not PascalCase after the prefix.
 
@@ -539,7 +583,8 @@ def detect_non_pascal_case(
     """
     issues: List[Issue] = []
 
-    for asset_path in asset_paths:
+    for record in asset_records:
+        asset_path = record.get("asset_path", "")
         asset_name = Path(asset_path).stem
 
         if not _has_valid_prefix(asset_name):
@@ -595,7 +640,7 @@ _MAX_ASSET_NAME_LENGTH: int = 64
 
 
 def detect_name_too_long(
-    asset_paths: List[str],
+    asset_records: List[AssetRecord],
 ) -> List[Issue]:
     """NM008: flag asset names that exceed the maximum length.
 
@@ -606,7 +651,8 @@ def detect_name_too_long(
     """
     issues: List[Issue] = []
 
-    for asset_path in asset_paths:
+    for record in asset_records:
+        asset_path = record.get("asset_path", "")
         asset_name = Path(asset_path).stem
 
         if len(asset_name) <= _MAX_ASSET_NAME_LENGTH:
@@ -632,33 +678,431 @@ def detect_name_too_long(
 
 
 # ---------------------------------------------------------------------------
+# NM009 — detect_wrong_folder
+# ---------------------------------------------------------------------------
+
+
+def detect_wrong_folder(
+    asset_records: List[AssetRecord],
+) -> List[Issue]:
+    """NM009: flag assets whose type does not match their folder.
+
+    Uses the real asset_type from UE5 AssetRegistry (sent by the plugin).
+    Skips assets with Unknown type — requires real type to be useful.
+    Example: a StaticMesh in /Textures/ or a Blueprint in /Materials/.
+    """
+    issues: List[Issue] = []
+
+    for record in asset_records:
+        asset_path = record.get("asset_path", "")
+        asset_type = record.get("asset_type", "Unknown") or "Unknown"
+
+        if asset_type == "Unknown":
+            continue
+
+        expected_folder = _TYPE_TO_EXPECTED_FOLDER.get(asset_type)
+        if expected_folder is None:
+            continue
+
+        normalised_path = asset_path.lower().replace("\\", "/")
+        folder_rule = _infer_folder_rule(normalised_path)
+
+        if folder_rule is None:
+            continue
+
+        actual_folder = folder_rule["folder"]
+
+        # Asset is in correct folder — no issue
+        if actual_folder == expected_folder:
+            continue
+
+        # Also accept plural/singular variants of the same folder
+        # e.g. "texture" and "textures" are both valid for Texture2D
+        if actual_folder.rstrip("s") == expected_folder.rstrip("s"):
+            continue
+
+        asset_name = Path(asset_path).stem
+        issues.append(
+            _build_issue(
+                rule_id="NM009",
+                asset_path=asset_path,
+                current_name=asset_name,
+                suggested_name=asset_name,
+                asset_type=asset_type,
+                message=(
+                    f"'{asset_name}' is a {asset_type} but is "
+                    f"located in '/{actual_folder}/' — move it "
+                    f"to '/{expected_folder}/'."
+                ),
+            )
+        )
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# NM010 — detect_double_prefix
+# ---------------------------------------------------------------------------
+
+
+def detect_double_prefix(asset_records: List[AssetRecord]) -> List[Issue]:
+    """NM010: flag assets with a duplicated prefix (e.g. T_T_HeroSword).
+    Happens when an already-prefixed asset is renamed incorrectly.
+    """
+    issues: List[Issue] = []
+
+    double_prefix_pattern = re.compile(r"^([A-Z]+_)\1")
+
+    for record in asset_records:
+        asset_path = record.get("asset_path", "")
+        asset_name = Path(asset_path).stem
+        prefix_match = double_prefix_pattern.match(asset_name)
+        if not prefix_match:
+            continue
+
+        duplicated_prefix = prefix_match.group(1)
+        suggested_name = asset_name[len(duplicated_prefix) :]
+        issues.append(
+            _build_issue(
+                rule_id="NM010",
+                asset_path=asset_path,
+                current_name=asset_name,
+                suggested_name=suggested_name,
+                asset_type="Unknown",
+                message=(
+                    f"Duplicated prefix '{duplicated_prefix}' "
+                    f"in '{asset_name}' — remove one copy."
+                ),
+            )
+        )
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# NM011 — detect_number_start
+# ---------------------------------------------------------------------------
+
+
+def detect_number_start(asset_records: List[AssetRecord]) -> List[Issue]:
+    """NM011: flag assets whose name starts with a digit (e.g. 123_Hero).
+    UE5 asset names starting with a number cause reference issues.
+    """
+    issues: List[Issue] = []
+
+    for record in asset_records:
+        asset_path = record.get("asset_path", "")
+        asset_name = Path(asset_path).stem
+        if not asset_name or not asset_name[0].isdigit():
+            continue
+
+        suggested_name = "A_" + asset_name
+        issues.append(
+            _build_issue(
+                rule_id="NM011",
+                asset_path=asset_path,
+                current_name=asset_name,
+                suggested_name=suggested_name,
+                asset_type="Unknown",
+                message=(
+                    f"'{asset_name}' starts with a number — "
+                    "UE5 asset names must start with a letter."
+                ),
+            )
+        )
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# NM012 — detect_consecutive_underscores
+# ---------------------------------------------------------------------------
+
+
+def detect_consecutive_underscores(
+    asset_records: List[AssetRecord],
+) -> List[Issue]:
+    """NM012: flag asset names with consecutive underscores (e.g. T__Hero).
+    Double underscores are usually a typo and break naming consistency.
+    """
+    issues: List[Issue] = []
+    consecutive_underscore_pattern = re.compile(r"_{2,}")
+
+    for record in asset_records:
+        asset_path = record.get("asset_path", "")
+        asset_name = Path(asset_path).stem
+        if not consecutive_underscore_pattern.search(asset_name):
+            continue
+
+        suggested_name = consecutive_underscore_pattern.sub("_", asset_name)
+        issues.append(
+            _build_issue(
+                rule_id="NM012",
+                asset_path=asset_path,
+                current_name=asset_name,
+                suggested_name=suggested_name,
+                asset_type="Unknown",
+                message=(
+                    f"'{asset_name}' contains consecutive "
+                    "underscores — replace with a single '_'."
+                ),
+            )
+        )
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# NM013 — detect_trailing_underscore
+# ---------------------------------------------------------------------------
+
+
+def detect_trailing_underscore(
+    asset_records: List[AssetRecord],
+) -> List[Issue]:
+    """NM013: flag asset names ending with an underscore (e.g. T_HeroSword_).
+    Trailing underscores are always a typo and break naming consistency.
+    """
+    issues: List[Issue] = []
+
+    for record in asset_records:
+        asset_path = record.get("asset_path", "")
+        asset_name = Path(asset_path).stem
+        if not asset_name.endswith("_"):
+            continue
+
+        suggested_name = asset_name.rstrip("_")
+        issues.append(
+            _build_issue(
+                rule_id="NM013",
+                asset_path=asset_path,
+                current_name=asset_name,
+                suggested_name=suggested_name,
+                asset_type="Unknown",
+                message=(
+                    f"'{asset_name}' ends with an underscore "
+                    "— remove the trailing '_'."
+                ),
+            )
+        )
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# NM014 — detect_generic_name
+# ---------------------------------------------------------------------------
+
+# Generic name patterns — words that indicate a placeholder or
+# non-descriptive asset name. English only. Case-insensitive.
+# Grouped by category for maintainability.
+_GENERIC_WORDS: frozenset = frozenset(
+    [
+        # Placeholders
+        "new",
+        "test",
+        "temp",
+        "tmp",
+        "old",
+        "backup",
+        "copy",
+        "draft",
+        "wip",
+        "todo",
+        # Type repetition — name just repeats the asset type
+        "texture",
+        "mesh",
+        "material",
+        "blueprint",
+        "sound",
+        "animation",
+        "asset",
+        "object",
+        "actor",
+        # Generic content words
+        "default",
+        "sample",
+        "example",
+        "untitled",
+        "unnamed",
+        "placeholder",
+        "dummy",
+        "generic",
+        "template",
+    ]
+)
+
+# Regex: name body is only digits after the prefix
+_ONLY_DIGITS_AFTER_PREFIX: re.Pattern = re.compile(r"^[A-Z]+_\d+$")
+
+
+def detect_generic_name(asset_records: List[AssetRecord]) -> List[Issue]:
+    """NM014: flag assets with generic or placeholder names.
+    Uses folder inference to give context-aware messages.
+    Only flags names that are obviously non-descriptive.
+    """
+    issues: List[Issue] = []
+
+    for record in asset_records:
+        asset_path = record.get("asset_path", "")
+        asset_name = Path(asset_path).stem
+        normalised_path = asset_path.lower().replace("\\", "/")
+
+        # Check name-only-digits pattern first (e.g. T_001, SM_1)
+        if _ONLY_DIGITS_AFTER_PREFIX.match(asset_name):
+            folder_rule = _infer_folder_rule(normalised_path)
+            asset_type = folder_rule["type"] if folder_rule else "Unknown"
+            issues.append(
+                _build_issue(
+                    rule_id="NM014",
+                    asset_path=asset_path,
+                    current_name=asset_name,
+                    suggested_name=asset_name,
+                    asset_type=asset_type,
+                    message=(
+                        f"'{asset_name}' uses only digits after "
+                        "the prefix — use a descriptive name."
+                    ),
+                )
+            )
+            continue
+
+        # Strip valid prefix to get the name body
+        prefix_match = _PREFIX_STRIP_PATTERN.match(asset_name)
+        body = _PREFIX_STRIP_PATTERN.sub("", asset_name) if prefix_match else asset_name
+
+        # Check if the body (lowercased) is a generic word
+        # optionally followed by digits (e.g. Texture1, Mesh02)
+        body_stripped = re.sub(r"\d+$", "", body).lower()
+        if body_stripped not in _GENERIC_WORDS:
+            continue
+
+        folder_rule = _infer_folder_rule(normalised_path)
+        asset_type = folder_rule["type"] if folder_rule else "Unknown"
+        issues.append(
+            _build_issue(
+                rule_id="NM014",
+                asset_path=asset_path,
+                current_name=asset_name,
+                suggested_name=asset_name,
+                asset_type=asset_type,
+                message=(
+                    f"'{asset_name}' is a generic placeholder "
+                    "name — use a descriptive name that "
+                    "identifies the asset's content or purpose."
+                ),
+            )
+        )
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# NM015 — detect_version_suffix
+# ---------------------------------------------------------------------------
+
+# Version and status suffixes that indicate the asset name
+# is being used as a version control mechanism.
+# All lowercase for case-insensitive comparison.
+_VERSION_SUFFIXES: tuple = (
+    "_v1",
+    "_v2",
+    "_v3",
+    "_v4",
+    "_v5",
+    "_v01",
+    "_v02",
+    "_v03",
+    "_old",
+    "_new",
+    "_final",
+    "_copy",
+    "_temp",
+    "_tmp",
+    "_backup",
+    "_bak",
+    "_test",
+    "_wip",
+    "_draft",
+)
+
+
+def detect_version_suffix(asset_records: List[AssetRecord]) -> List[Issue]:
+    """NM015: flag assets using version or status suffixes in their name.
+    These indicate source control is not being used correctly.
+    Examples: T_HeroSword_v2, SM_Rock_old, BP_Player_FINAL.
+    """
+    issues: List[Issue] = []
+
+    for record in asset_records:
+        asset_path = record.get("asset_path", "")
+        asset_name = Path(asset_path).stem
+        lower_name = asset_name.lower()
+
+        matched_suffix = next(
+            (suffix for suffix in _VERSION_SUFFIXES if lower_name.endswith(suffix)),
+            None,
+        )
+        if not matched_suffix:
+            continue
+
+        suggested_name = asset_name[: -len(matched_suffix)]
+        issues.append(
+            _build_issue(
+                rule_id="NM015",
+                asset_path=asset_path,
+                current_name=asset_name,
+                suggested_name=suggested_name,
+                asset_type="Unknown",
+                message=(
+                    f"'{asset_name}' uses a version/status "
+                    f"suffix '{matched_suffix}' — use source "
+                    "control for versioning instead."
+                ),
+            )
+        )
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # Entry point — called by api/routes/assets.py
 # ---------------------------------------------------------------------------
 
 
-def run_all_naming_rules(asset_paths: List[str]) -> List[Issue]:
-    """Run NM001–NM008 against a list of asset path strings.
+def run_all_naming_rules(asset_records: List[AssetRecord]) -> List[Issue]:
+    """Run NM001–NM015 against a list of asset record dicts.
 
+    Each record must have: asset_path (str), asset_type (str).
     Returns a merged list of all naming issues found.
     Called by POST /assets/scan in api/routes/assets.py.
-    Update the import there: scan_asset_paths → run_all_naming_rules.
     """
     all_issues: List[Issue] = []
 
-    all_issues += detect_missing_prefix(asset_paths)
-    all_issues += detect_spaces_in_name(asset_paths)
-    all_issues += detect_special_chars(asset_paths)
-    all_issues += detect_lowercase_names(asset_paths)
-    all_issues += detect_duplicate_names(asset_paths)
-    all_issues += detect_missing_tex_suffix(asset_paths)
-    all_issues += detect_non_pascal_case(asset_paths)
-    all_issues += detect_name_too_long(asset_paths)
+    all_issues += detect_missing_prefix(asset_records)
+    all_issues += detect_spaces_in_name(asset_records)
+    all_issues += detect_special_chars(asset_records)
+    all_issues += detect_lowercase_names(asset_records)
+    all_issues += detect_duplicate_names(asset_records)
+    all_issues += detect_missing_tex_suffix(asset_records)
+    all_issues += detect_non_pascal_case(asset_records)
+    all_issues += detect_name_too_long(asset_records)
+    all_issues += detect_wrong_folder(asset_records)
+    all_issues += detect_double_prefix(asset_records)
+    all_issues += detect_number_start(asset_records)
+    all_issues += detect_consecutive_underscores(asset_records)
+    all_issues += detect_trailing_underscore(asset_records)
+    all_issues += detect_generic_name(asset_records)
+    all_issues += detect_version_suffix(asset_records)
 
     return all_issues
 
 
 # Backward-compatible alias — remove once assets.py import is updated.
-scan_asset_paths = run_all_naming_rules
+def scan_asset_paths(asset_paths: List[str]) -> List[Issue]:
+    """Backward-compatible wrapper — accepts List[str]."""
+    records = [{"asset_path": p, "asset_type": "Unknown"} for p in asset_paths]
+    return run_all_naming_rules(records)
 
 
 # ---------------------------------------------------------------------------

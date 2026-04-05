@@ -2586,7 +2586,7 @@ def run_all_cpp_rules(
     Runs all deterministic C++ rules against the given
     file content and returns a merged list of issues.
 
-    Performance (CP):      CP001 - CP005
+    Performance (CP):      CP001 - CP010
     Best Practices (CB):   CB001 - CB020
     Security (CS):         CS001 - CS008
     Maintainability (CM):  CM001 - CM005

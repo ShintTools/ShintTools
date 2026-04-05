@@ -28,17 +28,13 @@ class AssetEntry(BaseModel):
 
 class AssetScanRequest(BaseModel):
     # Full scan request from the UE5 plugin.
-    # Raúl sends the array under 'asset_paths' (not 'assets').
+    # The plugin sends asset objects in 'assets[]',
+    # not a plain list of paths.
     project_id: str = ""
     api_key: str = ""
     project_name: str = ""
-    asset_paths: list[AssetEntry] = Field(
-        default_factory=list,
-        alias="asset_paths",
-    )
+    assets: list[AssetEntry] = Field(default_factory=list)
     engine: str = "unreal"
-
-    model_config = {"populate_by_name": True}
 
 
 class AssetIssueEntry(BaseModel):
@@ -76,20 +72,26 @@ async def scan_assets(payload: AssetScanRequest):
     Sprint 4: replace type inference with real
     AssetRegistry lookups.
     """
-    from modules.naming import scan_asset_paths
+    from modules.naming import run_all_naming_rules
 
-    # Extract asset_path strings from the asset objects
-    # sent by the plugin
-    extracted_paths = [
-        entry.asset_path for entry in payload.asset_paths if entry.asset_path
+    # Build asset records passing both path and type to the rules.
+    # asset_type comes from UE5 AssetRegistry via the plugin — used
+    # by NM001 (prefix) and NM009 (wrong folder) for accurate detection.
+    asset_records = [
+        {
+            "asset_path": asset.asset_path,
+            "asset_type": asset.type or "Unknown",
+        }
+        for asset in payload.assets
+        if asset.asset_path
     ]
 
     t0 = time.perf_counter()
-    issues = scan_asset_paths(extracted_paths)
+    issues = run_all_naming_rules(asset_records)
     scan_time = round(time.perf_counter() - t0, 4)
 
     summary = {
-        "total_assets": len(extracted_paths),
+        "total_assets": len(asset_records),
         "invalid_assets": len(issues),
         "scan_time_seconds": scan_time,
     }
