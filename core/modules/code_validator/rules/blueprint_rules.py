@@ -8,7 +8,7 @@
 #               category, message
 #
 # Rule index:
-#   Best Practices (BPB): BPB001-BPB003
+#   Best Practices (BPB): BPB001-BPB007
 #   Performance (BPP):    BPP001-BPP003
 #   Maintainability (BPM): BPM001-BPM007
 #   Security (BPS):       pending
@@ -65,6 +65,8 @@ def detect_missing_bp_prefix(
                     "prefix — rename to BP_<AssetName> to follow"
                     " UE5 naming conventions."
                 ),
+                "fix_suggestion": f"Rename '{bp_name}' to 'BP_{bp_name}'",
+                "is_auto_fixable": True,
             }
         )
     return issues
@@ -101,6 +103,8 @@ def detect_no_functions_large_graph(
                     "functions defined — split logic into named "
                     "functions for readability and reuse."
                 ),
+                "fix_suggestion": "",
+                "is_auto_fixable": False,
             }
         )
     return issues
@@ -172,6 +176,11 @@ def detect_generic_variable_name(
                     "use a descriptive name that reflects its "
                     "purpose (e.g. 'PlayerHealth', 'MoveSpeed')."
                 ),
+                "fix_suggestion": (
+                    f"Rename '{var_name}' to a descriptive name "
+                    "reflecting its purpose (e.g. 'PlayerHealth', 'MoveSpeed')"
+                ),
+                "is_auto_fixable": True,
             }
         )
     return issues
@@ -208,6 +217,10 @@ def detect_tick_enabled(
                     "updates are not needed. Use timers or "
                     "events instead."
                 ),
+                "fix_suggestion": (
+                    "Set 'Start with Tick Enabled' to false in Class Defaults"
+                ),
+                "is_auto_fixable": True,
             }
         )
     return issues
@@ -252,6 +265,8 @@ def detect_excessive_casts(
                         "use interfaces or event dispatchers to "
                         "reduce hard references."
                     ),
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
                 }
             )
     return issues
@@ -292,6 +307,8 @@ def detect_heavy_event_tick(
                         f"(max: {_MAX_TICK_NODES}) — move "
                         "infrequent logic to timers or events."
                     ),
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
                 }
             )
     return issues
@@ -331,6 +348,10 @@ def detect_unused_variables(
                         "never used — remove it or mark it as "
                         "deprecated."
                     ),
+                    "fix_suggestion": (
+                        f"Remove unused variable '{var_name}' from the Blueprint"
+                    ),
+                    "is_auto_fixable": True,
                 }
             )
     return issues
@@ -363,6 +384,11 @@ def detect_disconnected_nodes(
                     "disconnected node(s) — delete them or "
                     "connect them to the execution flow."
                 ),
+                "fix_suggestion": (
+                    f"Delete {disconnected_count} disconnected node(s) "
+                    "from the Blueprint graph"
+                ),
+                "is_auto_fixable": True,
             }
         )
     return issues
@@ -395,6 +421,8 @@ def detect_large_blueprint(
                     f"(max: {_MAX_TOTAL_NODES}) — split into "
                     "smaller Blueprints or move logic to C++."
                 ),
+                "fix_suggestion": "",
+                "is_auto_fixable": False,
             }
         )
     return issues
@@ -433,6 +461,8 @@ def detect_high_complexity_function(
                         f"(max: {_MAX_FUNCTION_COMPLEXITY}) — "
                         "split into smaller focused functions."
                     ),
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
                 }
             )
     return issues
@@ -471,6 +501,8 @@ def detect_large_graph(
                         " — split logic into smaller functions "
                         "or separate graphs."
                     ),
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
                 }
             )
     return issues
@@ -507,6 +539,8 @@ def detect_blueprint_no_functions(
                     "no functions — organise logic into named "
                     "functions for maintainability."
                 ),
+                "fix_suggestion": "",
+                "is_auto_fixable": False,
             }
         )
     return issues
@@ -548,8 +582,173 @@ def detect_abandoned_blueprint(
                     "incomplete or abandoned. Review and complete "
                     "or delete this Blueprint."
                 ),
+                "fix_suggestion": "",
+                "is_auto_fixable": False,
             }
         )
+    return issues
+
+
+# ── ADDITIONAL BEST PRACTICES (BPB004-BPB006) ────────
+
+
+# BPB004: Blueprint overrides BeginPlay without calling Super
+def detect_missing_begin_play_super(
+    blueprint: dict,
+) -> List[Issue]:
+    """BPB004: flag Blueprints that override BeginPlay but do not
+    call the parent implementation (Super::BeginPlay).
+    Missing the Super call can break initialization chains.
+    """
+    issues: List[Issue] = []
+    bp_path = blueprint.get("path", "")
+    bp_name = blueprint.get("name", "")
+    stats = blueprint.get("stats", {})
+    graphs = blueprint.get("graphs", [])
+
+    # Only flag if the BP has a BeginPlay event but no Super call
+    has_begin_play_event = any(
+        node.get("type") == "EventBeginPlay"
+        for graph in graphs
+        for node in graph.get("nodes", [])
+    )
+
+    if has_begin_play_event and not stats.get("has_begin_play_super", True):
+        issues.append(
+            {
+                "asset_path": bp_path,
+                "graph": "EventGraph",
+                "severity": "error",
+                "rule_id": "BPB004",
+                "category": "Best Practices",
+                "message": (
+                    f"'{bp_name}' overrides BeginPlay without "
+                    "calling Parent: BeginPlay — add a Call to "
+                    "Parent Function node to preserve the "
+                    "initialization chain."
+                ),
+                "fix_suggestion": "",
+                "is_auto_fixable": False,
+            }
+        )
+    return issues
+
+
+# BPB005: Blueprint overrides EndPlay without calling Super
+def detect_missing_end_play_super(
+    blueprint: dict,
+) -> List[Issue]:
+    """BPB005: flag Blueprints that override EndPlay but do not
+    call the parent implementation (Super::EndPlay).
+    Missing the Super call can cause resource leaks.
+    """
+    issues: List[Issue] = []
+    bp_path = blueprint.get("path", "")
+    bp_name = blueprint.get("name", "")
+    stats = blueprint.get("stats", {})
+    graphs = blueprint.get("graphs", [])
+
+    has_end_play_event = any(
+        node.get("type") == "EventEndPlay"
+        for graph in graphs
+        for node in graph.get("nodes", [])
+    )
+
+    if has_end_play_event and not stats.get("has_end_play_super", True):
+        issues.append(
+            {
+                "asset_path": bp_path,
+                "graph": "EventGraph",
+                "severity": "error",
+                "rule_id": "BPB005",
+                "category": "Best Practices",
+                "message": (
+                    f"'{bp_name}' overrides EndPlay without "
+                    "calling Parent: EndPlay — add a Call to "
+                    "Parent Function node to ensure proper "
+                    "cleanup."
+                ),
+                "fix_suggestion": "",
+                "is_auto_fixable": False,
+            }
+        )
+    return issues
+
+
+# BPB006: Public function without tooltip
+def detect_function_no_tooltip(
+    blueprint: dict,
+) -> List[Issue]:
+    """BPB006: flag public Blueprint functions that have no tooltip.
+    Public functions are part of the class API — they should have
+    a description so other developers understand their purpose.
+    """
+    issues: List[Issue] = []
+    bp_path = blueprint.get("path", "")
+    functions = blueprint.get("functions", [])
+
+    for func in functions:
+        func_name = func.get("name", "")
+        is_public = func.get("is_public", True)
+        has_tooltip = func.get("has_tooltip", False)
+
+        if is_public and not has_tooltip:
+            issues.append(
+                {
+                    "asset_path": bp_path,
+                    "graph": func_name,
+                    "severity": "warning",
+                    "rule_id": "BPB006",
+                    "category": "Best Practices",
+                    "message": (
+                        f"Public function '{func_name}' has no "
+                        "tooltip — add a description so other "
+                        "developers understand its purpose."
+                    ),
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
+                }
+            )
+    return issues
+
+
+# BPB007: Public variable without category
+def detect_variable_no_category(
+    blueprint: dict,
+) -> List[Issue]:
+    """BPB007: flag public Blueprint variables without a category.
+    Categories organise variables in the Details panel and make
+    Blueprints easier to understand for other developers.
+    """
+    issues: List[Issue] = []
+    bp_path = blueprint.get("path", "")
+    variables = blueprint.get("variables", [])
+
+    for variable in variables:
+        var_name = variable.get("name", "")
+        is_public = variable.get("is_public", False)
+        category = variable.get("category", "")
+
+        if is_public and (not category or category.lower() in ("", "default")):
+            issues.append(
+                {
+                    "asset_path": bp_path,
+                    "graph": "Variables",
+                    "severity": "warning",
+                    "rule_id": "BPB007",
+                    "category": "Best Practices",
+                    "message": (
+                        f"Public variable '{var_name}' has no "
+                        "category — assign a category to organise "
+                        "variables in the Details panel."
+                    ),
+                    "fix_suggestion": (
+                        f"Assign a category to '{var_name}' "
+                        "(e.g. 'Combat', 'Movement', 'UI')"
+                    ),
+                    "is_auto_fixable": True,
+                }
+            )
     return issues
 
 
@@ -563,9 +762,9 @@ def run_all_blueprint_rules(
     Runs all deterministic Blueprint rules against a single
     blueprint dict and returns a merged list of issues.
 
-    Best Practices (BPB): BPB001
-    Performance (BPP):    BPP001, BPP002
-    Maintainability (BPM): BPM001-BPM005
+    Best Practices (BPB): BPB001-BPB007
+    Performance (BPP):    BPP001-BPP003
+    Maintainability (BPM): BPM001-BPM007
     Security (BPS):       pending — no rules yet
     """
     issues: List[Issue] = []
@@ -574,6 +773,10 @@ def run_all_blueprint_rules(
     issues += detect_missing_bp_prefix(blueprint)
     issues += detect_no_functions_large_graph(blueprint)
     issues += detect_generic_variable_name(blueprint)
+    issues += detect_missing_begin_play_super(blueprint)
+    issues += detect_missing_end_play_super(blueprint)
+    issues += detect_function_no_tooltip(blueprint)
+    issues += detect_variable_no_category(blueprint)
 
     # Performance
     issues += detect_tick_enabled(blueprint)
