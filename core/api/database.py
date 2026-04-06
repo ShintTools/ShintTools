@@ -10,7 +10,7 @@ DB_NAME = "shinttools"
 COLLECTION_ANALYSIS = "analysis_results"
 
 # Create the async MongoDB client
-client: AsyncIOMotorClient = AsyncIOMotorClient(MONGO_URL)
+client = AsyncIOMotorClient(MONGO_URL)  # type: ignore[var-annotated]
 
 # Reference to the shinttools database
 database = client[DB_NAME]
