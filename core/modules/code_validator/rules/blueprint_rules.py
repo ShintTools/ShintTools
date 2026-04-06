@@ -1,71 +1,20 @@
 # core/modules/code_validator/rules/blueprint_rules.py
 #
 # Deterministic Blueprint rules for Unreal Engine 5.
+# Input: blueprint dict exported by the UE5 plugin.
+# Input fields: name, path, type, graphs[], variables[],
+#               functions[], stats{}
+# Issue fields: asset_path, graph, severity, rule_id,
+#               category, message
 #
-# Rules receive the blueprint dict exported by the UE5
-# plugin via UBlueprint / UEdGraph / UK2Node.
-#
-# Expected input structure (per file in the plugin JSON):
-# {
-#   "name": "BP_PlayerCharacter",
-#   "path": "/Game/Blueprints/Characters/BP_PlayerCharacter",
-#   "type": "blueprint",
-#   "graphs": [
-#     {
-#       "name": "EventGraph",
-#       "type": "event_graph",
-#       "nodes_count": 87,
-#       "nodes": [
-#         { "type": "CastTo", "target": "BP_Enemy", "count": 4 }
-#       ]
-#     }
-#   ],
-#   "variables": [
-#     { "name": "Health", "type": "Float", "used": true }
-#   ],
-#   "functions": [
-#     { "name": "HandleInventory", "complexity": 22 }
-#   ],
-#   "stats": {
-#     "total_nodes": 234,
-#     "cast_nodes": 12,
-#     "tick_enabled": true,
-#     "disconnected_nodes": 4
-#   }
-# }
-#
-# Each issue contains:
-#   asset_path  — path to the Blueprint asset
-#   graph       — graph name where the issue was found
-#   severity    — error | warning | info
-#   rule_id     — unique rule identifier
-#   category    — Performance | Best Practices
-#                 | Maintainability | Security
-#   message     — human-readable description
-#
-# ── Rule index ────────────────────────────────────────
-#
-# BEST PRACTICES (BPB)
-#   BPB001 — Blueprint missing BP_ prefix
-#   BPB002 — REMOVED: test folder rule not valid across
-#            studios (each studio has its own folder
-#            structure). Scheduled for Phase 2 with
-#            configurable paths via shinttools.config.json
-#
-# PERFORMANCE (BPP)
-#   BPP001 — Tick enabled in Blueprint
-#   BPP002 — Excessive Cast To nodes per graph
-#
-# MAINTAINABILITY (BPM)
-#   BPM001 — Unused variables
-#   BPM002 — Disconnected nodes
-#   BPM003 — Blueprint too large (total nodes)
-#   BPM004 — High complexity function
-#   BPM005 — Graph too large (nodes per graph)
-#
-# SECURITY (BPS) — pending, no rules yet
-# ──────────────────────────────────────────────────────
+# Rule index:
+#   Best Practices (BPB): BPB001-BPB003
+#   Performance (BPP):    BPP001-BPP003
+#   Maintainability (BPM): BPM001-BPM007
+#   Security (BPS):       pending
 
+# ──────────────────────────────────────────────────────
+import re
 from typing import Dict, List
 
 # Type alias for issue dictionary
@@ -115,6 +64,113 @@ def detect_missing_bp_prefix(
                     f"Blueprint '{bp_name}' does not use BP_ "
                     "prefix — rename to BP_<AssetName> to follow"
                     " UE5 naming conventions."
+                ),
+            }
+        )
+    return issues
+
+
+# BPB002: Blueprint without functions — all logic in EventGraph
+def detect_no_functions_large_graph(
+    blueprint: dict,
+) -> List[Issue]:
+    """BPB002: flag Blueprints with many nodes but no functions defined.
+    All logic in EventGraph makes the Blueprint hard to maintain.
+    Split logic into named functions for readability.
+    """
+    issues: List[Issue] = []
+    bp_path = blueprint.get("path", "")
+    bp_name = blueprint.get("name", "")
+    functions = blueprint.get("functions", [])
+    total_nodes = blueprint.get("stats", {}).get("total_nodes", 0)
+
+    # Configurable: flag when Blueprint has many nodes but no functions.
+    # 50 nodes without any function is a clear maintainability issue.
+    _MIN_NODES_FOR_FUNCTION_REQUIRED: int = 50
+
+    if not functions and total_nodes >= _MIN_NODES_FOR_FUNCTION_REQUIRED:
+        issues.append(
+            {
+                "asset_path": bp_path,
+                "graph": "EventGraph",
+                "severity": "warning",
+                "rule_id": "BPB002",
+                "category": "Best Practices",
+                "message": (
+                    f"'{bp_name}' has {total_nodes} nodes but no "
+                    "functions defined — split logic into named "
+                    "functions for readability and reuse."
+                ),
+            }
+        )
+    return issues
+
+
+# BPB003: Variable with generic or placeholder name
+def detect_generic_variable_name(
+    blueprint: dict,
+) -> List[Issue]:
+    """BPB003: flag Blueprint variables with generic placeholder names.
+    Names like NewVar, Temp, Var_1 give no context about their purpose.
+    Use descriptive names that reflect the variable's role.
+    """
+    issues: List[Issue] = []
+    bp_path = blueprint.get("path", "")
+    variables = blueprint.get("variables", [])
+
+    # Generic variable name patterns — case-insensitive check
+    _GENERIC_VAR_WORDS: frozenset = frozenset(
+        [
+            "newvar",
+            "new_var",
+            "tempvar",
+            "temp_var",
+            "temp",
+            "tmp",
+            "test",
+            "var",
+            "variable",
+            "unnamed",
+            "untitled",
+            "placeholder",
+            "dummy",
+            "default",
+            "value",
+            "data",
+            "item",
+            "object",
+        ]
+    )
+
+    # Regex: matches names like Var_1, Var1, Variable2
+    generic_indexed_pattern = re.compile(
+        r"^(?:var|variable|temp|new)[_]?\d*$",
+        re.IGNORECASE,
+    )
+
+    for variable in variables:
+        var_name = variable.get("name", "")
+        if not var_name:
+            continue
+
+        is_generic = (
+            var_name.lower() in _GENERIC_VAR_WORDS
+            or generic_indexed_pattern.match(var_name)
+        )
+        if not is_generic:
+            continue
+
+        issues.append(
+            {
+                "asset_path": bp_path,
+                "graph": "Variables",
+                "severity": "warning",
+                "rule_id": "BPB003",
+                "category": "Best Practices",
+                "message": (
+                    f"Variable '{var_name}' has a generic name — "
+                    "use a descriptive name that reflects its "
+                    "purpose (e.g. 'PlayerHealth', 'MoveSpeed')."
                 ),
             }
         )
@@ -195,6 +251,46 @@ def detect_excessive_casts(
                         f"(max: {_MAX_CAST_NODES_PER_GRAPH}) — "
                         "use interfaces or event dispatchers to "
                         "reduce hard references."
+                    ),
+                }
+            )
+    return issues
+
+
+# BPP003: EventTick graph with too many nodes
+def detect_heavy_event_tick(
+    blueprint: dict,
+) -> List[Issue]:
+    """BPP003: flag Blueprints with too many nodes in their EventTick graph.
+    Heavy Tick logic runs every frame — move infrequent logic to timers.
+    """
+    issues: List[Issue] = []
+    bp_path = blueprint.get("path", "")
+    graphs = blueprint.get("graphs", [])
+
+    # Configurable: maximum nodes allowed in the EventTick graph.
+    # More than 20 nodes in Tick is a strong signal of overuse.
+    _MAX_TICK_NODES: int = 20
+
+    for graph in graphs:
+        graph_name = graph.get("name", "")
+        nodes_count = graph.get("nodes_count", 0)
+
+        if graph_name.lower() not in ("eventtick", "tick"):
+            continue
+
+        if nodes_count > _MAX_TICK_NODES:
+            issues.append(
+                {
+                    "asset_path": bp_path,
+                    "graph": graph_name,
+                    "severity": "warning",
+                    "rule_id": "BPP003",
+                    "category": "Performance",
+                    "message": (
+                        f"EventTick graph has {nodes_count} nodes "
+                        f"(max: {_MAX_TICK_NODES}) — move "
+                        "infrequent logic to timers or events."
                     ),
                 }
             )
@@ -380,6 +476,83 @@ def detect_large_graph(
     return issues
 
 
+# BPM006: Blueprint with no functions defined
+def detect_blueprint_no_functions(
+    blueprint: dict,
+) -> List[Issue]:
+    """BPM006: flag Blueprints with zero functions defined.
+    Any Blueprint beyond a trivial size should organise logic
+    into named functions for readability and reusability.
+    """
+    issues: List[Issue] = []
+    bp_path = blueprint.get("path", "")
+    bp_name = blueprint.get("name", "")
+    functions = blueprint.get("functions", [])
+    total_nodes = blueprint.get("stats", {}).get("total_nodes", 0)
+
+    # Only flag if the Blueprint has a meaningful number of nodes.
+    # Small Blueprints with no functions are acceptable.
+    _MIN_NODES_TO_REQUIRE_FUNCTIONS: int = 30
+
+    if not functions and total_nodes >= _MIN_NODES_TO_REQUIRE_FUNCTIONS:
+        issues.append(
+            {
+                "asset_path": bp_path,
+                "graph": "All Graphs",
+                "severity": "warning",
+                "rule_id": "BPM006",
+                "category": "Maintainability",
+                "message": (
+                    f"'{bp_name}' has {total_nodes} nodes but "
+                    "no functions — organise logic into named "
+                    "functions for maintainability."
+                ),
+            }
+        )
+    return issues
+
+
+# BPM007: Blueprint with more variables than nodes — likely abandoned
+def detect_abandoned_blueprint(
+    blueprint: dict,
+) -> List[Issue]:
+    """BPM007: flag Blueprints with more variables than nodes.
+    This usually indicates an incomplete or abandoned Blueprint
+    where variables were declared but logic was never implemented.
+    Review and either complete or delete the Blueprint.
+    """
+    issues: List[Issue] = []
+    bp_path = blueprint.get("path", "")
+    bp_name = blueprint.get("name", "")
+    variables = blueprint.get("variables", [])
+    total_nodes = blueprint.get("stats", {}).get("total_nodes", 0)
+
+    variable_count = len(variables)
+
+    # Only flag if the Blueprint has at least some variables
+    # and significantly more variables than nodes.
+    if variable_count < 3:
+        return issues
+
+    if variable_count > total_nodes:
+        issues.append(
+            {
+                "asset_path": bp_path,
+                "graph": "All Graphs",
+                "severity": "warning",
+                "rule_id": "BPM007",
+                "category": "Maintainability",
+                "message": (
+                    f"'{bp_name}' has {variable_count} variables "
+                    f"but only {total_nodes} nodes — may be "
+                    "incomplete or abandoned. Review and complete "
+                    "or delete this Blueprint."
+                ),
+            }
+        )
+    return issues
+
+
 # ── RUNNER ────────────────────────────────────────────
 
 
@@ -399,10 +572,13 @@ def run_all_blueprint_rules(
 
     # Best Practices
     issues += detect_missing_bp_prefix(blueprint)
+    issues += detect_no_functions_large_graph(blueprint)
+    issues += detect_generic_variable_name(blueprint)
 
     # Performance
     issues += detect_tick_enabled(blueprint)
     issues += detect_excessive_casts(blueprint)
+    issues += detect_heavy_event_tick(blueprint)
 
     # Maintainability
     issues += detect_unused_variables(blueprint)
@@ -410,6 +586,8 @@ def run_all_blueprint_rules(
     issues += detect_large_blueprint(blueprint)
     issues += detect_high_complexity_function(blueprint)
     issues += detect_large_graph(blueprint)
+    issues += detect_blueprint_no_functions(blueprint)
+    issues += detect_abandoned_blueprint(blueprint)
 
     return issues
 
