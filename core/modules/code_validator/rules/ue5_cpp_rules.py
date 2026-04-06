@@ -117,8 +117,8 @@ def detect_find_object_in_tick(
                         "Cache the reference in BeginPlay instead"
                     ),
                     "snippet": snippet_line,
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": "// " + snippet_line,
+                    "is_auto_fixable": True,
                 }
             )
     return issues
@@ -165,8 +165,8 @@ def detect_get_component_in_tick(
                         "Cache the reference in BeginPlay instead"
                     ),
                     "snippet": snippet_line,
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": "// " + snippet_line,
+                    "is_auto_fixable": True,
                 }
             )
     return issues
@@ -259,8 +259,10 @@ def detect_log_error_in_tick(
                             " Use a flag to log only once."
                         ),
                         "snippet": body_line.strip(),
-                        "fix_suggestion": "",
-                        "is_auto_fixable": False,
+                        "fix_suggestion": re.sub(
+                            r"Error", "Warning", body_line.strip()
+                        ),
+                        "is_auto_fixable": True,
                     }
                 )
     return issues
@@ -284,6 +286,7 @@ def detect_sleep_on_game_thread(
     source_lines = content.splitlines()
     for line_no, source_line in enumerate(source_lines, start=1):
         if re.search(r"\bFPlatformProcess::Sleep\s*\(", source_line):
+            fix = "// " + source_line.strip()
             issues.append(
                 {
                     "asset_path": file_path,
@@ -301,8 +304,8 @@ def detect_sleep_on_game_thread(
                         "tasks instead."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": fix.strip(),
+                    "is_auto_fixable": True,
                 }
             )
     return issues
@@ -360,8 +363,8 @@ def detect_get_all_actors_in_tick(
                         "use an event-driven approach."
                     ),
                     "snippet": snippet_line,
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": "// " + snippet_line,
+                    "is_auto_fixable": True,
                 }
             )
     return issues
@@ -386,19 +389,41 @@ def detect_tick_enabled_in_constructor(
     issues: List[Issue] = []
     source_lines = content.splitlines()
 
-    # Find constructor bodies
-    constructor_pattern = re.compile(r"\b(\w+)::\1\s*\([^)]*\)\s*\{")
+    # Match constructor signature with or without opening brace on same line
+    # Supports both K&R style: Foo::Foo() {
+    # and Allman style:        Foo::Foo()
+    #                          {
+    constructor_sig_pattern = re.compile(r"\b(\w+)::\1\s*\([^)]*\)")
     in_constructor = False
+    pending_ctor_open = False  # waiting for '{' on next line (Allman style)
     brace_depth = 0
     class_name = "Unknown"
 
     for line_no, source_line in enumerate(source_lines, start=1):
-        ctor_match = constructor_pattern.search(source_line)
-        if ctor_match and not in_constructor:
-            in_constructor = True
-            class_name = ctor_match.group(1)
-            brace_depth = source_line.count("{") - source_line.count("}")
-            continue
+        # Check for constructor signature
+        if not in_constructor:
+            ctor_match = constructor_sig_pattern.search(source_line)
+            if ctor_match:
+                class_name = ctor_match.group(1)
+                if "{" in source_line:
+                    # K&R style — brace on same line
+                    in_constructor = True
+                    brace_depth = source_line.count("{") - source_line.count("}")
+                    pending_ctor_open = False
+                else:
+                    # Allman style — wait for '{' on next line
+                    pending_ctor_open = True
+                continue
+
+            if pending_ctor_open:
+                if "{" in source_line:
+                    in_constructor = True
+                    pending_ctor_open = False
+                    brace_depth = source_line.count("{") - source_line.count("}")
+                else:
+                    # Not a brace line — was not actually a constructor
+                    pending_ctor_open = False
+                continue
 
         if in_constructor:
             brace_depth += source_line.count("{") - source_line.count("}")
@@ -487,8 +512,8 @@ def detect_heavy_math_in_tick(
                         "BeginPlay or cache the result."
                     ),
                     "snippet": snippet_line,
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": "// " + snippet_line,
+                    "is_auto_fixable": True,
                 }
             )
     return issues
@@ -545,8 +570,8 @@ def detect_string_ops_in_tick(
                         "Cache the result or move outside Tick."
                     ),
                     "snippet": snippet_line,
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": "// " + snippet_line,
+                    "is_auto_fixable": True,
                 }
             )
     return issues
@@ -768,8 +793,12 @@ def detect_tarray_copy_in_loop(
                         "allocation every iteration."
                     ),
                     "snippet": snippet_line,
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": re.sub(
+                        r"\bTArray\s*(<[^>]+>)\s+" + re.escape(var_name) + r"\s*=",
+                        r"const TArray\1& " + var_name + " =",
+                        snippet_line,
+                    ),
+                    "is_auto_fixable": True,
                 }
             )
 
@@ -827,8 +856,8 @@ def detect_new_object_in_loop(
                         "pre-allocate objects or use pooling."
                     ),
                     "snippet": snippet_line,
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": "// " + snippet_line,
+                    "is_auto_fixable": True,
                 }
             )
 
@@ -877,8 +906,8 @@ def detect_garbage_collect_call(
                         "use ForceGarbageCollection with care."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": "// " + source_line.strip(),
+                    "is_auto_fixable": True,
                 }
             )
 
@@ -927,8 +956,8 @@ def detect_infinite_loop(
                         "Infinite loop without break/return. " "Game thread will freeze"
                     ),
                     "snippet": snippet_line,
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": "// " + snippet_line,
+                    "is_auto_fixable": True,
                 }
             )
     return issues
@@ -996,8 +1025,8 @@ def detect_runtime_load(
                         "Use async loading instead"
                     ),
                     "snippet": snippet_line,
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": "// " + snippet_line,
+                    "is_auto_fixable": True,
                 }
             )
     return issues
@@ -1074,11 +1103,7 @@ def detect_raw_delete(
     for line_no, source_line in enumerate(source_lines, start=1):
         if re.search(r"\bdelete\s+\w", source_line):
             # Fix: comment out the delete line
-            fix = (
-                "// "
-                + source_line.strip()
-                + "  // REMOVED: UObjects are garbage-collected"
-            )
+            fix = "// " + source_line.strip()
             issues.append(
                 {
                     "asset_path": file_path,
@@ -1136,8 +1161,36 @@ def detect_stl_usage(
                         "equivalents (TArray, TMap, FString...)."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": re.sub(
+                        r"\bstd::vector\b",
+                        "TArray",
+                        re.sub(
+                            r"\bstd::map\b",
+                            "TMap",
+                            re.sub(
+                                r"\bstd::unordered_map\b",
+                                "TMap",
+                                re.sub(
+                                    r"\bstd::set\b",
+                                    "TSet",
+                                    re.sub(
+                                        r"\bstd::string\b",
+                                        "FString",
+                                        re.sub(
+                                            r"\bstd::unique_ptr\b",
+                                            "TUniquePtr",
+                                            re.sub(
+                                                r"\bstd::shared_ptr\b",
+                                                "TSharedPtr",
+                                                source_line.strip(),
+                                            ),
+                                        ),
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
+                    "is_auto_fixable": True,
                 }
             )
     return issues
@@ -1217,8 +1270,8 @@ def detect_system_headers(
                         "System header included — " "prefer UE module headers."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": "// " + source_line.strip(),
+                    "is_auto_fixable": True,
                 }
             )
     return issues
@@ -1313,8 +1366,12 @@ def detect_uproperty_nullptr(
                         "body."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": re.sub(
+                        r"\s*=\s*nullptr",
+                        "",
+                        source_line.strip(),
+                    ),
+                    "is_auto_fixable": True,
                 }
             )
     return issues
@@ -1423,8 +1480,8 @@ def detect_empty_if_body(
                         "branch or add the intended logic."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": "// " + source_line.strip(),
+                    "is_auto_fixable": True,
                 }
             )
             continue
@@ -1450,8 +1507,8 @@ def detect_empty_if_body(
                             "branch or add the intended logic."
                         ),
                         "snippet": source_line.strip(),
-                        "fix_suggestion": "",
-                        "is_auto_fixable": False,
+                        "fix_suggestion": "// " + source_line.strip(),
+                        "is_auto_fixable": True,
                     }
                 )
     return issues
@@ -1544,16 +1601,20 @@ def detect_nullptr_deref(
         var_name = null_assign.group(2)
 
         # Check the next 5 non-empty lines for unguarded dereference
-        for next_line in source_lines[line_no : line_no + 5]:
+        for offset, next_line in enumerate(
+            source_lines[line_no : line_no + 5], start=1
+        ):
             next_stripped = next_line.strip()
             if not next_stripped:
                 continue
             if re.search(rf"\b{re.escape(var_name)}\s*->", next_stripped):
                 if not re.search(r"\bif\b", next_stripped):
+                    # Report on the USAGE line so fix replaces the right line
+                    usage_line_no = line_no + offset
                     issues.append(
                         {
                             "asset_path": file_path,
-                            "line": line_no,
+                            "line": usage_line_no,
                             "class": _extract_class_name(
                                 content,
                                 _char_pos_for_line(source_lines, line_no),
@@ -1566,9 +1627,9 @@ def detect_nullptr_deref(
                                 "and dereferenced without null-"
                                 "check — will crash at runtime."
                             ),
-                            "snippet": source_line.strip(),
-                            "fix_suggestion": "",
-                            "is_auto_fixable": False,
+                            "snippet": next_stripped,
+                            "fix_suggestion": "if (" + var_name + ") " + next_stripped,
+                            "is_auto_fixable": True,
                         }
                     )
             break
@@ -1620,8 +1681,8 @@ def detect_hardcoded_path(
                         "paths instead."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": "// " + source_line.strip(),
+                    "is_auto_fixable": True,
                 }
             )
     return issues
@@ -1736,8 +1797,8 @@ def detect_string_concat_in_loop(
                         "before the loop to avoid allocations."
                     ),
                     "snippet": snippet_line,
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": "// " + snippet_line,
+                    "is_auto_fixable": True,
                 }
             )
     return issues
@@ -1807,11 +1868,8 @@ def detect_public_member_without_uproperty(
                             "and Blueprint."
                         ),
                         "snippet": source_line.strip(),
-                        "fix_suggestion": (
-                            "UPROPERTY(EditAnywhere, BlueprintReadWrite)"
-                            f"\n\t{stripped}"
-                        ),
-                        "is_auto_fixable": True,
+                        "fix_suggestion": "",
+                        "is_auto_fixable": False,
                     }
                 )
     return issues
@@ -2051,8 +2109,10 @@ def detect_lambda_implicit_capture(
                         "captures for safety and readability."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": re.sub(
+                        r"\[\s*[&=]\s*\]", "[this]", source_line.strip()
+                    ),
+                    "is_auto_fixable": True,
                 }
             )
 
@@ -2166,7 +2226,7 @@ def detect_missing_super_beginplay(
                         "initialization chain."
                     ),
                     "snippet": f"void {class_name}::BeginPlay()",
-                    "fix_suggestion": "Add Super::BeginPlay(); as first line",
+                    "fix_suggestion": "",
                     "is_auto_fixable": False,
                 }
             )
@@ -2214,8 +2274,12 @@ def detect_ufunction_missing_category(
                             "discoverability in Blueprint."
                         ),
                         "snippet": source_line.strip(),
-                        "fix_suggestion": "",
-                        "is_auto_fixable": False,
+                        "fix_suggestion": re.sub(
+                            r"BlueprintCallable",
+                            'BlueprintCallable, Category="Default"',
+                            source_line.strip(),
+                        ),
+                        "is_auto_fixable": True,
                     }
                 )
 
@@ -2336,8 +2400,8 @@ def detect_blueprint_pure_side_effects(
                         "effects. Add 'const' or remove BlueprintPure."
                     ),
                     "snippet": func_line.strip(),
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": re.sub(r"\)\s*;", ") const;", func_line.strip()),
+                    "is_auto_fixable": True,
                 }
             )
 
@@ -2387,8 +2451,10 @@ def detect_const_ref_uproperty(
                             "Use pointer or value type."
                         ),
                         "snippet": source_line.strip(),
-                        "fix_suggestion": "",
-                        "is_auto_fixable": False,
+                        "fix_suggestion": re.sub(
+                            r"\bconst\s+(\w+)\s*&", r"\1", source_line.strip()
+                        ),
+                        "is_auto_fixable": True,
                     }
                 )
 
@@ -2433,8 +2499,12 @@ def detect_getworld_no_check(
                         "'if (UWorld* W = GetWorld())'."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": re.sub(
+                        r"\bGetWorld\(\)\s*->",
+                        "if (UWorld* World = GetWorld()) World->",
+                        source_line.strip(),
+                    ),
+                    "is_auto_fixable": True,
                 }
             )
     return issues
@@ -2471,16 +2541,20 @@ def detect_spawnactor_no_check(
             _char_pos_for_line(source_lines, line_no),
         )
 
-        for next_line in source_lines[line_no : line_no + 5]:
+        for offset, next_line in enumerate(
+            source_lines[line_no : line_no + 5], start=1
+        ):
             stripped = next_line.strip()
             if not stripped:
                 continue
             if re.search(rf"\b{re.escape(var_name)}\s*->", stripped):
                 if not re.search(r"\bif\b", stripped):
+                    # Report on the USAGE line so fix replaces the right line
+                    usage_line_no = line_no + offset
                     issues.append(
                         {
                             "asset_path": file_path,
-                            "line": line_no,
+                            "line": usage_line_no,
                             "class": class_name,
                             "severity": "error",
                             "rule_id": "CS002",
@@ -2490,9 +2564,9 @@ def detect_spawnactor_no_check(
                                 " used without null-check — "
                                 "SpawnActor can return nullptr."
                             ),
-                            "snippet": source_line.strip(),
-                            "fix_suggestion": "",
-                            "is_auto_fixable": False,
+                            "snippet": stripped,
+                            "fix_suggestion": "if (" + var_name + ") " + stripped,
+                            "is_auto_fixable": True,
                         }
                     )
             break
@@ -2531,16 +2605,20 @@ def detect_cast_no_check(
             _char_pos_for_line(source_lines, line_no),
         )
 
-        for next_line in source_lines[line_no : line_no + 5]:
+        for offset, next_line in enumerate(
+            source_lines[line_no : line_no + 5], start=1
+        ):
             stripped = next_line.strip()
             if not stripped:
                 continue
             if re.search(rf"\b{re.escape(var_name)}\s*->", stripped):
                 if not re.search(r"\bif\b", stripped):
+                    # Report on the USAGE line so fix replaces the right line
+                    usage_line_no = line_no + offset
                     issues.append(
                         {
                             "asset_path": file_path,
-                            "line": line_no,
+                            "line": usage_line_no,
                             "class": class_name,
                             "severity": "error",
                             "rule_id": "CS003",
@@ -2551,9 +2629,9 @@ def detect_cast_no_check(
                                 "returns nullptr if type does not"
                                 " match."
                             ),
-                            "snippet": source_line.strip(),
-                            "fix_suggestion": "",
-                            "is_auto_fixable": False,
+                            "snippet": stripped,
+                            "fix_suggestion": "if (" + var_name + ") " + stripped,
+                            "is_auto_fixable": True,
                         }
                     )
             break
@@ -2580,7 +2658,10 @@ def detect_division_no_zero_check(
 
     for line_no, source_line in enumerate(source_lines, start=1):
         stripped = source_line.strip()
-        if stripped.startswith("//"):
+        if stripped.startswith("//") or stripped.startswith("#"):
+            continue
+        # Skip lines with string literals containing paths
+        if re.search(r'TEXT\s*\(|"[^"]*[/\\][^"]*"', source_line):
             continue
         # Match: something = something / variable
         div_match = re.search(r"\b\w+\s*/\s*([A-Za-z_]\w*)\b", source_line)
@@ -2620,8 +2701,13 @@ def detect_division_no_zero_check(
                         f"'{divisor} != 0' before dividing."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": re.sub(
+                        r"/\s*" + re.escape(divisor) + r"\b",
+                        f"/ (!FMath::IsNearlyZero({divisor}) ? {divisor} : 1.f)",
+                        source_line.strip(),
+                        count=1,
+                    ),
+                    "is_auto_fixable": True,
                 }
             )
     return issues
@@ -2692,8 +2778,9 @@ def detect_array_no_bounds_check(
                         "if index is out of bounds."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": f"if ({array_name}.IsValidIndex({index_var})) "
+                    + source_line.strip(),
+                    "is_auto_fixable": True,
                 }
             )
     return issues
@@ -2738,8 +2825,12 @@ def detect_getowner_no_check(
                         "'if (AActor* Owner = GetOwner())'."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": re.sub(
+                        r"\bGetOwner\(\)\s*->",
+                        "if (AActor* Owner = GetOwner()) Owner->",
+                        source_line.strip(),
+                    ),
+                    "is_auto_fixable": True,
                 }
             )
     return issues
@@ -2813,8 +2904,8 @@ def detect_overlap_actor_no_check(
                                 "'if (OtherActor)' first."
                             ),
                             "snippet": source_line.strip(),
-                            "fix_suggestion": "",
-                            "is_auto_fixable": False,
+                            "fix_suggestion": "if (OtherActor) " + source_line.strip(),
+                            "is_auto_fixable": True,
                         }
                     )
     return issues
@@ -2890,8 +2981,11 @@ def detect_weak_ptr_no_check(
                             "garbage collected."
                         ),
                         "snippet": source_line.strip(),
-                        "fix_suggestion": "",
-                        "is_auto_fixable": False,
+                        "fix_suggestion": "if ("
+                        + var_name
+                        + ".IsValid()) "
+                        + source_line.strip(),
+                        "is_auto_fixable": True,
                     }
                 )
     return issues
@@ -2996,9 +3090,9 @@ def detect_hardcoded_secret(
                             "store secrets in config or environment "
                             "variables, never in source code."
                         ),
-                        "snippet": source_line.strip()[:60] + "...",
-                        "fix_suggestion": "",
-                        "is_auto_fixable": False,
+                        "snippet": source_line.strip(),
+                        "fix_suggestion": "// " + source_line.strip(),
+                        "is_auto_fixable": True,
                     }
                 )
                 break
@@ -3028,7 +3122,7 @@ def detect_debug_message(
     for line_no, source_line in enumerate(source_lines, start=1):
         if re.search(r"GEngine->AddOnScreenDebugMessage", source_line):
             # Fix: comment out the debug message
-            fix = "// " + source_line.strip() + "  // REMOVED: debug message"
+            fix = "// " + source_line.strip()
             issues.append(
                 {
                     "asset_path": file_path,
@@ -3171,8 +3265,8 @@ def detect_todo_comments(
                         "and resolve before shipping."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": "// " + source_line.strip(),
+                    "is_auto_fixable": True,
                 }
             )
     return issues
@@ -3408,8 +3502,8 @@ def detect_duplicate_include(
                             f"{seen_includes[header]}."
                         ),
                         "snippet": source_line.strip(),
-                        "fix_suggestion": "",
-                        "is_auto_fixable": False,
+                        "fix_suggestion": "// " + source_line.strip(),
+                        "is_auto_fixable": True,
                     }
                 )
             else:
@@ -3453,8 +3547,12 @@ def detect_empty_destructor(
                         "'= default' unless it must be virtual."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": re.sub(
+                        r"(~\w+\s*\(\s*\))\s*\{\s*\}",
+                        r"\1 = default;",
+                        source_line.strip(),
+                    ),
+                    "is_auto_fixable": True,
                 }
             )
 

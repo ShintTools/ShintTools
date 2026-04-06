@@ -8,11 +8,13 @@
 # Phase 2: add Unity naming rules
 
 from modules.naming.rules.ue5_naming_rules import (
-    scan_asset_paths,
     apply_asset_rename,
+    run_all_naming_rules,
+    scan_asset_paths,
 )
 
 __all__ = [
     "scan_asset_paths",
     "apply_asset_rename",
+    "run_all_naming_rules",
 ]

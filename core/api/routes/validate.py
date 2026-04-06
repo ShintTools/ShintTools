@@ -111,10 +111,78 @@ class ApplyFixesRequest(BaseModel):
 # Extensions we support for C++ analysis
 _CPP_EXTENSIONS = {".cpp", ".h", ".hpp", ".cc"}
 
-# Rules that support auto-fix (have snippet + fix_suggestion)
-# CB003 = raw new, CB004 = raw delete, CB006 = printf,
-# CB008 = float no suffix, CM001 = GEngine debug message
-_FIXABLE_RULES = {"CB003", "CB004", "CB006", "CB008", "CM001"}
+# All rules now support auto-fix (all have snippet + fix_suggestion)
+_FIXABLE_RULES = {
+    # Performance
+    "CP001",
+    "CP002",
+    "CP003",
+    "CP004",
+    "CP005",
+    "CP006",
+    "CP007",
+    "CP008",
+    "CP009",
+    "CP010",
+    "CP011",
+    "CP012",
+    "CP013",
+    "CP016",
+    # Best Practices
+    "CB001",
+    "CB002",
+    "CB003",
+    "CB004",
+    "CB005",
+    "CB006",
+    "CB007",
+    "CB008",
+    "CB009",
+    "CB010",
+    "CB011",
+    "CB012",
+    "CB013",
+    "CB014",
+    "CB015",
+    "CB016",
+    "CB017",
+    "CB018",
+    "CB019",
+    "CB020",
+    "CB021",
+    "CB023",
+    "CB024",
+    "CB025",
+    "CB030",
+    "CB031",
+    "CB032",
+    # Security
+    "CS001",
+    "CS002",
+    "CS003",
+    "CS004",
+    "CS005",
+    "CS006",
+    "CS007",
+    "CS008",
+    "CS011",
+    "CS012",
+    # Maintainability
+    "CM001",
+    "CM002",
+    "CM003",
+    "CM005",
+    "CM006",
+    "CM007",
+    "CM008",
+    # Blueprint rules
+    "BPB001",
+    "BPB003",
+    "BPB007",
+    "BPP001",
+    "BPM001",
+    "BPM002",
+}
 
 
 def _build_summary(
