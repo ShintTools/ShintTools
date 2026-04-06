@@ -15,9 +15,11 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r core/requirements-ci.txt
       - name: Install lint tools
         run: pip install flake8 mypy
       - name: Run flake8
-        run: flake8 core/
+        run: flake8 core/ --max-line-length=88 --extend-ignore=E203,W503
       - name: Run mypy
-        run: mypy core/
+        run: mypy core/ --ignore-missing-imports --explicit-package-bases

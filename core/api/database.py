@@ -1,5 +1,6 @@
 import os
-import motor.motor_asyncio
+
+from motor.motor_asyncio import AsyncIOMotorClient
 
 # MongoDB connection URL — reads from environment variable or to localhost
 MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27017")
@@ -9,7 +10,7 @@ DB_NAME = "shinttools"
 COLLECTION_ANALYSIS = "analysis_results"
 
 # Create the async MongoDB client
-client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URL)
+client = AsyncIOMotorClient(MONGO_URL)  # type: ignore[var-annotated]
 
 # Reference to the shinttools database
 database = client[DB_NAME]

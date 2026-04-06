@@ -1,10 +1,12 @@
 import json
 from pathlib import Path
 
-import pytest
-from rules.ue5_cpp_rules import (detect_find_object_in_tick,
-                                 detect_get_component_in_tick,
-                                 detect_infinite_loop, detect_runtime_load)
+from rules.ue5_cpp_rules import (
+    detect_find_object_in_tick,
+    detect_get_component_in_tick,
+    detect_infinite_loop,
+    detect_runtime_load,
+)
 
 # Path to fixtures folder
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
