@@ -1,0 +1,5 @@
+{
+  "file_path": "GameManager.cpp",
+  "engine": "unreal",
+  "content": "void AGameManager::StartLoop() {\n    while (true) {\n        ProcessEvents();\n        UpdateState();\n    }\n}"
+}

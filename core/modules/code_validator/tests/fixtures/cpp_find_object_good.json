@@ -1,0 +1,5 @@
+{
+  "file_path": "PlayerController.cpp",
+  "engine": "unreal",
+  "content": "void APlayerController::BeginPlay() {\n    Super::BeginPlay();\n    CachedEnemy = FindObjectOfType<AEnemy>();\n}\n\nvoid APlayerController::Tick(float DeltaTime) {\n    Super::Tick(DeltaTime);\n    if (CachedEnemy) {\n        CachedEnemy->DoSomething();\n    }\n}"
+}

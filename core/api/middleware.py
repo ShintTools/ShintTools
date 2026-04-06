@@ -29,10 +29,18 @@ def setup_middlewares(app) -> None:
     Registers all middlewares on the server.
     Call from main.py at startup.
     """
-    # CORS: allows local connections from UE5 and Unity plugins
+
+    # CORS: covers bare localhost (browser / dashboard)
+    # AND the UE5 plugin which
+    # includes the port number in the Origin header.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost"],
+        allow_origins=[
+            "http://localhost",  # web dashboard (no port)
+            "http://localhost:18200",  # UE5 plugin default port
+            "http://127.0.0.1:18200",  # UE5 plugin via loopback IP
+            "http://127.0.0.1",  # loopback without port
+        ],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

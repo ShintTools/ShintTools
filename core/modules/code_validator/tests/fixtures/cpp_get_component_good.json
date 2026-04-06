@@ -1,0 +1,5 @@
+{
+  "file_path": "EnemyCharacter.cpp",
+  "engine": "unreal",
+  "content": "void AEnemyCharacter::BeginPlay() {\n    Super::BeginPlay();\n    CachedHealth = GetComponent<UHealthComponent>();\n}\n\nvoid AEnemyCharacter::Tick(float DeltaTime) {\n    Super::Tick(DeltaTime);\n    if (CachedHealth) {\n        CachedHealth->TakeDamage(10.0f);\n    }\n}"
+}

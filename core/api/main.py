@@ -5,7 +5,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from api.middleware import setup_middlewares
-from api.routes import config, health, validate
+from api.routes import config, health, validate, assets, dashboard
+# (NUEVO: assets, dashboard)
 from fastapi import FastAPI
 
 
@@ -82,7 +83,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="ShintTools Core",
-    version="0.1.0",
+    version="2.0.0",  # (ACTUALIZADO)
     lifespan=lifespan,
 )
 
@@ -90,6 +91,8 @@ app = FastAPI(
 setup_middlewares(app)
 
 # Register routes
-app.include_router(health.router)  # GET /status
-app.include_router(config.router)  # GET/POST /config
-app.include_router(validate.router)  # POST /validate/*
+app.include_router(health.router)       # GET /health  GET /ping  GET /status
+app.include_router(config.router)       # GET/POST /config
+app.include_router(validate.router)     # POST /validate/*
+app.include_router(assets.router)       # POST /assets/scan  POST /assets/fix (NUEVO)
+app.include_router(dashboard.router)    # POST /dashboard/report (NUEVO)
