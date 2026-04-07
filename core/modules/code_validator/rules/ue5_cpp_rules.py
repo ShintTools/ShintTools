@@ -1050,18 +1050,6 @@ def detect_raw_new(
     source_lines = content.splitlines()
     for line_no, source_line in enumerate(source_lines, start=1):
         if re.search(r"\bnew\s+\w", source_line):
-            # Build fix: replace "new Type(...)" with "NewObject<Type>(this)"
-            fix = source_line.strip()
-            new_match = re.search(
-                r"\bnew\s+(\w+)\s*(?:\([^)]*\)|\[[^\]]*\])", source_line
-            )
-            if new_match:
-                type_name = new_match.group(1)
-                fix = re.sub(
-                    r"\bnew\s+\w+\s*(?:\([^)]*\)|\[[^\]]*\])",
-                    f"NewObject<{type_name}>(this)",
-                    source_line,
-                ).strip()
             issues.append(
                 {
                     "asset_path": file_path,
@@ -1078,8 +1066,8 @@ def detect_raw_new(
                         " or CreateDefaultSubobject<T>() instead."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": fix,
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
                 }
             )
     return issues
@@ -1213,12 +1201,6 @@ def detect_printf(
     source_lines = content.splitlines()
     for line_no, source_line in enumerate(source_lines, start=1):
         if re.search(r"\bprintf\s*\(", source_line):
-            # Fix: replace printf(...) with UE_LOG(LogTemp, Log, ...)
-            fix = re.sub(
-                r"\bprintf\s*\(",
-                "UE_LOG(LogTemp, Log, ",
-                source_line,
-            ).strip()
             issues.append(
                 {
                     "asset_path": file_path,
@@ -1232,8 +1214,8 @@ def detect_printf(
                     "category": "Best Practices",
                     "message": ("printf() detected — use UE_LOG() " "instead."),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": fix,
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
                 }
             )
     return issues
@@ -1628,7 +1610,9 @@ def detect_nullptr_deref(
                                 "check — will crash at runtime."
                             ),
                             "snippet": next_stripped,
-                            "fix_suggestion": "if (" + var_name + ") " + next_stripped,
+                            "fix_suggestion": (
+                                "if (" + var_name + ") { " + next_stripped + " }"
+                            ),
                             "is_auto_fixable": True,
                         }
                     )
@@ -2499,12 +2483,8 @@ def detect_getworld_no_check(
                         "'if (UWorld* W = GetWorld())'."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": re.sub(
-                        r"\bGetWorld\(\)\s*->",
-                        "if (UWorld* World = GetWorld()) World->",
-                        source_line.strip(),
-                    ),
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
                 }
             )
     return issues
@@ -2565,7 +2545,9 @@ def detect_spawnactor_no_check(
                                 "SpawnActor can return nullptr."
                             ),
                             "snippet": stripped,
-                            "fix_suggestion": "if (" + var_name + ") " + stripped,
+                            "fix_suggestion": (
+                                "if (" + var_name + ") { " + stripped + " }"
+                            ),
                             "is_auto_fixable": True,
                         }
                     )
@@ -2630,7 +2612,9 @@ def detect_cast_no_check(
                                 " match."
                             ),
                             "snippet": stripped,
-                            "fix_suggestion": "if (" + var_name + ") " + stripped,
+                            "fix_suggestion": (
+                                "if (" + var_name + ") { " + stripped + " }"
+                            ),
                             "is_auto_fixable": True,
                         }
                     )
@@ -2778,8 +2762,10 @@ def detect_array_no_bounds_check(
                         "if index is out of bounds."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": f"if ({array_name}.IsValidIndex({index_var})) "
-                    + source_line.strip(),
+                    "fix_suggestion": (
+                        f"if ({array_name}.IsValidIndex({index_var}))"
+                        " { " + source_line.strip() + " }"
+                    ),
                     "is_auto_fixable": True,
                 }
             )
@@ -2825,12 +2811,8 @@ def detect_getowner_no_check(
                         "'if (AActor* Owner = GetOwner())'."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": re.sub(
-                        r"\bGetOwner\(\)\s*->",
-                        "if (AActor* Owner = GetOwner()) Owner->",
-                        source_line.strip(),
-                    ),
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "",
+                    "is_auto_fixable": False,
                 }
             )
     return issues
@@ -2904,7 +2886,9 @@ def detect_overlap_actor_no_check(
                                 "'if (OtherActor)' first."
                             ),
                             "snippet": source_line.strip(),
-                            "fix_suggestion": "if (OtherActor) " + source_line.strip(),
+                            "fix_suggestion": (
+                                "if (OtherActor) { " + source_line.strip() + " }"
+                            ),
                             "is_auto_fixable": True,
                         }
                     )
@@ -2981,10 +2965,13 @@ def detect_weak_ptr_no_check(
                             "garbage collected."
                         ),
                         "snippet": source_line.strip(),
-                        "fix_suggestion": "if ("
-                        + var_name
-                        + ".IsValid()) "
-                        + source_line.strip(),
+                        "fix_suggestion": (
+                            "if ("
+                            + var_name
+                            + ".IsValid()) { "
+                            + source_line.strip()
+                            + " }"
+                        ),
                         "is_auto_fixable": True,
                     }
                 )
