@@ -169,6 +169,7 @@ _FIXABLE_RULES = {
     "CM006",
     "CM007",
     "CM008",
+    "CM009",
     # Blueprint rules
     "BPB001",
     "BPB003",
