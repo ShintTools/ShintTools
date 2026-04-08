@@ -33,7 +33,7 @@ class AssetScanRequest(BaseModel):
     project_id: str = ""
     api_key: str = ""
     project_name: str = ""
-    asset_paths: list[AssetEntry] = Field(default_factory=list)
+    assets_paths: list[AssetEntry] = Field(default_factory=list)
     engine: str = "unreal"
 
 
