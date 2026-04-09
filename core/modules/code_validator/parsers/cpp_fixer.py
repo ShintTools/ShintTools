@@ -5,8 +5,12 @@ Generic fixer that applies patterns to C++ code.
 import re
 from typing import List, Optional, Tuple
 
-from code_validator.parsers.cpp_parser import CppParser
-from code_validator.parsers.fix_patterns import PATTERNS, RULE_TO_PATTERN
+try:
+    from code_validator.parsers.cpp_parser import CppParser
+    from code_validator.parsers.fix_patterns import PATTERNS, RULE_TO_PATTERN
+except ModuleNotFoundError:
+    from cpp_parser import CppParser
+    from fix_patterns import PATTERNS, RULE_TO_PATTERN
 
 
 class CppFixer:
@@ -40,7 +44,10 @@ class CppFixer:
         elif pattern_name == "move_outside_loop" and line_number is not None:
             return self._apply_move_outside_loop(code, line_number)
         elif pattern_name == "replace_text" and line_number is not None:
-            old_text, new_text = param  # param es una tupla ("viejo", "nuevo")
+            if isinstance(param, tuple):
+                old_text, new_text = param
+            else:
+                old_text, new_text = param, ""
             return self._apply_replace_text(code, line_number, old_text, new_text)
         elif pattern_name == "extract_function":
             return self._apply_extract_function(code, "Tick", "TickLogic")
