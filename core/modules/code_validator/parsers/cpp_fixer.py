@@ -51,6 +51,43 @@ class CppFixer:
             return self._apply_replace_text(code, line_number, old_text, new_text)
         elif pattern_name == "extract_function":
             return self._apply_extract_function(code, "Tick", "TickLogic")
+        elif pattern_name == "add_suffix" and line_number is not None:
+            suffix = param if param else "f"
+            return self._apply_add_suffix(code, line_number, suffix)
+        elif pattern_name == "add_virtual" and line_number is not None:
+            return self._apply_add_virtual(code, line_number)
+        elif pattern_name == "add_override" and line_number is not None:
+            return self._apply_add_override(code, line_number)
+        elif pattern_name == "wrap_text_macro" and line_number is not None:
+            return self._apply_wrap_text_macro(code, line_number)
+        elif pattern_name == "replace_destructor_default" and line_number is not None:
+            return self._apply_replace_destructor_default(code, line_number)
+        elif pattern_name == "wrap_static_cast" and line_number is not None:
+            return self._apply_wrap_static_cast(code, line_number)
+        elif pattern_name == "insert_line" and line_number is not None:
+            insert_text = param if param else ""
+            return self._apply_insert_line(code, line_number, insert_text)
+        elif pattern_name == "add_zero_check" and line_number is not None:
+            return self._apply_add_zero_check(code, line_number)
+        elif pattern_name == "add_bounds_check" and line_number is not None:
+            return self._apply_add_bounds_check(code, line_number)
+        elif pattern_name == "comment_line" and line_number is not None:
+            return self._apply_comment_line(code, line_number)
+        elif pattern_name == "replace_raw_new" and line_number is not None:
+            return self._apply_replace_raw_new(code, line_number)
+        elif pattern_name == "remove_nullptr_init" and line_number is not None:
+            return self._apply_remove_nullptr_init(code, line_number)
+        elif pattern_name == "replace_lambda_capture" and line_number is not None:
+            return self._apply_replace_lambda_capture(code, line_number)
+        elif pattern_name == "add_ufunction_category" and line_number is not None:
+            return self._apply_add_ufunction_category(code, line_number)
+        elif pattern_name == "add_const_qualifier" and line_number is not None:
+            return self._apply_add_const_qualifier(code, line_number)
+        elif pattern_name == "remove_const_ref" and line_number is not None:
+            return self._apply_remove_const_ref(code, line_number)
+        elif pattern_name == "mark_for_review" and line_number is not None:
+            reason = param if param else "Requires manual review"
+            return self._apply_mark_for_review(code, line_number, reason)
 
         return code, "", ["Pattern not implemented or missing line_number"]
 
@@ -109,7 +146,7 @@ class CppFixer:
         line_number: int,
         expression: str,
     ) -> Tuple[str, str, List[str]]:
-        """Wrap in null-check."""
+        """Wrap in null-check using UE5 idiomatic IsValid() pattern."""
         config = PATTERNS["null_check"]["expressions"].get(expression, ("auto", "Ptr"))
         var_type, var_name = config
 
@@ -118,14 +155,35 @@ class CppFixer:
         original = lines[idx]
         indent = " " * (len(original) - len(original.lstrip()))
 
-        inner = original.strip().replace(f"{expression}->", f"{var_name}->")
+        # Use IsValid() for UObject-derived types (UE5 idiom)
+        # IsValid() checks both nullptr and IsPendingKill
+        is_uobject_type = var_type in (
+            "UWorld*",
+            "AActor*",
+            "UObject*",
+            "auto",
+        )
 
-        lines[
-            idx
-        ] = f"""{indent}if ({var_type} {var_name} = {expression})
-{indent}{{
-{indent}    {inner}
-{indent}}}"""
+        if is_uobject_type:
+            # Pattern: Type* Var = Expr; if (IsValid(Var)) { use Var }
+            inner = original.strip().replace(f"{expression}->", f"{var_name}->")
+            lines[idx] = (
+                f"{indent}{var_type} {var_name} = {expression};\n"
+                f"{indent}if (IsValid({var_name}))\n"
+                f"{indent}{{\n"
+                f"{indent}    {inner}\n"
+                f"{indent}}}"
+            )
+        else:
+            # Non-UObject: simple nullptr check
+            inner = original.strip().replace(f"{expression}->", f"{var_name}->")
+            lines[idx] = (
+                f"{indent}{var_type} {var_name} = {expression};\n"
+                f"{indent}if ({var_name})\n"
+                f"{indent}{{\n"
+                f"{indent}    {inner}\n"
+                f"{indent}}}"
+            )
 
         return "\n".join(lines), "", [f"Line {line_number}: Added null-check"]
 
@@ -231,6 +289,494 @@ class CppFixer:
 
         return code, "", ["Text not found"]
 
+    # ================================================================
+    # Priority 2: Easy new patterns
+    # ================================================================
+
+    def _apply_add_suffix(
+        self,
+        code: str,
+        line_number: int,
+        suffix: str = "f",
+    ) -> Tuple[str, str, List[str]]:
+        """Add suffix to float literals. E.g. 1.0 -> 1.0f"""
+        lines = code.split("\n")
+        idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        original = lines[idx]
+        # Match float literals without f suffix: 1.0, 0.5, 3.14, etc.
+        new_line = re.sub(
+            r"(\d+\.\d+)(?!f\b)",
+            rf"\1{suffix}",
+            original,
+        )
+        if new_line == original:
+            return code, "", ["No float literal without suffix found"]
+
+        lines[idx] = new_line
+        return "\n".join(lines), "", [f"Line {line_number}: Added '{suffix}' suffix"]
+
+    def _apply_add_virtual(
+        self,
+        code: str,
+        line_number: int,
+    ) -> Tuple[str, str, List[str]]:
+        """Add 'virtual' keyword to destructor. ~Class() -> virtual ~Class()"""
+        lines = code.split("\n")
+        idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        original = lines[idx]
+        # Match destructor without virtual keyword
+        match = re.search(r"^(\s*)~(\w+)", original)
+        if not match:
+            return code, "", ["No destructor found"]
+
+        # Check if already virtual
+        if "virtual" in original:
+            return code, "", ["Already virtual"]
+
+        indent = match.group(1)
+        lines[idx] = original.replace(f"{indent}~", f"{indent}virtual ~", 1)
+        return "\n".join(lines), "", [f"Line {line_number}: Added 'virtual'"]
+
+    def _apply_add_override(
+        self,
+        code: str,
+        line_number: int,
+    ) -> Tuple[str, str, List[str]]:
+        """Add 'override' specifier to virtual function declaration."""
+        lines = code.split("\n")
+        idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        original = lines[idx]
+        if "override" in original:
+            return code, "", ["Already has override"]
+
+        # Match function declaration ending with ); or ) const;
+        new_line = re.sub(
+            r"\)\s*(const\s*)?;",
+            r") \1override;",
+            original,
+        )
+        # Clean up extra spaces
+        new_line = re.sub(r"\s+override", " override", new_line)
+        new_line = re.sub(r"override\s*;", "override;", new_line)
+
+        if new_line == original:
+            return code, "", ["Could not add override"]
+
+        lines[idx] = new_line
+        return "\n".join(lines), "", [f"Line {line_number}: Added 'override'"]
+
+    def _apply_wrap_text_macro(
+        self,
+        code: str,
+        line_number: int,
+    ) -> Tuple[str, str, List[str]]:
+        """Wrap string literals with TEXT() macro. "str" -> TEXT("str")"""
+        lines = code.split("\n")
+        idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        original = lines[idx]
+        # Match string literals not already wrapped in TEXT()
+        new_line = re.sub(
+            r'(?<!TEXT\()("(?:[^"\\]|\\.)*")',
+            r"TEXT(\1)",
+            original,
+        )
+        if new_line == original:
+            return code, "", ["No unwrapped string literal found"]
+
+        lines[idx] = new_line
+        return "\n".join(lines), "", [f"Line {line_number}: Wrapped in TEXT()"]
+
+    def _apply_replace_destructor_default(
+        self,
+        code: str,
+        line_number: int,
+    ) -> Tuple[str, str, List[str]]:
+        """Replace empty destructor body with = default.
+
+        ~Class() {} -> ~Class() = default;
+        """
+        lines = code.split("\n")
+        idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        original = lines[idx]
+        # Match empty destructor: ~ClassName() {} or ~ClassName() { }
+        new_line = re.sub(
+            r"(~\w+\s*\(\s*\))\s*\{\s*\}",
+            r"\1 = default;",
+            original,
+        )
+        if new_line == original:
+            # Try multiline: current line has ~Class() {, next line has }
+            if re.search(r"~\w+\s*\(\s*\)\s*\{", original):
+                next_idx = idx + 1
+                if next_idx < len(lines) and lines[next_idx].strip() == "}":
+                    new_line = re.sub(
+                        r"(~\w+\s*\(\s*\))\s*\{",
+                        r"\1 = default;",
+                        original,
+                    )
+                    lines[idx] = new_line
+                    lines.pop(next_idx)
+                    return (
+                        "\n".join(lines),
+                        "",
+                        [f"Line {line_number}: Empty destructor -> = default"],
+                    )
+            return code, "", ["No empty destructor found"]
+
+        lines[idx] = new_line
+        return (
+            "\n".join(lines),
+            "",
+            [f"Line {line_number}: Empty destructor -> = default"],
+        )
+
+    # ================================================================
+    # Priority 3: Medium new patterns
+    # ================================================================
+
+    def _apply_wrap_static_cast(
+        self,
+        code: str,
+        line_number: int,
+    ) -> Tuple[str, str, List[str]]:
+        """Replace C-style cast with static_cast. (int)x -> static_cast<int>(x)"""
+        lines = code.split("\n")
+        idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        original = lines[idx]
+        # Match C-style casts: (Type)expression
+        new_line = re.sub(
+            r"\((\w+)\)\s*(\w+)",
+            r"static_cast<\1>(\2)",
+            original,
+        )
+        if new_line == original:
+            return code, "", ["No C-style cast found"]
+
+        lines[idx] = new_line
+        return (
+            "\n".join(lines),
+            "",
+            [f"Line {line_number}: C-style cast -> static_cast"],
+        )
+
+    def _apply_insert_line(
+        self,
+        code: str,
+        line_number: int,
+        text_to_insert: str,
+    ) -> Tuple[str, str, List[str]]:
+        """Insert a line after the specified line number."""
+        lines = code.split("\n")
+        idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        # Detect indentation from the target line
+        target_line = lines[idx]
+        indent = " " * (len(target_line) - len(target_line.lstrip()))
+
+        lines.insert(idx + 1, f"{indent}{text_to_insert}")
+        return (
+            "\n".join(lines),
+            "",
+            [f"Line {line_number + 1}: Inserted '{text_to_insert}'"],
+        )
+
+    def _apply_add_zero_check(
+        self,
+        code: str,
+        line_number: int,
+    ) -> Tuple[str, str, List[str]]:
+        """Wrap division with zero-check ternary. a/b -> (b != 0) ? a/b : 0"""
+        lines = code.split("\n")
+        idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        original = lines[idx]
+        # Match division: expr / expr (not inside comments)
+        match = re.search(r"(\w+)\s*/\s*(\w+)", original)
+        if not match:
+            return code, "", ["No division found"]
+
+        numerator = match.group(1)
+        divisor = match.group(2)
+        safe_expr = f"({divisor} != 0) ? ({numerator} / {divisor}) : 0"
+
+        new_line = original[: match.start()] + safe_expr + original[match.end() :]
+        lines[idx] = new_line
+        return (
+            "\n".join(lines),
+            "",
+            [f"Line {line_number}: Added zero-division check"],
+        )
+
+    def _apply_add_bounds_check(
+        self,
+        code: str,
+        line_number: int,
+    ) -> Tuple[str, str, List[str]]:
+        """Add bounds check before array access.
+
+        Arr[i] -> if (Arr.IsValidIndex(i)) { Arr[i] }
+        """
+        lines = code.split("\n")
+        idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        original = lines[idx]
+        # Match array access: ArrayName[index]
+        match = re.search(r"(\w+)\[(\w+)\]", original)
+        if not match:
+            return code, "", ["No array access found"]
+
+        array_name = match.group(1)
+        index_expr = match.group(2)
+        indent = " " * (len(original) - len(original.lstrip()))
+
+        lines[idx] = (
+            f"{indent}if ({array_name}.IsValidIndex({index_expr}))\n"
+            f"{indent}{{\n"
+            f"{indent}    {original.strip()}\n"
+            f"{indent}}}"
+        )
+        return (
+            "\n".join(lines),
+            "",
+            [f"Line {line_number}: Added bounds check for {array_name}[{index_expr}]"],
+        )
+
+    # ================================================================
+    # Real auto-fix patterns (formerly mark_for_review)
+    # ================================================================
+
+    def _apply_comment_line(
+        self,
+        code: str,
+        line_number: int,
+    ) -> Tuple[str, str, List[str]]:
+        """Comment out a line instead of deleting it. Safer than delete."""
+        lines = code.split("\n")
+        idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        original = lines[idx]
+        indent = " " * (len(original) - len(original.lstrip()))
+        lines[idx] = f"{indent}// [SHINTTOOLS] {original.strip()}"
+        return "\n".join(lines), "", [f"Line {line_number}: Commented out"]
+
+    def _apply_replace_raw_new(
+        self,
+        code: str,
+        line_number: int,
+    ) -> Tuple[str, str, List[str]]:
+        """Replace raw new with NewObject<Type>(this).
+        new Type(...) -> NewObject<Type>(this)
+        new Type[n]  -> commented (array new needs manual review)
+        """
+        lines = code.split("\n")
+        idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        original = lines[idx]
+
+        # Match: new TypeName(args) or new TypeName
+        new_match = re.search(
+            r"\bnew\s+(\w+)\s*(?:\(([^)]*)\))?",
+            original,
+        )
+        if not new_match:
+            return code, "", ["No 'new' expression found"]
+
+        type_name = new_match.group(1)
+
+        # Array new -> can't auto-fix safely
+        if re.search(r"\bnew\s+\w+\s*\[", original):
+            indent = " " * (len(original) - len(original.lstrip()))
+            lines[idx] = (
+                f"{indent}// [SHINTTOOLS] Array new - use TArray: {original.strip()}"
+            )
+            return "\n".join(lines), "", [f"Line {line_number}: Array new marked"]
+
+        # Object new -> NewObject<Type>(this)
+        new_line = re.sub(
+            r"\bnew\s+\w+\s*(?:\([^)]*\))?",
+            f"NewObject<{type_name}>(this)",
+            original,
+        )
+        lines[idx] = new_line
+        return (
+            "\n".join(lines),
+            "",
+            [f"Line {line_number}: new {type_name}() -> NewObject<{type_name}>(this)"],
+        )
+
+    def _apply_remove_nullptr_init(
+        self,
+        code: str,
+        line_number: int,
+    ) -> Tuple[str, str, List[str]]:
+        """Remove = nullptr from UPROPERTY declaration.
+        UPROPERTY() Type* Var = nullptr; -> UPROPERTY() Type* Var;
+        """
+        lines = code.split("\n")
+        idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        original = lines[idx]
+        new_line = re.sub(r"\s*=\s*nullptr", "", original)
+        if new_line == original:
+            return code, "", ["No = nullptr found"]
+
+        lines[idx] = new_line
+        return "\n".join(lines), "", [f"Line {line_number}: Removed = nullptr"]
+
+    def _apply_replace_lambda_capture(
+        self,
+        code: str,
+        line_number: int,
+    ) -> Tuple[str, str, List[str]]:
+        """Replace implicit lambda capture with explicit.
+        [&] or [=] -> [this]
+        """
+        lines = code.split("\n")
+        idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        original = lines[idx]
+        new_line = re.sub(r"\[\s*[&=]\s*\]", "[this]", original)
+        if new_line == original:
+            return code, "", ["No implicit capture found"]
+
+        lines[idx] = new_line
+        return "\n".join(lines), "", [f"Line {line_number}: Explicit capture [this]"]
+
+    def _apply_add_ufunction_category(
+        self,
+        code: str,
+        line_number: int,
+    ) -> Tuple[str, str, List[str]]:
+        """Add Category to UFUNCTION(BlueprintCallable).
+        BlueprintCallable) -> BlueprintCallable, Category="Default")
+        """
+        lines = code.split("\n")
+        idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        original = lines[idx]
+        if "Category" in original:
+            return code, "", ["Already has Category"]
+
+        new_line = re.sub(
+            r"BlueprintCallable",
+            'BlueprintCallable, Category="Default"',
+            original,
+        )
+        if new_line == original:
+            return code, "", ["No BlueprintCallable found"]
+
+        lines[idx] = new_line
+        return "\n".join(lines), "", [f"Line {line_number}: Added Category"]
+
+    def _apply_add_const_qualifier(
+        self,
+        code: str,
+        line_number: int,
+    ) -> Tuple[str, str, List[str]]:
+        """Add const to BlueprintPure function.
+        void Func(); -> void Func() const;
+        """
+        lines = code.split("\n")
+        idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        original = lines[idx]
+        if "const" in original:
+            return code, "", ["Already const"]
+
+        new_line = re.sub(r"\)\s*;", ") const;", original)
+        if new_line == original:
+            return code, "", ["Could not add const"]
+
+        lines[idx] = new_line
+        return "\n".join(lines), "", [f"Line {line_number}: Added const"]
+
+    def _apply_remove_const_ref(
+        self,
+        code: str,
+        line_number: int,
+    ) -> Tuple[str, str, List[str]]:
+        """Remove const reference from UPROPERTY declaration.
+        const Type& Var -> Type Var (refs can't be serialized)
+        """
+        lines = code.split("\n")
+        idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        original = lines[idx]
+        new_line = re.sub(r"\bconst\s+(\w+)\s*&", r"\1", original)
+        if new_line == original:
+            return code, "", ["No const ref found"]
+
+        lines[idx] = new_line
+        return "\n".join(lines), "", [f"Line {line_number}: Removed const ref"]
+
+    # ================================================================
+    # Priority 4: Mark for review (no auto-fix)
+    # ================================================================
+
+    def _apply_mark_for_review(
+        self,
+        code: str,
+        line_number: int,
+        reason: str,
+    ) -> Tuple[str, str, List[str]]:
+        """Mark a line for manual review. Adds a comment above the line."""
+        lines = code.split("\n")
+        idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        target_line = lines[idx]
+        indent = " " * (len(target_line) - len(target_line.lstrip()))
+
+        lines.insert(idx, f"{indent}// [SHINTTOOLS REVIEW] {reason}")
+        return (
+            "\n".join(lines),
+            "",
+            [f"Line {line_number}: Marked for review - {reason}"],
+        )
+
+    # ================================================================
+    # Original patterns
+    # ================================================================
+
     def _apply_extract_function(
         self,
         code: str,
@@ -308,7 +854,8 @@ void AMyClass::{new_func_name}({func_params})
 }}
 """
 
-        changes = [
-            f"Extracted {extract_end - extract_start} lines to {new_func_name}()"
-        ]
-        return "\n".join(new_lines), additions, changes
+        return (
+            "\n".join(new_lines),
+            additions,
+            [f"Extracted {len(extracted_lines)} lines to {new_func_name}()"],
+        )
