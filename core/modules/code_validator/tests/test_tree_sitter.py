@@ -1,5 +1,6 @@
-"""Prueba del nuevo CppFixer con patrones."""
+"""Prueba del patrón extract_function."""
 
+# ruff: noqa: E402
 import sys
 
 sys.path.insert(
@@ -11,52 +12,20 @@ from cpp_fixer import CppFixer  # noqa: E402
 
 fixer = CppFixer()
 
-# ========== TEST CP001 ==========
-print("=== TEST CP001: FindObjectOfType en Tick ===")
-code_cp001 = """
+# ========== TEST CP003 ==========
+print("=== TEST CP003: Extract Tick logic ===")
+code = """
 void AMyActor::Tick(float DeltaTime) {
     Super::Tick(DeltaTime);
-    AActor* Target = FindObjectOfType<AActor>();
-    Target->DoSomething();
+    FVector Location = GetActorLocation();
+    Location.Z += Speed * DeltaTime;
+    SetActorLocation(Location);
+    CheckCollisions();
+    UpdateHealth();
 }
 """
-fixed, additions, changes = fixer.fix("CP001", code_cp001)
+fixed, additions, changes = fixer.fix("CP003", code)
+print("CODIGO CORREGIDO:")
 print(fixed)
-print(f"Cambios: {changes}\n")
-
-# ========== TEST CS001 ==========
-print("=== TEST CS001: GetWorld sin null-check ===")
-code_cs001 = """
-void AMyActor::SpawnEnemy() {
-    GetWorld()->SpawnActor<AEnemy>(EnemyClass);
-}
-"""
-fixed, additions, changes = fixer.fix("CS001", code_cs001, line_number=3)
-print(fixed)
-print(f"Cambios: {changes}\n")
-
-# ========== TEST CM001 ==========
-print("=== TEST CM001: Borrar debug message ===")
-code_cm001 = """
-void AMyActor::BeginPlay() {
-    Super::BeginPlay();
-    GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, TEXT("Debug"));
-    Health = 100;
-}
-"""
-fixed, additions, changes = fixer.fix("CM001", code_cm001, line_number=4)
-print(fixed)
-print(f"Cambios: {changes}\n")
-
-# ========== TEST CP005 ==========
-print("=== TEST CP005: Sleep -> Timer ===")
-code_cp005 = """
-void AMyActor::DoSomething() {
-    FPlatformProcess::Sleep(2.0f);
-    ContinueWork();
-}
-"""
-fixed, additions, changes = fixer.fix("CP005", code_cp005, line_number=3)
-print(fixed)
-print(f"Additions: {additions}")
-print(f"Cambios: {changes}\n")
+print(f"\nCAMBIOS: {changes}")
+print(f"\nAGREGAR AL PROYECTO:{additions}")

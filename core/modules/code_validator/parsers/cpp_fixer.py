@@ -5,8 +5,8 @@ Generic fixer that applies patterns to C++ code.
 import re
 from typing import List, Optional, Tuple
 
-from cpp_parser import CppParser
-from fix_patterns import PATTERNS, RULE_TO_PATTERN
+from code_validator.parsers.cpp_parser import CppParser
+from code_validator.parsers.fix_patterns import PATTERNS, RULE_TO_PATTERN
 
 
 class CppFixer:
@@ -39,6 +39,11 @@ class CppFixer:
             return self._apply_cache_calculation(code, line_number)
         elif pattern_name == "move_outside_loop" and line_number is not None:
             return self._apply_move_outside_loop(code, line_number)
+        elif pattern_name == "replace_text" and line_number is not None:
+            old_text, new_text = param  # param es una tupla ("viejo", "nuevo")
+            return self._apply_replace_text(code, line_number, old_text, new_text)
+        elif pattern_name == "extract_function":
+            return self._apply_extract_function(code, "Tick", "TickLogic")
 
         return code, "", ["Pattern not implemented or missing line_number"]
 
@@ -196,3 +201,107 @@ class CppFixer:
             f"// Add: TArray<{obj_type}*> PreAllocated; and allocate before loop"
         )
         return "\n".join(lines), additions, [f"Line {line_number}: Move outside loop"]
+
+    def _apply_replace_text(  # CB005, CB006, CB008, CB012, CB020, CB030, CS011
+        self,
+        code: str,
+        line_number: int,
+        old_text: str,
+        new_text: str,
+    ) -> Tuple[str, str, List[str]]:
+        """Replace text in a specific line."""
+        lines = code.split("\n")
+        idx = line_number - 1
+
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        original = lines[idx]
+        if old_text in original:
+            lines[idx] = original.replace(old_text, new_text, 1)
+            changes = [f"Line {line_number}: '{old_text}' -> '{new_text}'"]
+            return "\n".join(lines), "", changes
+
+        return code, "", ["Text not found"]
+
+    def _apply_extract_function(
+        self,
+        code: str,
+        func_name: str = "Tick",
+        new_func_name: str = "TickLogic",
+    ) -> Tuple[str, str, List[str]]:
+        """Extract function body to a separate function, leaving it minimal."""
+        root = self.parser.parse(code)
+
+        # Encontrar el cuerpo de la función
+        func_body = self.parser.find_function_body(root, func_name)
+        if not func_body:
+            return code, "", [f"No {func_name} function found"]
+
+        lines = code.split("\n")
+
+        # Encontrar líneas dentro de la función
+        start_line = func_body.start_point[0]
+        end_line = func_body.end_point[0]
+
+        # Encontrar la línea de Super::Tick (la mantenemos)
+        super_line_idx = None
+        for i in range(start_line, end_line + 1):
+            if i < len(lines) and "Super::" in lines[i]:
+                super_line_idx = i
+                break
+
+        if super_line_idx is None:
+            # No hay Super::, extraer todo
+            extract_start = start_line + 1  # Después del {
+            extract_end = end_line - 1  # Antes del }
+        else:
+            # Extraer después de Super::
+            extract_start = super_line_idx + 1
+            extract_end = end_line - 1
+
+        if extract_start >= extract_end:
+            return code, "", ["Not enough code to extract"]
+
+        # Extraer las líneas
+        extracted_lines = lines[extract_start:extract_end]
+        if not any(line.strip() for line in extracted_lines):
+            return code, "", ["No code to extract"]
+
+        # Obtener indentación
+        indent = "    "
+        for line in extracted_lines:
+            if line.strip():
+                indent = " " * (len(line) - len(line.lstrip()))
+                break
+
+        # Detectar si usa DeltaTime
+        uses_delta = any("DeltaTime" in line for line in extracted_lines)
+        call_params = "DeltaTime" if uses_delta else ""
+        func_params = "float DeltaTime" if uses_delta else ""
+
+        # Reemplazar con llamada a función nueva
+        new_call = f"{indent}{new_func_name}({call_params});"
+
+        # Construir nuevo código
+        new_lines = lines[:extract_start]
+        new_lines.append(new_call)
+        new_lines.extend(lines[extract_end:])
+
+        # Generar función extraída
+        extracted_code = "\n".join(extracted_lines)
+        additions = f"""
+// Add to .h file:
+void {new_func_name}({func_params});
+
+// Add to .cpp file:
+void AMyClass::{new_func_name}({func_params})
+{{
+{extracted_code}
+}}
+"""
+
+        changes = [
+            f"Extracted {extract_end - extract_start} lines to {new_func_name}()"
+        ]
+        return "\n".join(new_lines), additions, changes

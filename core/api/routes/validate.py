@@ -5,11 +5,12 @@
 #   POST /validate/code        — single file analysis
 #   POST /validate/project     — batch of source files (full project scan)
 #   POST /validate/blueprints  — full Blueprint export from UE5 plugin
-#   POST /validate/fix         — apply auto-fixes (stub, Sprint 5 pending)
+#   POST /validate/fix         — apply auto-fixes with Tree-sitter
 
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 from api.database import analysis_results
 from fastapi import APIRouter
@@ -18,6 +19,8 @@ from pydantic import BaseModel, Field
 # Add modules path to import code_validator rules
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "modules"))
 
+from code_validator.parsers.cpp_fixer import CppFixer  # noqa: E402
+from code_validator.parsers.fix_patterns import RULE_TO_PATTERN  # noqa: E402
 from code_validator.rules.blueprint_rules import (  # noqa: E402
     run_all_blueprint_rules_from_export,
 )
@@ -25,30 +28,34 @@ from code_validator.rules.ue5_cpp_rules import run_all_cpp_rules  # noqa: E402
 
 router = APIRouter()
 
+# Initialize Tree-sitter fixer
+_fixer = CppFixer()
+
 
 # ── Request models ────────────────────────────────────
 
 
 class ValidateAssetsRequest(BaseModel):
-    # List of asset paths to validate
+    """Request for asset naming validation."""
+
     paths: list[str] = Field(
         default_factory=list, description="Asset paths to validate"
     )
 
 
 class ValidateCodeRequest(BaseModel):
-    # Relative path of the source file
+    """Request for single file code analysis."""
+
     file_path: str = Field(..., description="Relative path of the source file")
-    # Full text content of the source file
     content: str = Field(default="", description="Full text content of the source file")
-    # Target engine: unreal or unity
     engine: str = Field(
         default="unreal", description="Target engine: 'unreal' | 'unity'"
     )
 
 
 class FileEntry(BaseModel):
-    # Fields matching the UE5 plugin JSON structure
+    """Single file entry matching the UE5 plugin JSON structure."""
+
     name: str = ""
     path: str = ""
     type: str = ""
@@ -57,6 +64,8 @@ class FileEntry(BaseModel):
 
 
 class ValidateProjectRequest(BaseModel):
+    """Request for batch project validation."""
+
     project_id: str = ""
     api_key: str = ""
     project_name: str = ""
@@ -65,118 +74,40 @@ class ValidateProjectRequest(BaseModel):
 
 
 class ValidateBlueprintsRequest(BaseModel):
-    # Full Blueprint export JSON from the UE5 plugin.
-    # Expected structure:
-    # {
-    #   "project_id": "...",
-    #   "files": [
-    #     {
-    #       "name": "BP_PlayerCharacter",
-    #       "path": "/Game/Blueprints/...",
-    #       "type": "blueprint",
-    #       "graphs": [...],
-    #       "variables": [...],
-    #       "functions": [...],
-    #       "stats": {...}
-    #     }
-    #   ]
-    # }
+    """Request for Blueprint validation from UE5 plugin export."""
+
     project_id: str = Field(
         default="", description="Project identifier from the plugin"
     )
     api_key: str = Field(default="", description="API key from the plugin")
     project_name: str = Field(default="", description="Project name")
     files: list[dict] = Field(
-        default_factory=list, description="Blueprint file dicts exported by the plugin"
+        default_factory=list,
+        description="Blueprint file dicts exported by the plugin",
     )
     engine: str = Field(
         default="unreal", description="Target engine: 'unreal' | 'unity'"
     )
 
 
-class IssueEntry(BaseModel):
-    rule_id: str = ""
-    severity: str = "warning"
-    message: str = ""
-    file_path: str = ""
-    line: int = 0
+class FixIssueEntry(BaseModel):
+    """Single issue to fix - must include content for Tree-sitter."""
+
+    rule_id: str = Field(..., description="Rule ID (e.g., CP001)")
+    file_path: str = Field(..., description="Path to the source file")
+    line: Optional[int] = Field(default=None, description="Line number of the issue")
+    content: str = Field(..., description="Full content of the source file")
 
 
 class ApplyFixesRequest(BaseModel):
-    issues: list[IssueEntry] = Field(default_factory=list)
+    """Request to apply auto-fixes using Tree-sitter."""
+
+    issues: list[FixIssueEntry] = Field(default_factory=list)
 
 
 # ── Shared helpers ────────────────────────────────────
 
-# Extensions we support for C++ analysis
 _CPP_EXTENSIONS = {".cpp", ".h", ".hpp", ".cc"}
-
-# All rules now support auto-fix (all have snippet + fix_suggestion)
-_FIXABLE_RULES = {
-    # Performance
-    "CP001",
-    "CP002",
-    "CP003",
-    "CP004",
-    "CP005",
-    "CP006",
-    "CP007",
-    "CP008",
-    "CP009",
-    "CP010",
-    "CP011",
-    "CP012",
-    "CP013",
-    "CP016",
-    # Best Practices
-    "CB001",
-    "CB002",
-    "CB004",
-    "CB005",
-    "CB007",
-    "CB008",
-    "CB009",
-    "CB010",
-    "CB011",
-    "CB012",
-    "CB013",
-    "CB014",
-    "CB015",
-    "CB016",
-    "CB018",
-    "CB019",
-    "CB020",
-    "CB021",
-    "CB023",
-    "CB025",
-    "CB030",
-    "CB031",
-    "CB032",
-    # Security
-    "CS002",
-    "CS003",
-    "CS004",
-    "CS005",
-    "CS007",
-    "CS008",
-    "CS011",
-    "CS012",
-    # Maintainability
-    "CM001",
-    "CM002",
-    "CM003",
-    "CM005",
-    "CM006",
-    "CM007",
-    "CM008",
-    # Blueprint rules
-    "BPB001",
-    "BPB003",
-    "BPB007",
-    "BPP001",
-    "BPM001",
-    "BPM002",
-}
 
 
 def _build_summary(
@@ -203,14 +134,23 @@ def _analyse_file(
     """
     Run rules against a single source file.
     Currently supports C++ files for Unreal Engine.
-    Unity and other engines pending Phase 2.
     """
     file_ext = Path(file_path).suffix.lower()
 
     if engine == "unreal" and file_ext in _CPP_EXTENSIONS:
-        return run_all_cpp_rules(content, file_path)
+        issues = run_all_cpp_rules(content, file_path)
+        # Add is_auto_fixable based on fix_patterns
+        for issue in issues:
+            rule_id = issue.get("rule_id", "")
+            issue["is_auto_fixable"] = rule_id in RULE_TO_PATTERN
+        return issues
 
     return []
+
+
+def _is_auto_fixable(rule_id: str) -> bool:
+    """Check if a rule has a Tree-sitter fix pattern."""
+    return rule_id in RULE_TO_PATTERN
 
 
 async def _persist_result(
@@ -220,8 +160,7 @@ async def _persist_result(
 ) -> None:
     """
     Save result to MongoDB for the dashboard.
-    Best-effort — never blocks the response if MongoDB
-    is unavailable.
+    Best-effort — never blocks the response if MongoDB is unavailable.
     """
     try:
         doc = {
@@ -242,10 +181,9 @@ async def _persist_result(
 async def validate_assets(payload: ValidateAssetsRequest):
     """
     Validates asset naming conventions.
-    Kept for backward compatibility with existing plugin
-    versions. Real analysis lives in POST /assets/scan.
+    Kept for backward compatibility with existing plugin versions.
+    Real analysis lives in POST /assets/scan.
     """
-    # TODO Sprint 4: Remove once all plugins use /assets/scan
     return {
         "summary": {
             "total": 0,
@@ -254,7 +192,7 @@ async def validate_assets(payload: ValidateAssetsRequest):
             "warnings": 0,
         },
         "issues": [],
-        "message": ("Mock response — use /assets/scan for real analysis"),
+        "message": "Mock response — use /assets/scan for real analysis",
     }
 
 
@@ -263,9 +201,7 @@ async def validate_code(payload: ValidateCodeRequest):
     """
     Analyses a single source file for code smells.
     Runs deterministic C++ rules for .cpp and .h files.
-    Saves results to MongoDB after analysis.
-    The response structure must not change — the plugin
-    depends on this exact format.
+    Each issue includes is_auto_fixable based on Tree-sitter patterns.
     """
     issues = _analyse_file(
         payload.file_path,
@@ -305,20 +241,20 @@ async def validate_project(payload: ValidateProjectRequest):
 
 
 @router.post("/validate/blueprints")
-async def validate_blueprints(
-    payload: ValidateBlueprintsRequest,
-):
+async def validate_blueprints(payload: ValidateBlueprintsRequest):
     """
     Validate Blueprint assets from the full UE5 plugin export.
     Receives the complete JSON exported by the plugin
     (graphs, variables, functions, stats per Blueprint)
     and runs all deterministic Blueprint rules.
-    Saves results to MongoDB after analysis.
     """
-    # Build the export dict that the runner expects
     plugin_export = {"files": payload.files}
-
     all_issues = run_all_blueprint_rules_from_export(plugin_export)
+
+    # Add is_auto_fixable for Blueprint rules
+    for issue in all_issues:
+        rule_id = issue.get("rule_id", "")
+        issue["is_auto_fixable"] = rule_id in RULE_TO_PATTERN
 
     blueprints_scanned = sum(1 for f in payload.files if f.get("type") == "blueprint")
 
@@ -334,22 +270,127 @@ async def validate_blueprints(
 @router.post("/validate/fix")
 async def apply_fixes(payload: ApplyFixesRequest):
     """
-    Apply auto-fixes server-side.
-    Sprint 5: wire to real AST-based fixer.
-    Currently only CB006 (printf) and MT001 (GEngine debug
-    message) are marked as fixable.
-    All fixes are opt-in — the developer approves each one
-    in the plugin panel before the fix is applied.
+    Apply auto-fixes using Tree-sitter AST analysis.
+
+    The plugin must send the full file content for each issue.
+    Tree-sitter parses the code, understands its structure,
+    and generates safe fixes.
+
+    Returns:
+        - fixes: List of fix results with original and fixed code
+        - summary: Count of successful and failed fixes
+
+    Example request:
+    {
+        "issues": [
+            {
+                "rule_id": "CP001",
+                "file_path": "Source/MyGame/MyActor.cpp",
+                "line": 45,
+                "content": "void AMyActor::Tick(...) { ... full file content ... }"
+            }
+        ]
+    }
+
+    Example response:
+    {
+        "fixes": [
+            {
+                "rule_id": "CP001",
+                "file_path": "Source/MyGame/MyActor.cpp",
+                "success": true,
+                "original_code": "AActor* Target = FindObjectOfType<AActor>();",
+                "fixed_code": "// [SHINTTOOLS] Moved to BeginPlay...",
+                "additions": "// Add to .h: UPROPERTY() AActor* CachedTarget;",
+                "changes": ["Line 46: Target -> CachedTarget"]
+            }
+        ],
+        "summary": {
+            "total": 1,
+            "successful": 1,
+            "failed": 0
+        }
+    }
     """
-    files_fixed: set[str] = set()
-    issues_fixed: int = 0
+    fixes: list[dict] = []
+    successful = 0
+    failed = 0
 
     for issue in payload.issues:
-        if issue.rule_id in _FIXABLE_RULES:
-            files_fixed.add(issue.file_path)
-            issues_fixed += 1
+        rule_id = issue.rule_id
+        file_path = issue.file_path
+        content = issue.content
+        line_number = issue.line
+
+        # Check if rule has a Tree-sitter pattern
+        if not _is_auto_fixable(rule_id):
+            fixes.append(
+                {
+                    "rule_id": rule_id,
+                    "file_path": file_path,
+                    "success": False,
+                    "error": f"No Tree-sitter pattern for rule {rule_id}",
+                }
+            )
+            failed += 1
+            continue
+
+        # Apply the fix using Tree-sitter
+        try:
+            fixed_code, additions, changes = _fixer.fix(
+                rule_id,
+                content,
+                line_number,
+            )
+
+            # Check if fix was actually applied
+            if fixed_code == content:
+                fixes.append(
+                    {
+                        "rule_id": rule_id,
+                        "file_path": file_path,
+                        "success": False,
+                        "error": "No changes made - pattern not found in code",
+                    }
+                )
+                failed += 1
+            else:
+                fixes.append(
+                    {
+                        "rule_id": rule_id,
+                        "file_path": file_path,
+                        "success": True,
+                        "original_code": content,
+                        "fixed_code": fixed_code,
+                        "additions": additions,
+                        "changes": changes,
+                    }
+                )
+                successful += 1
+
+        except Exception as e:
+            fixes.append(
+                {
+                    "rule_id": rule_id,
+                    "file_path": file_path,
+                    "success": False,
+                    "error": str(e),
+                }
+            )
+            failed += 1
+
+    # Persist fix results
+    await _persist_result(
+        "code_validator_fixes",
+        {"successful": successful, "failed": failed},
+        fixes,
+    )
 
     return {
-        "files_fixed": len(files_fixed),
-        "issues_fixed": issues_fixed,
+        "fixes": fixes,
+        "summary": {
+            "total": len(payload.issues),
+            "successful": successful,
+            "failed": failed,
+        },
     }
