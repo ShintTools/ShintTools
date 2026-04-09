@@ -44,6 +44,34 @@ def _is_source(file_path: str) -> bool:
     return Path(file_path).suffix.lower() in {".cpp", ".cc"}
 
 
+def _code_part(line: str) -> str:
+    """Return the code-only portion of a line, stripping trailing // comments.
+
+    Uses a simple scan that skips characters inside double-quoted strings so
+    a // sequence inside a string literal is not treated as a comment.
+    Covers ~99% of real UE5 code without full lexer complexity.
+    """
+    in_str = False
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        if ch == '"' and (i == 0 or line[i - 1] != "\\"):
+            in_str = not in_str
+        if not in_str and ch == "/" and i + 1 < len(line) and line[i + 1] == "/":
+            return line[:i]
+        i += 1
+    return line
+
+
+def _is_comment_line(stripped: str) -> bool:
+    """Return True if the stripped line is a pure comment (starts with // or *)."""
+    return (
+        stripped.startswith("//")
+        or stripped.startswith("*")
+        or stripped.startswith("/*")
+    )
+
+
 def _extract_class_name(content: str, pos: int) -> str:
     """
     Extracts the UE5 class name from the nearest function
@@ -1048,8 +1076,21 @@ def detect_raw_new(
 
     issues: List[Issue] = []
     source_lines = content.splitlines()
+    in_block_comment = False
     for line_no, source_line in enumerate(source_lines, start=1):
-        if re.search(r"\bnew\s+\w", source_line):
+        stripped = source_line.strip()
+        if in_block_comment:
+            if "*/" in source_line:
+                in_block_comment = False
+            continue
+        if stripped.startswith("/*"):
+            if "*/" not in source_line[stripped.find("/*") + 2 :]:
+                in_block_comment = True
+            continue
+        if _is_comment_line(stripped):
+            continue
+        code = _code_part(source_line)
+        if re.search(r"\bnew\s+\w", code):
             # Build fix: replace "new Type(...)" with "NewObject<Type>(this)"
             fix = source_line.strip()
             new_match = re.search(
@@ -1100,8 +1141,21 @@ def detect_raw_delete(
 
     issues: List[Issue] = []
     source_lines = content.splitlines()
+    in_block_comment = False
     for line_no, source_line in enumerate(source_lines, start=1):
-        if re.search(r"\bdelete\s+\w", source_line):
+        stripped = source_line.strip()
+        if in_block_comment:
+            if "*/" in source_line:
+                in_block_comment = False
+            continue
+        if stripped.startswith("/*"):
+            if "*/" not in source_line[stripped.find("/*") + 2 :]:
+                in_block_comment = True
+            continue
+        if _is_comment_line(stripped):
+            continue
+        code = _code_part(source_line)
+        if re.search(r"\bdelete\s+\w", code):
             # Fix: comment out the delete line
             fix = "// " + source_line.strip()
             issues.append(
@@ -1143,8 +1197,21 @@ def detect_stl_usage(
 
     issues: List[Issue] = []
     source_lines = content.splitlines()
+    in_block_comment = False
     for line_no, source_line in enumerate(source_lines, start=1):
-        if re.search(r"\bstd::\w", source_line):
+        stripped = source_line.strip()
+        if in_block_comment:
+            if "*/" in source_line:
+                in_block_comment = False
+            continue
+        if stripped.startswith("/*"):
+            if "*/" not in source_line[stripped.find("/*") + 2 :]:
+                in_block_comment = True
+            continue
+        if _is_comment_line(stripped):
+            continue
+        code = _code_part(source_line)
+        if re.search(r"\bstd::\w", code):
             issues.append(
                 {
                     "asset_path": file_path,
@@ -1211,8 +1278,21 @@ def detect_printf(
 
     issues: List[Issue] = []
     source_lines = content.splitlines()
+    in_block_comment = False
     for line_no, source_line in enumerate(source_lines, start=1):
-        if re.search(r"\bprintf\s*\(", source_line):
+        stripped = source_line.strip()
+        if in_block_comment:
+            if "*/" in source_line:
+                in_block_comment = False
+            continue
+        if stripped.startswith("/*"):
+            if "*/" not in source_line[stripped.find("/*") + 2 :]:
+                in_block_comment = True
+            continue
+        if _is_comment_line(stripped):
+            continue
+        code = _code_part(source_line)
+        if re.search(r"\bprintf\s*\(", code):
             # Fix: replace printf(...) with UE_LOG(LogTemp, Log, ...)
             fix = re.sub(
                 r"\bprintf\s*\(",
@@ -1293,16 +1373,32 @@ def detect_float_no_suffix(
 
     issues: List[Issue] = []
     source_lines = content.splitlines()
+    in_block_comment = False
     for line_no, source_line in enumerate(source_lines, start=1):
+        stripped = source_line.strip()
+        if in_block_comment:
+            if "*/" in source_line:
+                in_block_comment = False
+            continue
+        if stripped.startswith("/*"):
+            if "*/" not in source_line[stripped.find("/*") + 2 :]:
+                in_block_comment = True
+            continue
+        if _is_comment_line(stripped):
+            continue
+        # Use code-only portion so patterns inside // comments are ignored
+        code = _code_part(source_line)
+        # Pattern: float declaration assigned a decimal literal without 'f' suffix.
+        # Negative lookahead so 1.0f, 1.0e5, etc. are not re-flagged.
         if re.search(
-            r"\bfloat\b\s+\w+\s*=\s*[0-9]+\.[0-9]+[^f]",
-            source_line,
+            r"\bfloat\b\s+\w+\s*=\s*[0-9]+\.[0-9]+(?![fe])",
+            code,
         ):
-            # Fix: add 'f' suffix to float literals missing it
+            # Fix: add 'f' suffix to all bare float literals on this line
             fix = re.sub(
-                r"(\d+\.\d+)(?!f)",
+                r"(\b\d+\.\d+)(?![fe\d])",
                 r"\1f",
-                source_line,
+                code,
             ).strip()
             issues.append(
                 {
@@ -1530,25 +1626,40 @@ def detect_c_style_cast(
 
     issues: List[Issue] = []
     source_lines = content.splitlines()
-    # Matches (TypeName)variable — avoids matching function calls
-    cast_pattern = re.compile(
-        r"\(\s*(?:int8|int16|int32|int64|uint8|uint16|uint32|uint64"
-        r"|float|double|bool|char|TCHAR|SIZE_T)\s*\)\s*\w"
-    )
 
+    # Detection: (TypeName) followed by a word character.
+    # Use lookahead (?=\s*\w) so the variable's first character is NOT consumed,
+    # which previously caused the fix to lose it.
+    _CAST_TYPES = (
+        r"int8|int16|int32|int64|uint8|uint16|uint32|uint64"
+        r"|float|double|bool|char|TCHAR|SIZE_T"
+    )
+    cast_detect = re.compile(r"\(\s*(?:" + _CAST_TYPES + r")\s*\)(?=\s*\w)")
+    # Fix pattern captures type AND the identifier token so both survive substitution
+    cast_fix = re.compile(r"\(\s*(" + _CAST_TYPES + r")\s*\)\s*(\w+)")
+
+    in_block_comment = False
     for line_no, source_line in enumerate(source_lines, start=1):
         stripped = source_line.strip()
-        if stripped.startswith("//"):
+        if in_block_comment:
+            if "*/" in source_line:
+                in_block_comment = False
             continue
-        cast_match = cast_pattern.search(source_line)
+        if stripped.startswith("/*"):
+            if "*/" not in source_line[stripped.find("/*") + 2 :]:
+                in_block_comment = True
+            continue
+        if _is_comment_line(stripped):
+            continue
+        code = _code_part(source_line)
+        cast_match = cast_detect.search(code)
         if cast_match:
-            cast_text = cast_match.group(0).strip()
-            # Suggest static_cast equivalent
-            type_match = re.search(r"\(\s*(\w+)\s*\)", cast_text)
+            # Extract type name for the message
+            type_match = re.search(r"\(\s*(\w+)\s*\)", cast_match.group(0))
             type_name = type_match.group(1) if type_match else "T"
-            fix = cast_pattern.sub(
-                f"static_cast<{type_name}>(", source_line, count=1
-            ).strip()
+            # Fix: replace (Type)var → static_cast<Type>(var)
+            # cast_fix captures both type and identifier token
+            fix = cast_fix.sub(r"static_cast<\1>(\2)", stripped, count=1)
             issues.append(
                 {
                     "asset_path": file_path,
@@ -1561,10 +1672,10 @@ def detect_c_style_cast(
                     "rule_id": "CB012",
                     "category": "Best Practices",
                     "message": (
-                        "C-style cast detected — use "
+                        f"C-style cast to '{type_name}' — use "
                         "static_cast<T>() or Cast<T>() instead."
                     ),
-                    "snippet": source_line.strip(),
+                    "snippet": stripped,
                     "fix_suggestion": fix,
                     "is_auto_fixable": True,
                 }
@@ -1608,7 +1719,16 @@ def detect_nullptr_deref(
             if not next_stripped:
                 continue
             if re.search(rf"\b{re.escape(var_name)}\s*->", next_stripped):
-                if not re.search(r"\bif\b", next_stripped):
+                prev_code = ""
+                for prev_idx in range(line_no + offset - 2, max(line_no - 1, -1), -1):
+                    prev_stripped = (
+                        source_lines[prev_idx].strip() if prev_idx >= 0 else ""
+                    )
+                    if prev_stripped:
+                        prev_code = _code_part(prev_stripped).rstrip()
+                        break
+                is_continuation = bool(re.search(r"[(&|]{1,2}\s*$", prev_code))
+                if not re.search(r"\bif\b", next_stripped) and not is_continuation:
                     # Report on the USAGE line so fix replaces the right line
                     usage_line_no = line_no + offset
                     issues.append(
@@ -2143,44 +2263,69 @@ def detect_missing_override(
     if not has_inheritance:
         return []
 
-    # Pattern: virtual ReturnType FuncName(...) without override
+    # Pattern: virtual ReturnType FuncName(...) — we check for 'override' absence
+    # explicitly after matching rather than relying on a lookahead, because the
+    # optional (?:const\s*)? group causes the lookahead to be evaluated at the
+    # wrong position when const is absent, producing false positives.
     virtual_pattern = re.compile(
-        r"\bvirtual\s+[\w:<>*&]+\s+(\w+)\s*\([^)]*\)\s*" r"(?:const\s*)?(?!override)"
+        r"\bvirtual\s+[\w:<>*&]+\s+(\w+)\s*\([^)]*\)\s*(?:const\s*)?"
     )
 
+    in_block_comment = False
     for line_no, source_line in enumerate(source_lines, start=1):
         stripped = source_line.strip()
-        if stripped.startswith("//"):
+        if in_block_comment:
+            if "*/" in source_line:
+                in_block_comment = False
+            continue
+        if stripped.startswith("/*"):
+            if "*/" not in source_line[stripped.find("/*") + 2 :]:
+                in_block_comment = True
+            continue
+        if _is_comment_line(stripped):
             continue
 
         virtual_match = virtual_pattern.search(source_line)
-        if virtual_match:
-            # Skip pure virtual (= 0) and destructors
-            if "= 0" in source_line or "~" in source_line:
-                continue
+        if not virtual_match:
+            continue
 
-            func_name = virtual_match.group(1)
-            issues.append(
-                {
-                    "asset_path": file_path,
-                    "line": line_no,
-                    "class": _extract_class_name(
-                        content,
-                        _char_pos_for_line(source_lines, line_no),
-                    ),
-                    "severity": "warning",
-                    "rule_id": "CB023",
-                    "category": "Best Practices",
-                    "message": (
-                        f"Virtual function '{func_name}' lacks "
-                        "override keyword — add 'override' to "
-                        "catch signature mismatches."
-                    ),
-                    "snippet": source_line.strip(),
-                    "fix_suggestion": source_line.rstrip().rstrip(";") + " override;",
-                    "is_auto_fixable": True,
-                }
-            )
+        # Skip: pure virtual, destructors, already has override/final
+        if "= 0" in source_line or "~" in source_line:
+            continue
+        if "override" in source_line or "final" in source_line:
+            continue
+        # Skip multi-line declarations where the closing ) is on a later line
+        # (the fix would append " override;" to an incomplete declaration)
+        if ")" not in source_line:
+            continue
+
+        func_name = virtual_match.group(1)
+
+        # Build fix: remove trailing ; then append " override;"
+        # Works for both "... );" and "... ) const;"
+        fix = re.sub(r"\s*;\s*$", " override;", stripped)
+
+        issues.append(
+            {
+                "asset_path": file_path,
+                "line": line_no,
+                "class": _extract_class_name(
+                    content,
+                    _char_pos_for_line(source_lines, line_no),
+                ),
+                "severity": "warning",
+                "rule_id": "CB023",
+                "category": "Best Practices",
+                "message": (
+                    f"Virtual function '{func_name}' lacks "
+                    "override keyword — add 'override' to "
+                    "catch signature mismatches."
+                ),
+                "snippet": stripped,
+                "fix_suggestion": fix,
+                "is_auto_fixable": True,
+            }
+        )
 
     return issues
 
@@ -2480,8 +2625,43 @@ def detect_getworld_no_check(
 
     issues: List[Issue] = []
     source_lines = content.splitlines()
+    in_block_comment = False
     for line_no, source_line in enumerate(source_lines, start=1):
-        if re.search(r"\bGetWorld\(\)\s*->", source_line):
+        stripped = source_line.strip()
+        if in_block_comment:
+            if "*/" in source_line:
+                in_block_comment = False
+            continue
+        if stripped.startswith("/*"):
+            if "*/" not in source_line[stripped.find("/*") + 2 :]:
+                in_block_comment = True
+            continue
+        if _is_comment_line(stripped):
+            continue
+        code = _code_part(source_line)
+        if re.search(r"\bGetWorld\(\)\s*->", code):
+            # Only auto-fix standalone calls (no assignment before GetWorld).
+            # If the call is part of an assignment expression the fix would
+            # produce invalid code, so leave it as a manual fix in that case.
+            before_call = re.sub(r"\bGetWorld\(\).*", "", stripped)
+            is_standalone = before_call.strip() in ("", "return")
+            if is_standalone:
+                fix = re.sub(
+                    r"\bGetWorld\(\)\s*->",
+                    "if (UWorld* World = GetWorld()) World->",
+                    stripped,
+                )
+                fixable = True
+            else:
+                fix = (
+                    "if (UWorld* World = GetWorld())\n"
+                    + "{\n"
+                    + "    "
+                    + stripped
+                    + "\n"
+                    + "}"
+                )
+                fixable = False
             issues.append(
                 {
                     "asset_path": file_path,
@@ -2498,13 +2678,9 @@ def detect_getworld_no_check(
                         "guard with "
                         "'if (UWorld* W = GetWorld())'."
                     ),
-                    "snippet": source_line.strip(),
-                    "fix_suggestion": re.sub(
-                        r"\bGetWorld\(\)\s*->",
-                        "if (UWorld* World = GetWorld()) World->",
-                        source_line.strip(),
-                    ),
-                    "is_auto_fixable": True,
+                    "snippet": stripped,
+                    "fix_suggestion": fix,
+                    "is_auto_fixable": fixable,
                 }
             )
     return issues
@@ -2548,7 +2724,16 @@ def detect_spawnactor_no_check(
             if not stripped:
                 continue
             if re.search(rf"\b{re.escape(var_name)}\s*->", stripped):
-                if not re.search(r"\bif\b", stripped):
+                prev_code = ""
+                for prev_idx in range(line_no + offset - 2, max(line_no - 1, -1), -1):
+                    prev_stripped = (
+                        source_lines[prev_idx].strip() if prev_idx >= 0 else ""
+                    )
+                    if prev_stripped:
+                        prev_code = _code_part(prev_stripped).rstrip()
+                        break
+                is_continuation = bool(re.search(r"[(&|]{1,2}\s*$", prev_code))
+                if not re.search(r"\bif\b", stripped) and not is_continuation:
                     # Report on the USAGE line so fix replaces the right line
                     usage_line_no = line_no + offset
                     issues.append(
@@ -2612,7 +2797,16 @@ def detect_cast_no_check(
             if not stripped:
                 continue
             if re.search(rf"\b{re.escape(var_name)}\s*->", stripped):
-                if not re.search(r"\bif\b", stripped):
+                prev_code = ""
+                for prev_idx in range(line_no + offset - 2, max(line_no - 1, -1), -1):
+                    prev_stripped = (
+                        source_lines[prev_idx].strip() if prev_idx >= 0 else ""
+                    )
+                    if prev_stripped:
+                        prev_code = _code_part(prev_stripped).rstrip()
+                        break
+                is_continuation = bool(re.search(r"[(&|]{1,2}\s*$", prev_code))
+                if not re.search(r"\bif\b", stripped) and not is_continuation:
                     # Report on the USAGE line so fix replaces the right line
                     usage_line_no = line_no + offset
                     issues.append(
@@ -2802,12 +2996,41 @@ def detect_getowner_no_check(
 
     issues: List[Issue] = []
     source_lines = content.splitlines()
+    in_block_comment = False
 
     for line_no, source_line in enumerate(source_lines, start=1):
         stripped = source_line.strip()
-        if stripped.startswith("//"):
+        if in_block_comment:
+            if "*/" in source_line:
+                in_block_comment = False
             continue
-        if re.search(r"\bGetOwner\(\)\s*->", source_line):
+        if stripped.startswith("/*"):
+            if "*/" not in source_line[stripped.find("/*") + 2 :]:
+                in_block_comment = True
+            continue
+        if _is_comment_line(stripped):
+            continue
+        code = _code_part(source_line)
+        if re.search(r"\bGetOwner\(\)\s*->", code):
+            before_call = re.sub(r"\bGetOwner\(\).*", "", stripped)
+            is_standalone = before_call.strip() in ("", "return")
+            if is_standalone:
+                fix = re.sub(
+                    r"\bGetOwner\(\)\s*->",
+                    "if (AActor* Owner = GetOwner()) Owner->",
+                    stripped,
+                )
+                fixable = True
+            else:
+                fix = (
+                    "if (AActor* Owner = GetOwner())\n"
+                    + "{\n"
+                    + "    "
+                    + stripped
+                    + "\n"
+                    + "}"
+                )
+                fixable = False
             issues.append(
                 {
                     "asset_path": file_path,
@@ -2824,13 +3047,9 @@ def detect_getowner_no_check(
                         "— guard with "
                         "'if (AActor* Owner = GetOwner())'."
                     ),
-                    "snippet": source_line.strip(),
-                    "fix_suggestion": re.sub(
-                        r"\bGetOwner\(\)\s*->",
-                        "if (AActor* Owner = GetOwner()) Owner->",
-                        source_line.strip(),
-                    ),
-                    "is_auto_fixable": True,
+                    "snippet": stripped,
+                    "fix_suggestion": fix,
+                    "is_auto_fixable": fixable,
                 }
             )
     return issues
@@ -3119,8 +3338,21 @@ def detect_debug_message(
 
     issues: List[Issue] = []
     source_lines = content.splitlines()
+    in_block_comment = False
     for line_no, source_line in enumerate(source_lines, start=1):
-        if re.search(r"GEngine->AddOnScreenDebugMessage", source_line):
+        stripped = source_line.strip()
+        if in_block_comment:
+            if "*/" in source_line:
+                in_block_comment = False
+            continue
+        if stripped.startswith("/*"):
+            if "*/" not in source_line[stripped.find("/*") + 2 :]:
+                in_block_comment = True
+            continue
+        if _is_comment_line(stripped):
+            continue
+        code = _code_part(source_line)
+        if re.search(r"GEngine->AddOnScreenDebugMessage", code):
             # Fix: comment out the debug message
             fix = "// " + source_line.strip()
             issues.append(
@@ -3655,5 +3887,28 @@ def run_all_cpp_rules(
     #     issues += detect_commented_code_block(content, file_path)
     #     issues += detect_inconsistent_pointer_style(content, file_path)
     #     issues += detect_multiple_returns(content, file_path)
+
+    # Inject context window (2 lines before + issue line + 2 lines after) so
+    # the plugin can show a before/after diff without re-reading the file.
+    _CONTEXT = 2
+    source_lines = content.splitlines()
+    for issue in issues:
+        line_no = issue.get("line", 0)
+        if line_no < 1 or not source_lines:
+            continue
+        start = max(0, line_no - 1 - _CONTEXT)
+        end = min(len(source_lines), line_no + _CONTEXT)
+        window = source_lines[start:end]
+        issue["context_before"] = "\n".join(window)
+        issue["context_line_start"] = start + 1  # 1-based
+        fix = issue.get("fix_suggestion", "")
+        if fix:
+            after_window = window[:]
+            idx = (line_no - 1) - start
+            if 0 <= idx < len(after_window):
+                after_window[idx] = fix
+            issue["context_after"] = "\n".join(after_window)
+        else:
+            issue["context_after"] = ""
 
     return issues
