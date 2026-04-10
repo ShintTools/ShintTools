@@ -33,7 +33,7 @@ class AssetScanRequest(BaseModel):
     project_id: str = ""
     api_key: str = ""
     project_name: str = ""
-    assets_paths: list[AssetEntry] = Field(default_factory=list)
+    asset_paths: list[AssetEntry] = Field(default_factory=list)
     engine: str = "unreal"
 
 
@@ -82,7 +82,7 @@ async def scan_assets(payload: AssetScanRequest):
             "asset_path": asset.asset_path,
             "asset_type": asset.type or "Unknown",
         }
-        for asset in payload.assets_paths
+        for asset in payload.asset_paths
         if asset.asset_path
     ]
 
