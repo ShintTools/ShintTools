@@ -146,26 +146,31 @@ class CppFixer:
         line_number: int,
         expression: str,
     ) -> Tuple[str, str, List[str]]:
-        """Wrap in null-check using UE5 idiomatic IsValid() pattern."""
-        config = PATTERNS["null_check"]["expressions"].get(expression, ("auto", "Ptr"))
-        var_type, var_name = config
+        """Wrap in null-check using UE5 idiomatic IsValid() pattern.
 
+        Two strategies:
+        - EXTRACT: expression is a complete callable (GetWorld(), GetOwner()).
+          Assigns it to a local var and wraps usage in IsValid().
+        - WRAP: expression is a fragment/marker (Cast<, ->, SpawnActor, …).
+          The variable already exists; find it from `Var->` on the line and
+          wrap the whole line in IsValid(Var) without re-assigning anything.
+        """
         lines = code.split("\n")
         idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
         original = lines[idx]
         indent = " " * (len(original) - len(original.lstrip()))
 
-        # Use IsValid() for UObject-derived types (UE5 idiom)
-        # IsValid() checks both nullptr and IsPendingKill
-        is_uobject_type = var_type in (
-            "UWorld*",
-            "AActor*",
-            "UObject*",
-            "auto",
-        )
+        # Expressions that are full callables — safe to extract into a local var
+        EXTRACT_EXPRESSIONS = {"GetWorld()", "GetOwner()"}
 
-        if is_uobject_type:
-            # Pattern: Type* Var = Expr; if (IsValid(Var)) { use Var }
+        if expression in EXTRACT_EXPRESSIONS:
+            config = PATTERNS["null_check"]["expressions"].get(
+                expression, ("auto", "Ptr")
+            )
+            var_type, var_name = config
             inner = original.strip().replace(f"{expression}->", f"{var_name}->")
             lines[idx] = (
                 f"{indent}{var_type} {var_name} = {expression};\n"
@@ -174,18 +179,31 @@ class CppFixer:
                 f"{indent}    {inner}\n"
                 f"{indent}}}"
             )
-        else:
-            # Non-UObject: simple nullptr check
-            inner = original.strip().replace(f"{expression}->", f"{var_name}->")
-            lines[idx] = (
-                f"{indent}{var_type} {var_name} = {expression};\n"
-                f"{indent}if ({var_name})\n"
-                f"{indent}{{\n"
-                f"{indent}    {inner}\n"
-                f"{indent}}}"
+            return (
+                "\n".join(lines),
+                "",
+                [f"Line {line_number}: Added null-check for {expression}"],
             )
 
-        return "\n".join(lines), "", [f"Line {line_number}: Added null-check"]
+        # For all other expressions (Cast<, ->, SpawnActor, OtherActor, WeakPtr …):
+        # the variable already exists on the line — just find it and wrap.
+        match = re.search(r"(\w+)\s*->", original)
+        if not match:
+            return code, "", [f"No pointer dereference found on line {line_number}"]
+
+        ptr_var = match.group(1)
+        inner = original.strip()
+        lines[idx] = (
+            f"{indent}if (IsValid({ptr_var}))\n"
+            f"{indent}{{\n"
+            f"{indent}    {inner}\n"
+            f"{indent}}}"
+        )
+        return (
+            "\n".join(lines),
+            "",
+            [f"Line {line_number}: Added IsValid({ptr_var}) guard"],
+        )
 
     def _apply_delete_line(
         self,
@@ -462,8 +480,10 @@ class CppFixer:
 
         original = lines[idx]
         # Match C-style casts: (Type)expression
+        # Negative lookbehind: exclude function-call patterns like func(Type)var
+        # Only match when '(' is NOT preceded by an identifier character.
         new_line = re.sub(
-            r"\((\w+)\)\s*(\w+)",
+            r"(?<![a-zA-Z_0-9])\((\w+)\)\s*(\w+)",
             r"static_cast<\1>(\2)",
             original,
         )
