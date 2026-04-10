@@ -324,16 +324,31 @@ class CppFixer:
             return code, "", ["Invalid line number"]
 
         original = lines[idx]
-        # Match float literals without f suffix: 1.0, 0.5, 3.14, etc.
-        new_line = re.sub(
-            r"(\d+\.\d+)(?!f\b)",
+        stripped = original.lstrip()
+
+        # Skip pure comment lines — float literals there are not compiled code.
+        if (
+            stripped.startswith("//")
+            or stripped.startswith("*")
+            or stripped.startswith("/*")
+        ):
+            return code, "", ["Line is a comment — skipping"]
+
+        # Replace floats only in the code portion (before any // comment).
+        comment_idx = original.find("//")
+        code_part = original if comment_idx == -1 else original[:comment_idx]
+        tail = "" if comment_idx == -1 else original[comment_idx:]
+
+        # Avoid scientific notation (1.0e5) and already-suffixed literals.
+        new_code_part = re.sub(
+            r"(\d+\.\d+)(?![fe\d])",
             rf"\1{suffix}",
-            original,
+            code_part,
         )
-        if new_line == original:
+        if new_code_part == code_part:
             return code, "", ["No float literal without suffix found"]
 
-        lines[idx] = new_line
+        lines[idx] = new_code_part + tail
         return "\n".join(lines), "", [f"Line {line_number}: Added '{suffix}' suffix"]
 
     def _apply_add_virtual(
@@ -376,15 +391,11 @@ class CppFixer:
         if "override" in original:
             return code, "", ["Already has override"]
 
-        # Match function declaration ending with ); or ) const;
-        new_line = re.sub(
-            r"\)\s*(const\s*)?;",
-            r") \1override;",
-            original,
-        )
-        # Clean up extra spaces
-        new_line = re.sub(r"\s+override", " override", new_line)
-        new_line = re.sub(r"override\s*;", "override;", new_line)
+        # Two explicit branches avoid backreference \1 bugs with optional groups.
+        if re.search(r"\)\s*const\s*;", original):
+            new_line = re.sub(r"\)\s*const\s*;", ") const override;", original)
+        else:
+            new_line = re.sub(r"\)\s*;", ") override;", original)
 
         if new_line == original:
             return code, "", ["Could not add override"]

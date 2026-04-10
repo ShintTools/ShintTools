@@ -21,9 +21,13 @@ from pathlib import Path
 from typing import Dict, List
 
 try:
+    from code_validator.parsers.cpp_fixer import CppFixer
     from code_validator.parsers.fix_patterns import RULE_TO_PATTERN
 except ModuleNotFoundError:
     RULE_TO_PATTERN = {}
+    CppFixer = None  # type: ignore[assignment,misc]
+
+_fixer: "CppFixer | None" = CppFixer() if CppFixer is not None else None
 
 # Type alias for issue dictionary
 Issue = Dict
@@ -3737,6 +3741,8 @@ def run_all_cpp_rules(
 
     # Inject context window (2 lines before + issue line + 2 lines after) so
     # the plugin can show a before/after diff without re-reading the file.
+    # AFTER window is produced by running the actual fixer so the plugin sees
+    # real corrected code, not human-readable fix_suggestion description text.
     _CONTEXT = 2
     source_lines = content.splitlines()
     for issue in issues:
@@ -3748,14 +3754,26 @@ def run_all_cpp_rules(
         window = source_lines[start:end]
         issue["context_before"] = "\n".join(window)
         issue["context_line_start"] = start + 1  # 1-based
-        fix = issue.get("fix_suggestion", "")
-        if fix:
-            after_window = window[:]
-            idx = (line_no - 1) - start
-            if 0 <= idx < len(after_window):
-                after_window[idx] = fix
-            issue["context_after"] = "\n".join(after_window)
-        else:
-            issue["context_after"] = ""
+
+        # Compute context_after using the fixer so the plugin shows actual code.
+        # Falls back to empty string if the fix is unavailable or unchanged.
+        after_context = ""
+        rule_id = issue.get("rule_id", "")
+        if (
+            _fixer is not None
+            and issue.get("is_auto_fixable")
+            and rule_id in RULE_TO_PATTERN
+        ):
+            try:
+                fixed_code, _, _ = _fixer.fix(rule_id, content, line_no)
+                if fixed_code != content:
+                    fixed_lines = fixed_code.splitlines()
+                    # Extract the same start position; allow extra lines for
+                    # multi-line fixes (null_check, bounds_check expand 1→4 lines).
+                    f_end = min(len(fixed_lines), start + len(window) + 4)
+                    after_context = "\n".join(fixed_lines[start:f_end])
+            except Exception:
+                pass  # fixer failed — AFTER panel will be empty
+        issue["context_after"] = after_context
 
     return issues
