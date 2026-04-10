@@ -739,7 +739,14 @@ class CppFixer:
         line_number: int,
     ) -> Tuple[str, str, List[str]]:
         """Add const to BlueprintPure function.
+
         void Func(); -> void Func() const;
+
+        Refuses to touch static member functions: C++ forbids 'const'
+        on static member functions (they have no 'this' pointer), so
+        adding it would produce code that fails to compile. Looks at
+        the target line AND the immediate previous non-comment line
+        to handle the 'static\\n<return type> Foo();' split style.
         """
         lines = code.split("\n")
         idx = line_number - 1
@@ -749,6 +756,26 @@ class CppFixer:
         original = lines[idx]
         if "const" in original:
             return code, "", ["Already const"]
+
+        # Safety net: refuse static member functions even if a stale
+        # issue reaches the fixer past the detector-side skip.
+        if re.search(r"\bstatic\b", original):
+            return code, "", ["Cannot add const to static function"]
+        prev_idx = idx - 1
+        while prev_idx >= 0:
+            prev_line = lines[prev_idx].strip()
+            if not prev_line or prev_line.startswith("//"):
+                prev_idx -= 1
+                continue
+            if not prev_line.startswith("UFUNCTION") and re.search(
+                r"\bstatic\b", prev_line
+            ):
+                return (
+                    code,
+                    "",
+                    ["Cannot add const to static function"],
+                )
+            break
 
         new_line = re.sub(r"\)\s*;", ") const;", original)
         if new_line == original:

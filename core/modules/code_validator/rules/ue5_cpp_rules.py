@@ -2433,6 +2433,30 @@ def detect_blueprint_pure_side_effects(
 
         func_line = source_lines[func_line_no - 1]
 
+        # Static member functions cannot be const in C++ (no 'this'
+        # pointer). Skip CB031 for them entirely — adding 'const' would
+        # produce invalid code ("static member function cannot have
+        # 'const' qualifier"). Inspect the signature line and, as a
+        # safety net, the immediate non-comment line above it in case
+        # 'static' is written on its own line.
+        is_static = bool(re.search(r"\bstatic\b", func_line))
+        if not is_static:
+            prev_idx = func_line_no - 2  # 0-based index of previous line
+            while prev_idx >= 0:
+                prev_line = source_lines[prev_idx].strip()
+                if not prev_line or prev_line.startswith("//"):
+                    prev_idx -= 1
+                    continue
+                # Only the immediate previous non-comment line, and
+                # ignore the UFUNCTION macro line itself.
+                if not prev_line.startswith("UFUNCTION") and re.search(
+                    r"\bstatic\b", prev_line
+                ):
+                    is_static = True
+                break
+        if is_static:
+            continue
+
         # Check if function is const (pure functions should be const)
         if ") const" not in func_line and ")const" not in func_line:
             # Extract function name

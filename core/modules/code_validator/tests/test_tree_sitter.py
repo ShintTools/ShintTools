@@ -275,6 +275,27 @@ test(
     "const;",
 )
 
+# Regression: CB031 must NOT add 'const' to a static member function.
+# C++ forbids 'const' on static members (no 'this' pointer).
+test(
+    "CB031: skip static function (same-line static)",
+    "CB031",
+    "    static int32 GetDefault();",
+    1,
+    "static int32 GetDefault();",
+    " const;",
+)
+
+# Regression: split-style 'static' on the line above the signature.
+test(
+    "CB031: skip static function (split static)",
+    "CB031",
+    "    static\n    int32 GetDefault();",
+    2,
+    "int32 GetDefault();",
+    " const;",
+)
+
 test(
     "CB032: remove_const_ref",
     "CB032",
