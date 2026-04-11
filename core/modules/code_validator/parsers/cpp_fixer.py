@@ -85,6 +85,12 @@ class CppFixer:
             return self._apply_add_const_qualifier(code, line_number)
         elif pattern_name == "remove_const_ref" and line_number is not None:
             return self._apply_remove_const_ref(code, line_number)
+        elif pattern_name == "wrap_shipping_guard" and line_number is not None:
+            return self._apply_wrap_shipping_guard(code, line_number)
+        elif pattern_name == "insert_field_default" and line_number is not None:
+            return self._apply_insert_field_default(code, line_number)
+        elif pattern_name == "wrap_weak_lambda" and line_number is not None:
+            return self._apply_wrap_weak_lambda(code, line_number)
         elif pattern_name == "mark_for_review" and line_number is not None:
             reason = param if param else "Requires manual review"
             return self._apply_mark_for_review(code, line_number, reason)
@@ -916,4 +922,242 @@ void AMyClass::{new_func_name}({func_params})
             "\n".join(new_lines),
             additions,
             [f"Extracted {len(extracted_lines)} lines to {new_func_name}()"],
+        )
+
+    # ================================================================
+    # Reintroduced rules: CP015, CB026, CB028, CB029
+    # ================================================================
+
+    def _apply_wrap_shipping_guard(
+        self,
+        code: str,
+        line_number: int,
+    ) -> Tuple[str, str, List[str]]:
+        """
+        CP015, CB029 — Wrap the statement on the target line in
+        `#if !UE_BUILD_SHIPPING ... #endif`.
+
+        Preserves the original indentation and is idempotent: if the
+        previous non-empty line already opens a `#if !UE_BUILD_SHIPPING`
+        guard, the fix is a no-op. Supports multi-line statements by
+        scanning forward until a `;` at paren depth 0 is reached.
+        """
+        lines = code.split("\n")
+        idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        # Idempotency: walk back over blank lines to the previous
+        # non-empty line; if it opens a shipping guard, we're done.
+        back = idx - 1
+        while back >= 0 and not lines[back].strip():
+            back -= 1
+        if back >= 0 and "#if !UE_BUILD_SHIPPING" in lines[back]:
+            return code, "", ["Already wrapped in shipping guard"]
+
+        # Find the end of the statement (balanced parens + trailing ;).
+        end_idx = idx
+        depth = 0
+        for j in range(idx, len(lines)):
+            for ch in lines[j]:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+            if depth <= 0 and lines[j].rstrip().endswith(";"):
+                end_idx = j
+                break
+
+        # Epic convention: preprocessor directives are flush-left
+        # inside function bodies, not indented to match the statement.
+        guard_open = "#if !UE_BUILD_SHIPPING"
+        guard_close = "#endif"
+
+        new_lines = (
+            lines[:idx]
+            + [guard_open]
+            + lines[idx : end_idx + 1]
+            + [guard_close]
+            + lines[end_idx + 1 :]
+        )
+        return (
+            "\n".join(new_lines),
+            "",
+            [f"Line {line_number}: Wrapped in #if !UE_BUILD_SHIPPING"],
+        )
+
+    def _apply_insert_field_default(
+        self,
+        code: str,
+        line_number: int,
+    ) -> Tuple[str, str, List[str]]:
+        """
+        CB026 — Insert a type-aware default initializer before the `;`
+        of a UPROPERTY(ExposeOnSpawn) field declaration.
+
+        Adding a default is idempotent with any constructor assignment:
+        if the constructor sets the value, that wins (default init runs
+        first). If not, the default avoids uninitialized memory.
+        """
+        lines = code.split("\n")
+        idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        original = lines[idx]
+        if ";" not in original:
+            return code, "", ["No semicolon on target line"]
+
+        before_semi = original.split(";", 1)[0]
+        if "=" in before_semi:
+            return code, "", ["Field already has a default value"]
+
+        m = re.match(
+            r"^(\s*)([A-Za-z_][A-Za-z0-9_:<>,\s\*&]*?)\s+"
+            r"([A-Za-z_]\w*)\s*(\[[^\]]*\])?\s*;",
+            original,
+        )
+        if not m:
+            return code, "", ["Could not parse field declaration"]
+
+        type_token = m.group(2).strip()
+        t = re.sub(r"\b(const|volatile|mutable)\b", "", type_token).strip()
+        t = re.sub(r"\s+", " ", t)
+
+        default_value: Optional[str] = None
+
+        if t.endswith("*"):
+            default_value = "nullptr"
+        elif t.startswith(
+            (
+                "TObjectPtr<",
+                "TWeakObjectPtr<",
+                "TSoftObjectPtr<",
+                "TSoftClassPtr<",
+                "TSubclassOf<",
+            )
+        ):
+            default_value = "nullptr"
+        elif t in {
+            "int8",
+            "int16",
+            "int32",
+            "int64",
+            "uint8",
+            "uint16",
+            "uint32",
+            "uint64",
+            "float",
+            "double",
+            "int",
+            "short",
+            "long",
+            "size_t",
+            "SIZE_T",
+        }:
+            default_value = "0"
+        elif t == "bool":
+            default_value = "false"
+        else:
+            ue_defaults = {
+                "FVector": "FVector::ZeroVector",
+                "FVector2D": "FVector2D::ZeroVector",
+                "FVector4": "FVector4(ForceInitToZero)",
+                "FRotator": "FRotator::ZeroRotator",
+                "FQuat": "FQuat::Identity",
+                "FTransform": "FTransform::Identity",
+                "FLinearColor": "FLinearColor::White",
+                "FColor": "FColor::White",
+            }
+            default_value = ue_defaults.get(t)
+
+        if default_value is None:
+            return (
+                code,
+                "",
+                [f"No safe default for type '{type_token}'"],
+            )
+
+        new_line = original.replace(";", f" = {default_value};", 1)
+        lines[idx] = new_line
+        return (
+            "\n".join(lines),
+            "",
+            [
+                f"Line {line_number}: Added default "
+                f"'= {default_value}' for {type_token}"
+            ],
+        )
+
+    def _apply_wrap_weak_lambda(
+        self,
+        code: str,
+        line_number: int,
+    ) -> Tuple[str, str, List[str]]:
+        """
+        CB028 — Wrap a SetTimer lambda that captures `this` in
+        FTimerDelegate::CreateWeakLambda(this, <lambda>).
+
+        Works on a 4-line window to support multi-line SetTimer calls.
+        Refuses to touch the code if the window already uses
+        CreateWeakLambda / CreateUObject, if the SetTimer call isn't
+        found, or if the lambda boundaries cannot be located safely.
+        """
+        lines = code.split("\n")
+        idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        end_window = min(idx + 4, len(lines))
+        joined = "\n".join(lines[idx:end_window])
+
+        if "CreateWeakLambda" in joined or "CreateUObject" in joined:
+            return code, "", ["Already uses safe timer binding"]
+
+        if "SetTimer" not in joined:
+            return code, "", ["SetTimer call not found in line window"]
+
+        lam_match = re.search(r"(\[\s*(?:this|&|=)[^\]]*\])\s*\(", joined)
+        if not lam_match:
+            return code, "", ["Lambda capture not found"]
+
+        cap_start = lam_match.start()
+
+        # Scan forward to find the end of the lambda body (matching `}`).
+        brace_depth = 0
+        lam_end = -1
+        i = cap_start
+        seen_brace = False
+        while i < len(joined):
+            ch = joined[i]
+            if ch == "{":
+                brace_depth += 1
+                seen_brace = True
+            elif ch == "}":
+                brace_depth -= 1
+                if seen_brace and brace_depth == 0:
+                    lam_end = i + 1
+                    break
+            i += 1
+
+        if lam_end <= cap_start:
+            return code, "", ["Could not locate lambda end"]
+
+        new_joined = (
+            joined[:cap_start]
+            + "FTimerDelegate::CreateWeakLambda(this, "
+            + joined[cap_start:lam_end]
+            + ")"
+            + joined[lam_end:]
+        )
+
+        new_window_lines = new_joined.split("\n")
+        result_lines = lines[:idx] + new_window_lines + lines[end_window:]
+        return (
+            "\n".join(result_lines),
+            "",
+            [
+                f"Line {line_number}: Wrapped lambda in "
+                "FTimerDelegate::CreateWeakLambda"
+            ],
         )

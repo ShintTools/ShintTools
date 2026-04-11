@@ -895,6 +895,101 @@ def detect_new_object_in_loop(
     return issues
 
 
+# CP015 — ensure() dentro de Tick/Update
+def detect_ensure_in_tick(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detecta ensure() dentro de funciones Tick() o Update().
+
+    ensure() evalúa su condición en cada frame, lo que añade overhead
+    medible en hot paths. El autofix envuelve la llamada con
+    `#if !UE_BUILD_SHIPPING ... #endif`, el patrón oficial de Epic
+    para validación en hot paths: mantiene la validación en builds de
+    desarrollo y elimina el overhead en Shipping.
+    """
+    if not _is_source(file_path):
+        return []
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+
+    # Regex tradicional con body matching limitado a 1 nivel de anidación.
+    # Es el máximo que Python re puede hacer sin un parser real. El plugin
+    # con Tree-sitter hará el match exacto del function_body.
+    tick_pattern = re.compile(
+        r"void\s+(\w+)::(?:Tick|Update)\s*\([^)]*\)\s*"
+        r"\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
+        re.DOTALL,
+    )
+
+    for tick_match in tick_pattern.finditer(content):
+        class_name = tick_match.group(1)
+        tick_body = tick_match.group(2)
+        body_start = tick_match.start(2)
+
+        # Buscar TODAS las ocurrencias de ensure() en el body.
+        for m in re.finditer(r"\bensure\s*\(", tick_body):
+            # Filtrar variantes que NO queremos tocar.
+            tail = tick_body[m.start() : m.start() + 32]
+            if (
+                tail.startswith("ensureAlways")
+                or tail.startswith("ensureMsgf")
+                or tail.startswith("ensureAlwaysMsgf")
+            ):
+                continue
+
+            abs_pos = body_start + m.start()
+            line_no = _get_line_number(content, abs_pos)
+            line_idx = line_no - 1
+
+            if line_idx >= len(source_lines):
+                continue
+
+            snippet_line = source_lines[line_idx].strip()
+            if snippet_line.startswith("//"):
+                continue
+
+            # Idempotencia: si ya está dentro de un guard #if !UE_BUILD_SHIPPING
+            # previo, no marcamos. Escaneo hacia atrás buscando el último
+            # preproc relevante sin pasar por un #endif.
+            already_guarded = False
+            for back in range(line_idx - 1, -1, -1):
+                ln = source_lines[back].strip()
+                if ln.startswith("#endif"):
+                    break
+                if ln.startswith("#if") and "UE_BUILD_SHIPPING" in ln and "!" in ln:
+                    already_guarded = True
+                    break
+            if already_guarded:
+                continue
+
+            issues.append(
+                {
+                    "asset_path": file_path,
+                    "line": line_no,
+                    "class": class_name,
+                    "severity": "warning",
+                    "rule_id": "CP015",
+                    "category": "Performance",
+                    "message": (
+                        "ensure() dentro de Tick() evalúa la condición "
+                        "en cada frame — envolver en "
+                        "#if !UE_BUILD_SHIPPING para eliminar el coste "
+                        "en Shipping."
+                    ),
+                    "snippet": snippet_line,
+                    "fix_suggestion": (
+                        "#if !UE_BUILD_SHIPPING\n" f"    {snippet_line}\n" "#endif"
+                    ),
+                    "is_auto_fixable": True,
+                }
+            )
+
+    return issues
+
+
 # CP016: Manual CollectGarbage call
 def detect_garbage_collect_call(
     content: str,
@@ -2161,6 +2256,80 @@ def detect_lambda_implicit_capture(
     return issues
 
 
+# ------------------------------------------------------------------
+# CB022 — ensure() sin variante Always
+# ------------------------------------------------------------------
+def detect_ensure_not_always(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detecta ensure() que podría usar ensureAlways().
+
+    ensure() solo dispara una vez por sesión; fallos siguientes se
+    ignoran silenciosamente. ensureAlways() reporta cada fallo.
+
+    El autofix reemplaza `ensure(` por `ensureAlways(` en la línea
+    exacta. El detector excluye variantes que NO deben transformarse
+    (ensureAlways, ensureMsgf, ensureAlwaysMsgf) para garantizar
+    idempotencia del fix — si el detector reportara una línea que
+    contiene `ensureAlways(`, el replace_text del fixer produciría
+    `ensureAlwaysAlways(` y rompería la compilación.
+    """
+    if not _is_cpp(file_path):
+        return []
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+
+    # Negative lookbehind: matchea `ensure(` SOLO si no está precedido
+    # por letra/dígito/underscore. Esto evita matchear substrings como
+    # `my_ensure(` o el prefijo de `ensureAlways(` vía scan por
+    # substring.
+    ensure_re = re.compile(r"(?<![A-Za-z0-9_])ensure\s*\(")
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        code_line = _code_part(source_line)
+        stripped = code_line.strip()
+        if not stripped or stripped.startswith("//"):
+            continue
+
+        m = ensure_re.search(code_line)
+        if not m:
+            continue
+
+        # Exclusión defensiva extra: si la línea ya contiene
+        # ensureAlways o ensureMsgf en cualquier posición, la saltamos
+        # (casos raros de múltiples macros en la misma línea).
+        if "ensureAlways" in code_line or "ensureMsgf" in code_line:
+            continue
+
+        issues.append(
+            {
+                "asset_path": file_path,
+                "line": line_no,
+                "class": _extract_class_name(
+                    content,
+                    _char_pos_for_line(source_lines, line_no),
+                ),
+                "severity": "info",
+                "rule_id": "CB022",
+                "category": "Best Practices",
+                "message": (
+                    "ensure() solo dispara una vez por sesión — usa "
+                    "ensureAlways() si cada fallo debe reportarse."
+                ),
+                "snippet": source_line.strip(),
+                "fix_suggestion": source_line.replace(
+                    "ensure(", "ensureAlways(", 1
+                ).strip(),
+                "is_auto_fixable": True,
+            }
+        )
+
+    return issues
+
+
 # CB023: Virtual function without override keyword
 def detect_missing_override(
     content: str,
@@ -2341,6 +2510,335 @@ def detect_ufunction_missing_category(
                         "is_auto_fixable": _is_fixable("CB025"),
                     }
                 )
+
+    return issues
+
+
+# CB026 — UPROPERTY(ExposeOnSpawn) sin valor por defecto
+# ------------------------------------------------------------------
+def detect_exposed_on_spawn_no_default(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detecta UPROPERTY(ExposeOnSpawn) sin valor por defecto en la
+    declaración. Si el spawner olvida setear el valor, quedará
+    garbage / uninitialized.
+
+    El autofix inserta `= <default>` antes del `;` según el tipo
+    detectado (int32 → 0, bool → false, UObject* → nullptr, etc.).
+    Insertar un default es idempotente con el constructor: si el
+    constructor ya lo setea, ese valor gana (el default init corre
+    antes). Si no lo setea, evita el garbage.
+    """
+    if not _is_header(file_path):
+        return []
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+
+    # Regex para el field_declaration que sigue al UPROPERTY(ExposeOnSpawn).
+    # Captura: tipo (permisivo, incluye templates anidados), nombre, sufijo.
+    field_re = re.compile(
+        r"^\s*([A-Za-z_][A-Za-z0-9_:<>,\s\*&]*?)\s+"
+        r"([A-Za-z_]\w*)\s*(\[[^\]]*\])?\s*"
+        r"(=\s*[^;]+)?;"
+    )
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        if "ExposeOnSpawn" not in source_line:
+            continue
+        # Siempre es UPROPERTY(...ExposeOnSpawn...). El field_declaration
+        # está en la línea SIGUIENTE (convención Epic) o dos líneas abajo
+        # si hay un comentario.
+        next_idx = line_no  # 0-indexed siguiente línea
+        while next_idx < len(source_lines):
+            candidate = source_lines[next_idx]
+            stripped = candidate.strip()
+            if not stripped or stripped.startswith("//"):
+                next_idx += 1
+                continue
+            break
+        else:
+            continue
+
+        candidate = source_lines[next_idx]
+        m = field_re.match(candidate)
+        if not m:
+            continue
+
+        type_token = m.group(1).strip()
+        default_expr = m.group(4)
+
+        if default_expr is not None:
+            # Ya tiene default, nada que hacer.
+            continue
+
+        # Inferir default seguro por tipo.
+        default_value = _infer_default_for_type(type_token)
+        if default_value is None:
+            # Tipo no reconocido → no arriesgamos un autofix.
+            continue
+
+        fix_line = candidate.rstrip()
+        if fix_line.endswith(";"):
+            fix_line_noSemi = fix_line[:-1].rstrip()
+            fix_preview = f"{fix_line_noSemi} = {default_value};"
+        else:
+            fix_preview = fix_line
+
+        issues.append(
+            {
+                "asset_path": file_path,
+                "line": next_idx + 1,  # línea del field, no del UPROPERTY
+                "class": _extract_class_name(
+                    content,
+                    _char_pos_for_line(source_lines, next_idx + 1),
+                ),
+                "severity": "warning",
+                "rule_id": "CB026",
+                "category": "Best Practices",
+                "message": (
+                    "ExposeOnSpawn sin valor por defecto — quedará "
+                    "uninitialized si el spawner no lo setea."
+                ),
+                "snippet": candidate.strip(),
+                "fix_suggestion": fix_preview.strip(),
+                "is_auto_fixable": True,
+            }
+        )
+
+    return issues
+
+
+# Helper usado por CB026.  Pegar cerca de los otros helpers al inicio
+# del archivo (no dentro del detector).
+def _infer_default_for_type(type_token: str) -> "str | None":
+    """
+    Devuelve el literal de inicialización default-safe para un tipo
+    C++/UE dado, o None si no podemos garantizar seguridad.
+    """
+    t = type_token.strip()
+
+    # Quitar const / volatile / refs / whitespace interno redundante.
+    t = re.sub(r"\b(const|volatile|mutable)\b", "", t).strip()
+    t = re.sub(r"\s+", " ", t)
+
+    # Punteros crudos y TObjectPtr — nullptr es seguro.
+    if t.endswith("*"):
+        return "nullptr"
+    if t.startswith("TObjectPtr<") or t.startswith("TWeakObjectPtr<"):
+        return "nullptr"
+    if t.startswith("TSoftObjectPtr<") or t.startswith("TSoftClassPtr<"):
+        return "nullptr"
+    if t.startswith("TSubclassOf<"):
+        return "nullptr"
+
+    # Numéricos.
+    numeric_types = {
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+        "float",
+        "double",
+        "int",
+        "short",
+        "long",
+        "size_t",
+        "SIZE_T",
+    }
+    if t in numeric_types:
+        return "0"
+
+    # Bool.
+    if t == "bool":
+        return "false"
+
+    # Tipos UE con default init "oficial".
+    ue_zero_defaults = {
+        "FVector": "FVector::ZeroVector",
+        "FVector2D": "FVector2D::ZeroVector",
+        "FVector4": "FVector4(ForceInitToZero)",
+        "FRotator": "FRotator::ZeroRotator",
+        "FQuat": "FQuat::Identity",
+        "FTransform": "FTransform::Identity",
+        "FLinearColor": "FLinearColor::White",
+        "FColor": "FColor::White",
+    }
+    if t in ue_zero_defaults:
+        return ue_zero_defaults[t]
+
+    # Contenedores — default construct vacío. Pero no necesitan
+    # initializer porque el default constructor hace lo correcto.
+    # Retornamos None para indicar "no hay que tocarla" (evita
+    # false positive sobre contenedores).
+    if t.startswith(("TArray<", "TMap<", "TSet<", "TQueue<")):
+        return None
+    if t in {"FString", "FName", "FText"}:
+        return None
+
+    return None
+
+
+# ------------------------------------------------------------------
+# CB028 — SetTimer con lambda capturando `this` crudo
+# ------------------------------------------------------------------
+def detect_timer_lambda_raw_this(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detecta SetTimer con lambda que captura `this` directamente.
+    Si el objeto se destruye antes de que el timer dispare, crashea.
+
+    El autofix envuelve la lambda con
+    FTimerDelegate::CreateWeakLambda(this, <lambda original>). Es una
+    sobrecarga oficial de SetTimer y CreateWeakLambda solo añade un
+    check de validez del UObject — no cambia semántica de la lambda,
+    solo previene el crash que la regla quiere evitar.
+    """
+    if not _is_cpp(file_path):
+        return []
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+
+    # Buscamos el inicio de una llamada SetTimer. Después del `(`
+    # escaneamos hasta encontrar `[` con `this` o `&` o `=`.
+    settimer_re = re.compile(r"\bSetTimer\w*\s*\(")
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        code_line = _code_part(source_line)
+        if code_line.lstrip().startswith("//"):
+            continue
+
+        m = settimer_re.search(code_line)
+        if not m:
+            continue
+
+        # Juntamos hasta ~4 líneas para soportar SetTimer multilínea.
+        window = "\n".join(
+            source_lines[line_no - 1 : min(line_no + 3, len(source_lines))]
+        )
+
+        # Descartar si ya usa patrón seguro.
+        if (
+            "CreateWeakLambda" in window
+            or "FTimerDelegate::CreateUObject" in window
+            or "TWeakObjectPtr" in window
+        ):
+            continue
+
+        # Necesita una lambda que capture this/&/= dentro del SetTimer.
+        if not re.search(r"\[\s*(?:this|&|=)[^\]]*\]\s*\(", window):
+            continue
+
+        issues.append(
+            {
+                "asset_path": file_path,
+                "line": line_no,
+                "class": _extract_class_name(
+                    content,
+                    _char_pos_for_line(source_lines, line_no),
+                ),
+                "severity": "warning",
+                "rule_id": "CB028",
+                "category": "Best Practices",
+                "message": (
+                    "Timer lambda captura 'this' directamente — crash "
+                    "si el objeto se destruye antes del disparo. Usar "
+                    "FTimerDelegate::CreateWeakLambda(this, ...)."
+                ),
+                "snippet": source_line.strip(),
+                "fix_suggestion": (
+                    "FTimerDelegate::CreateWeakLambda(this, [this](){ ... })"
+                ),
+                "is_auto_fixable": True,
+            }
+        )
+
+    return issues
+
+
+# ------------------------------------------------------------------
+# CB029 — UE_LOG(Verbose/VeryVerbose) sin shipping guard
+# ------------------------------------------------------------------
+def detect_log_verbose_shipping(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detecta UE_LOG con nivel Verbose o VeryVerbose sin estar dentro
+    de un guard `#if !UE_BUILD_SHIPPING`.
+
+    El autofix envuelve el statement en
+    `#if !UE_BUILD_SHIPPING ... #endif`. Aunque UE5 ya strippea
+    Verbose/VeryVerbose a nivel de compilación por defecto, wrappear
+    explícitamente sigue siendo la práctica recomendada de Epic
+    porque también elimina el coste del string formatting (FString::Printf
+    implícito) en Shipping.
+    """
+    if not _is_cpp(file_path):
+        return []
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+
+    # State machine manual para saber si estamos dentro de un
+    # #if !UE_BUILD_SHIPPING ... #endif. Soporta anidación básica.
+    shipping_guard_stack = 0
+
+    log_re = re.compile(r"\bUE_LOG\s*\(\s*\w+\s*,\s*(Verbose|VeryVerbose)\s*,")
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        stripped = source_line.strip()
+
+        if stripped.startswith("#if"):
+            if "!UE_BUILD_SHIPPING" in stripped or "UE_BUILD_SHIPPING" not in stripped:
+                # Incrementamos solo si es !UE_BUILD_SHIPPING real.
+                if "!UE_BUILD_SHIPPING" in stripped:
+                    shipping_guard_stack += 1
+        elif stripped.startswith("#endif"):
+            if shipping_guard_stack > 0:
+                shipping_guard_stack -= 1
+
+        if shipping_guard_stack > 0:
+            continue
+
+        if stripped.startswith("//"):
+            continue
+
+        if log_re.search(source_line):
+            issues.append(
+                {
+                    "asset_path": file_path,
+                    "line": line_no,
+                    "class": _extract_class_name(
+                        content,
+                        _char_pos_for_line(source_lines, line_no),
+                    ),
+                    "severity": "info",
+                    "rule_id": "CB029",
+                    "category": "Best Practices",
+                    "message": (
+                        "UE_LOG Verbose sin shipping guard — envolver "
+                        "en #if !UE_BUILD_SHIPPING para eliminar el "
+                        "string formatting del build final."
+                    ),
+                    "snippet": source_line.strip(),
+                    "fix_suggestion": (
+                        "#if !UE_BUILD_SHIPPING\n"
+                        f"    {source_line.strip()}\n"
+                        "#endif"
+                    ),
+                    "is_auto_fixable": True,
+                }
+            )
 
     return issues
 
@@ -3698,8 +4196,7 @@ def run_all_cpp_rules(
     issues += detect_fstring_by_value(content, file_path)
     issues += detect_tarray_copy_in_loop(content, file_path)
     issues += detect_new_object_in_loop(content, file_path)
-    #       issues += detect_ftext_format_in_tick(content, file_path)
-    #       issues += detect_ensure_in_tick(content, file_path)
+    issues += detect_ensure_in_tick(content, file_path)
     issues += detect_garbage_collect_call(content, file_path)
 
     # Best Practices
@@ -3724,14 +4221,13 @@ def run_all_cpp_rules(
     issues += detect_non_virtual_destructor(content, file_path)
     issues += detect_fstring_as_identifier(content, file_path)
     issues += detect_lambda_implicit_capture(content, file_path)
-    #       issues += detect_ensure_not_always(content, file_path)
+    issues += detect_ensure_not_always(content, file_path)
     issues += detect_missing_override(content, file_path)
     issues += detect_missing_super_beginplay(content, file_path)
     issues += detect_ufunction_missing_category(content, file_path)
-    #     issues += detect_exposed_on_spawn_no_default(content, file_path)
-    #     issues += detect_delegate_no_broadcast(content, file_path)
-    #     issues += detect_timer_lambda_raw_this(content, file_path)
-    #     issues += detect_log_verbose_shipping(content, file_path)
+    issues += detect_exposed_on_spawn_no_default(content, file_path)
+    issues += detect_timer_lambda_raw_this(content, file_path)
+    issues += detect_log_verbose_shipping(content, file_path)
     issues += detect_string_literal_no_text_macro(content, file_path)
     issues += detect_blueprint_pure_side_effects(content, file_path)
     issues += detect_const_ref_uproperty(content, file_path)
@@ -3745,8 +4241,6 @@ def run_all_cpp_rules(
     issues += detect_getowner_no_check(content, file_path)
     issues += detect_overlap_actor_no_check(content, file_path)
     issues += detect_weak_ptr_no_check(content, file_path)
-    #     issues += detect_exec_console_command(content, file_path)
-    #     issues += detect_fpath_unsanitized(content, file_path)
     issues += detect_http_insecure(content, file_path)
     issues += detect_hardcoded_secret(content, file_path)
 
@@ -3759,9 +4253,6 @@ def run_all_cpp_rules(
     issues += detect_deep_nesting(content, file_path)
     issues += detect_duplicate_include(content, file_path)
     issues += detect_empty_destructor(content, file_path)
-    #     issues += detect_commented_code_block(content, file_path)
-    #     issues += detect_inconsistent_pointer_style(content, file_path)
-    #     issues += detect_multiple_returns(content, file_path)
 
     # Inject context window (2 lines before + issue line + 2 lines after) so
     # the plugin can show a before/after diff without re-reading the file.

@@ -65,15 +65,18 @@ PATTERNS = {
 #   - Real auto-fix: client sees before/after diff
 #   - mark_for_review: only when NO safe transformation exists
 #
-# Total: 71 rules
-#   - 53 with real auto-fix patterns
-#   - 12 with mark_for_review (truly no safe auto-fix)
-#   - 6 not in this file (regex-only in ue5_cpp_rules.py)
+# Total: 73 rules
+#   - CP014 discarded (requires cross-file refactor — caching FText
+#     in a class member). No safe mechanical transformation.
+#   - CP015 reintroduced with wrap_shipping_guard (was move_to_beginplay,
+#     which made no semantic sense for ensure()).
+#   - CB026, CB028, CB029 reintroduced from the old discarded list
+#     now that Tree-sitter + safe defaults make them auto-fixable.
 # ================================================================
 
 RULE_TO_PATTERN = {
     # ==========================================================
-    # Performance (CP) — 14 rules, ALL with real auto-fix
+    # Performance (CP) — 15 rules with real auto-fix (CP014 discarded)
     # ==========================================================
     "CP001": ("move_to_beginplay", "FindObjectOfType"),
     "CP002": ("move_to_beginplay", "GetComponent"),
@@ -88,8 +91,10 @@ RULE_TO_PATTERN = {
     "CP011": ("replace_text", ("FString ", "const FString& ")),
     "CP012": ("replace_text", ("TArray<", "const TArray<")),
     "CP013": ("move_outside_loop", "NewObject"),
-    "CP014": ("cache_calculation", "FText::Format"),
-    "CP015": ("move_to_beginplay", "ensure"),
+    # CP014 discarded — requires moving FText::Format result into a
+    # cached class member (cross-file refactor). No safe auto-fix.
+    # CP015: ensure() in Tick → wrap in #if !UE_BUILD_SHIPPING
+    "CP015": ("wrap_shipping_guard", None),
     "CP016": ("delete_line", "CollectGarbage"),
     # ==========================================================
     # Best Practices (CB) — real auto-fix patterns
@@ -118,6 +123,12 @@ RULE_TO_PATTERN = {
     "CB021": ("replace_lambda_capture", None),  # [&]/[=] -> [this]
     "CB024": ("insert_line", "Super::BeginPlay();"),  # Insert Super call
     "CB025": ("add_ufunction_category", None),  # Add Category="Default"
+    # CB026: ExposeOnSpawn field → insert type-aware default
+    "CB026": ("insert_field_default", None),
+    # CB028: SetTimer raw `this` → wrap in CreateWeakLambda
+    "CB028": ("wrap_weak_lambda", None),
+    # CB029: UE_LOG Verbose → wrap in #if !UE_BUILD_SHIPPING
+    "CB029": ("wrap_shipping_guard", None),
     "CB031": ("add_const_qualifier", None),  # Add const to BlueprintPure
     "CB032": ("remove_const_ref", None),  # Remove const& from UPROPERTY
     # ==========================================================
