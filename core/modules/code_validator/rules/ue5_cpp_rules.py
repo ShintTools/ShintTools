@@ -20,6 +20,15 @@ import re
 from pathlib import Path
 from typing import Dict, List
 
+try:
+    from code_validator.parsers.cpp_fixer import CppFixer
+    from code_validator.parsers.fix_patterns import RULE_TO_PATTERN
+except ModuleNotFoundError:
+    RULE_TO_PATTERN = {}
+    CppFixer = None  # type: ignore[assignment,misc]
+
+_fixer: "CppFixer | None" = CppFixer() if CppFixer is not None else None
+
 # Type alias for issue dictionary
 Issue = Dict
 
@@ -101,6 +110,14 @@ def _char_pos_for_line(lines: list, line_no: int) -> int:
     return sum(len(line) + 1 for line in lines[: line_no - 1])
 
 
+def _is_fixable(rule_id: str) -> bool:
+    """Check if a rule has a real auto-fix pattern."""
+    if rule_id not in RULE_TO_PATTERN:
+        return False
+    pattern_name = RULE_TO_PATTERN[rule_id][0]
+    return pattern_name != "mark_for_review"
+
+
 # ── PERFORMANCE (CP) ──────────────────────────────────
 
 
@@ -145,8 +162,8 @@ def detect_find_object_in_tick(
                         "Cache the reference in BeginPlay instead"
                     ),
                     "snippet": snippet_line,
-                    "fix_suggestion": "// " + snippet_line,
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Cache in BeginPlay instead of calling in Tick",
+                    "is_auto_fixable": _is_fixable("CP001"),
                 }
             )
     return issues
@@ -193,8 +210,8 @@ def detect_get_component_in_tick(
                         "Cache the reference in BeginPlay instead"
                     ),
                     "snippet": snippet_line,
-                    "fix_suggestion": "// " + snippet_line,
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Cache in BeginPlay instead of calling in Tick",
+                    "is_auto_fixable": _is_fixable("CP002"),
                 }
             )
     return issues
@@ -240,8 +257,8 @@ def detect_large_tick(
                     "move logic to helpers or timers."
                 ),
                 "snippet": snippet_line,
-                "fix_suggestion": "",
-                "is_auto_fixable": False,
+                "fix_suggestion": ("Extract logic to helper functions or use timers"),
+                "is_auto_fixable": _is_fixable("CP003"),
             }
         )
     return issues
@@ -287,10 +304,8 @@ def detect_log_error_in_tick(
                             " Use a flag to log only once."
                         ),
                         "snippet": body_line.strip(),
-                        "fix_suggestion": re.sub(
-                            r"Error", "Warning", body_line.strip()
-                        ),
-                        "is_auto_fixable": True,
+                        "fix_suggestion": "Remove UE_LOG from Tick",
+                        "is_auto_fixable": _is_fixable("CP004"),
                     }
                 )
     return issues
@@ -314,7 +329,6 @@ def detect_sleep_on_game_thread(
     source_lines = content.splitlines()
     for line_no, source_line in enumerate(source_lines, start=1):
         if re.search(r"\bFPlatformProcess::Sleep\s*\(", source_line):
-            fix = "// " + source_line.strip()
             issues.append(
                 {
                     "asset_path": file_path,
@@ -332,8 +346,8 @@ def detect_sleep_on_game_thread(
                         "tasks instead."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": fix.strip(),
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Replace Sleep() with FTimerHandle",
+                    "is_auto_fixable": _is_fixable("CP005"),
                 }
             )
     return issues
@@ -391,8 +405,8 @@ def detect_get_all_actors_in_tick(
                         "use an event-driven approach."
                     ),
                     "snippet": snippet_line,
-                    "fix_suggestion": "// " + snippet_line,
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Cache in BeginPlay instead of calling in Tick",
+                    "is_auto_fixable": _is_fixable("CP006"),
                 }
             )
     return issues
@@ -478,10 +492,8 @@ def detect_tick_enabled_in_constructor(
                             "events for infrequent logic."
                         ),
                         "snippet": source_line.strip(),
-                        "fix_suggestion": (
-                            source_line.replace("true", "false").strip()
-                        ),
-                        "is_auto_fixable": True,
+                        "fix_suggestion": "Set bCanEverTick = false",
+                        "is_auto_fixable": _is_fixable("CP007"),
                     }
                 )
     return issues
@@ -540,8 +552,8 @@ def detect_heavy_math_in_tick(
                         "BeginPlay or cache the result."
                     ),
                     "snippet": snippet_line,
-                    "fix_suggestion": "// " + snippet_line,
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Cache this calculation in BeginPlay",
+                    "is_auto_fixable": _is_fixable("CP008"),
                 }
             )
     return issues
@@ -598,8 +610,8 @@ def detect_string_ops_in_tick(
                         "Cache the result or move outside Tick."
                     ),
                     "snippet": snippet_line,
-                    "fix_suggestion": "// " + snippet_line,
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Cache string operation in BeginPlay",
+                    "is_auto_fixable": _is_fixable("CP009"),
                 }
             )
     return issues
@@ -692,10 +704,8 @@ def detect_forceinline_large_function(
                         "lines)."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": re.sub(
-                        r"\bFORCEINLINE\b", "inline", source_line
-                    ).strip(),
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Replace FORCEINLINE with inline",
+                    "is_auto_fixable": _is_fixable("CP010"),
                 }
             )
         line_idx = end_idx
@@ -753,11 +763,8 @@ def detect_fstring_by_value(
                         "use 'const FString&' to avoid heap copy."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": source_line.replace(
-                        f"FString {var_name}",
-                        f"const FString& {var_name}",
-                    ).strip(),
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Pass FString by const reference",
+                    "is_auto_fixable": _is_fixable("CP011"),
                 }
             )
 
@@ -821,12 +828,8 @@ def detect_tarray_copy_in_loop(
                         "allocation every iteration."
                     ),
                     "snippet": snippet_line,
-                    "fix_suggestion": re.sub(
-                        r"\bTArray\s*(<[^>]+>)\s+" + re.escape(var_name) + r"\s*=",
-                        r"const TArray\1& " + var_name + " =",
-                        snippet_line,
-                    ),
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Use const TArray reference in loop",
+                    "is_auto_fixable": _is_fixable("CP012"),
                 }
             )
 
@@ -884,7 +887,102 @@ def detect_new_object_in_loop(
                         "pre-allocate objects or use pooling."
                     ),
                     "snippet": snippet_line,
-                    "fix_suggestion": "// " + snippet_line,
+                    "fix_suggestion": "Pre-allocate outside the loop",
+                    "is_auto_fixable": _is_fixable("CP013"),
+                }
+            )
+
+    return issues
+
+
+# CP015 — ensure() dentro de Tick/Update
+def detect_ensure_in_tick(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detecta ensure() dentro de funciones Tick() o Update().
+
+    ensure() evalúa su condición en cada frame, lo que añade overhead
+    medible en hot paths. El autofix envuelve la llamada con
+    `#if !UE_BUILD_SHIPPING ... #endif`, el patrón oficial de Epic
+    para validación en hot paths: mantiene la validación en builds de
+    desarrollo y elimina el overhead en Shipping.
+    """
+    if not _is_source(file_path):
+        return []
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+
+    # Regex tradicional con body matching limitado a 1 nivel de anidación.
+    # Es el máximo que Python re puede hacer sin un parser real. El plugin
+    # con Tree-sitter hará el match exacto del function_body.
+    tick_pattern = re.compile(
+        r"void\s+(\w+)::(?:Tick|Update)\s*\([^)]*\)\s*"
+        r"\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
+        re.DOTALL,
+    )
+
+    for tick_match in tick_pattern.finditer(content):
+        class_name = tick_match.group(1)
+        tick_body = tick_match.group(2)
+        body_start = tick_match.start(2)
+
+        # Buscar TODAS las ocurrencias de ensure() en el body.
+        for m in re.finditer(r"\bensure\s*\(", tick_body):
+            # Filtrar variantes que NO queremos tocar.
+            tail = tick_body[m.start() : m.start() + 32]
+            if (
+                tail.startswith("ensureAlways")
+                or tail.startswith("ensureMsgf")
+                or tail.startswith("ensureAlwaysMsgf")
+            ):
+                continue
+
+            abs_pos = body_start + m.start()
+            line_no = _get_line_number(content, abs_pos)
+            line_idx = line_no - 1
+
+            if line_idx >= len(source_lines):
+                continue
+
+            snippet_line = source_lines[line_idx].strip()
+            if snippet_line.startswith("//"):
+                continue
+
+            # Idempotencia: si ya está dentro de un guard #if !UE_BUILD_SHIPPING
+            # previo, no marcamos. Escaneo hacia atrás buscando el último
+            # preproc relevante sin pasar por un #endif.
+            already_guarded = False
+            for back in range(line_idx - 1, -1, -1):
+                ln = source_lines[back].strip()
+                if ln.startswith("#endif"):
+                    break
+                if ln.startswith("#if") and "UE_BUILD_SHIPPING" in ln and "!" in ln:
+                    already_guarded = True
+                    break
+            if already_guarded:
+                continue
+
+            issues.append(
+                {
+                    "asset_path": file_path,
+                    "line": line_no,
+                    "class": class_name,
+                    "severity": "warning",
+                    "rule_id": "CP015",
+                    "category": "Performance",
+                    "message": (
+                        "ensure() dentro de Tick() evalúa la condición "
+                        "en cada frame — envolver en "
+                        "#if !UE_BUILD_SHIPPING para eliminar el coste "
+                        "en Shipping."
+                    ),
+                    "snippet": snippet_line,
+                    "fix_suggestion": (
+                        "#if !UE_BUILD_SHIPPING\n" f"    {snippet_line}\n" "#endif"
+                    ),
                     "is_auto_fixable": True,
                 }
             )
@@ -934,8 +1032,8 @@ def detect_garbage_collect_call(
                         "use ForceGarbageCollection with care."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": "// " + source_line.strip(),
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Remove manual CollectGarbage() call",
+                    "is_auto_fixable": _is_fixable("CP016"),
                 }
             )
 
@@ -984,8 +1082,8 @@ def detect_infinite_loop(
                         "Infinite loop without break/return. " "Game thread will freeze"
                     ),
                     "snippet": snippet_line,
-                    "fix_suggestion": "// " + snippet_line,
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Comment out dangerous infinite loop",
+                    "is_auto_fixable": _is_fixable("CB001"),
                 }
             )
     return issues
@@ -1053,8 +1151,8 @@ def detect_runtime_load(
                         "Use async loading instead"
                     ),
                     "snippet": snippet_line,
-                    "fix_suggestion": "// " + snippet_line,
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Comment out synchronous load call",
+                    "is_auto_fixable": _is_fixable("CB002"),
                 }
             )
     return issues
@@ -1091,18 +1189,6 @@ def detect_raw_new(
             continue
         code = _code_part(source_line)
         if re.search(r"\bnew\s+\w", code):
-            # Build fix: replace "new Type(...)" with "NewObject<Type>(this)"
-            fix = source_line.strip()
-            new_match = re.search(
-                r"\bnew\s+(\w+)\s*(?:\([^)]*\)|\[[^\]]*\])", source_line
-            )
-            if new_match:
-                type_name = new_match.group(1)
-                fix = re.sub(
-                    r"\bnew\s+\w+\s*(?:\([^)]*\)|\[[^\]]*\])",
-                    f"NewObject<{type_name}>(this)",
-                    source_line,
-                ).strip()
             issues.append(
                 {
                     "asset_path": file_path,
@@ -1119,8 +1205,8 @@ def detect_raw_new(
                         " or CreateDefaultSubobject<T>() instead."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": fix,
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Replace raw new with NewObject<T>(this)",
+                    "is_auto_fixable": _is_fixable("CB003"),
                 }
             )
     return issues
@@ -1156,8 +1242,6 @@ def detect_raw_delete(
             continue
         code = _code_part(source_line)
         if re.search(r"\bdelete\s+\w", code):
-            # Fix: comment out the delete line
-            fix = "// " + source_line.strip()
             issues.append(
                 {
                     "asset_path": file_path,
@@ -1175,8 +1259,8 @@ def detect_raw_delete(
                         "crash."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": fix,
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Comment out raw delete",
+                    "is_auto_fixable": _is_fixable("CB004"),
                 }
             )
     return issues
@@ -1228,36 +1312,8 @@ def detect_stl_usage(
                         "equivalents (TArray, TMap, FString...)."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": re.sub(
-                        r"\bstd::vector\b",
-                        "TArray",
-                        re.sub(
-                            r"\bstd::map\b",
-                            "TMap",
-                            re.sub(
-                                r"\bstd::unordered_map\b",
-                                "TMap",
-                                re.sub(
-                                    r"\bstd::set\b",
-                                    "TSet",
-                                    re.sub(
-                                        r"\bstd::string\b",
-                                        "FString",
-                                        re.sub(
-                                            r"\bstd::unique_ptr\b",
-                                            "TUniquePtr",
-                                            re.sub(
-                                                r"\bstd::shared_ptr\b",
-                                                "TSharedPtr",
-                                                source_line.strip(),
-                                            ),
-                                        ),
-                                    ),
-                                ),
-                            ),
-                        ),
-                    ),
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Replace STL type with UE5 equivalent",
+                    "is_auto_fixable": _is_fixable("CB005"),
                 }
             )
     return issues
@@ -1293,12 +1349,6 @@ def detect_printf(
             continue
         code = _code_part(source_line)
         if re.search(r"\bprintf\s*\(", code):
-            # Fix: replace printf(...) with UE_LOG(LogTemp, Log, ...)
-            fix = re.sub(
-                r"\bprintf\s*\(",
-                "UE_LOG(LogTemp, Log, ",
-                source_line,
-            ).strip()
             issues.append(
                 {
                     "asset_path": file_path,
@@ -1312,8 +1362,8 @@ def detect_printf(
                     "category": "Best Practices",
                     "message": ("printf() detected — use UE_LOG() " "instead."),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": fix,
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Replace printf with UE_LOG",
+                    "is_auto_fixable": _is_fixable("CB006"),
                 }
             )
     return issues
@@ -1350,8 +1400,8 @@ def detect_system_headers(
                         "System header included — " "prefer UE module headers."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": "// " + source_line.strip(),
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Comment out non-UE system header",
+                    "is_auto_fixable": _is_fixable("CB007"),
                 }
             )
     return issues
@@ -1394,12 +1444,6 @@ def detect_float_no_suffix(
             r"\bfloat\b\s+\w+\s*=\s*[0-9]+\.[0-9]+(?![fe])",
             code,
         ):
-            # Fix: add 'f' suffix to all bare float literals on this line
-            fix = re.sub(
-                r"(\b\d+\.\d+)(?![fe\d])",
-                r"\1f",
-                code,
-            ).strip()
             issues.append(
                 {
                     "asset_path": file_path,
@@ -1417,8 +1461,8 @@ def detect_float_no_suffix(
                         "promotion."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": fix,
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Add f suffix to float literal",
+                    "is_auto_fixable": _is_fixable("CB008"),
                 }
             )
     return issues
@@ -1462,12 +1506,8 @@ def detect_uproperty_nullptr(
                         "body."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": re.sub(
-                        r"\s*=\s*nullptr",
-                        "",
-                        source_line.strip(),
-                    ),
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Remove = nullptr from declaration",
+                    "is_auto_fixable": _is_fixable("CB009"),
                 }
             )
     return issues
@@ -1528,8 +1568,8 @@ def detect_magic_numbers(
                         "extract to a named constexpr constant."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": "Extract to named constexpr constant",
+                    "is_auto_fixable": _is_fixable("CB010"),
                 }
             )
     return issues
@@ -1576,8 +1616,8 @@ def detect_empty_if_body(
                         "branch or add the intended logic."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": "// " + source_line.strip(),
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Remove empty if-body (dead code)",
+                    "is_auto_fixable": _is_fixable("CB011"),
                 }
             )
             continue
@@ -1603,8 +1643,8 @@ def detect_empty_if_body(
                             "branch or add the intended logic."
                         ),
                         "snippet": source_line.strip(),
-                        "fix_suggestion": "// " + source_line.strip(),
-                        "is_auto_fixable": True,
+                        "fix_suggestion": "Remove empty if-body (dead code)",
+                        "is_auto_fixable": _is_fixable("CB011"),
                     }
                 )
     return issues
@@ -1635,8 +1675,6 @@ def detect_c_style_cast(
         r"|float|double|bool|char|TCHAR|SIZE_T"
     )
     cast_detect = re.compile(r"\(\s*(?:" + _CAST_TYPES + r")\s*\)(?=\s*\w)")
-    # Fix pattern captures type AND the identifier token so both survive substitution
-    cast_fix = re.compile(r"\(\s*(" + _CAST_TYPES + r")\s*\)\s*(\w+)")
 
     in_block_comment = False
     for line_no, source_line in enumerate(source_lines, start=1):
@@ -1657,9 +1695,6 @@ def detect_c_style_cast(
             # Extract type name for the message
             type_match = re.search(r"\(\s*(\w+)\s*\)", cast_match.group(0))
             type_name = type_match.group(1) if type_match else "T"
-            # Fix: replace (Type)var → static_cast<Type>(var)
-            # cast_fix captures both type and identifier token
-            fix = cast_fix.sub(r"static_cast<\1>(\2)", stripped, count=1)
             issues.append(
                 {
                     "asset_path": file_path,
@@ -1676,8 +1711,8 @@ def detect_c_style_cast(
                         "static_cast<T>() or Cast<T>() instead."
                     ),
                     "snippet": stripped,
-                    "fix_suggestion": fix,
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Use static_cast instead of C-style cast",
+                    "is_auto_fixable": _is_fixable("CB012"),
                 }
             )
     return issues
@@ -1748,8 +1783,8 @@ def detect_nullptr_deref(
                                 "check — will crash at runtime."
                             ),
                             "snippet": next_stripped,
-                            "fix_suggestion": "if (" + var_name + ") " + next_stripped,
-                            "is_auto_fixable": True,
+                            "fix_suggestion": "Add null-check before dereference",
+                            "is_auto_fixable": _is_fixable("CB013"),
                         }
                     )
             break
@@ -1801,8 +1836,8 @@ def detect_hardcoded_path(
                         "paths instead."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": "// " + source_line.strip(),
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Use FPaths or config instead",
+                    "is_auto_fixable": _is_fixable("CB014"),
                 }
             )
     return issues
@@ -1855,8 +1890,8 @@ def detect_auto_without_obvious_type(
                         "— use an explicit type for readability."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": "Use explicit type for readability",
+                    "is_auto_fixable": _is_fixable("CB015"),
                 }
             )
     return issues
@@ -1917,8 +1952,8 @@ def detect_string_concat_in_loop(
                         "before the loop to avoid allocations."
                     ),
                     "snippet": snippet_line,
-                    "fix_suggestion": "// " + snippet_line,
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Use TStringBuilder or Reserve",
+                    "is_auto_fixable": _is_fixable("CB016"),
                 }
             )
     return issues
@@ -1988,8 +2023,8 @@ def detect_public_member_without_uproperty(
                             "and Blueprint."
                         ),
                         "snippet": source_line.strip(),
-                        "fix_suggestion": "",
-                        "is_auto_fixable": False,
+                        "fix_suggestion": "Add UPROPERTY() macro",
+                        "is_auto_fixable": _is_fixable("CB017"),
                     }
                 )
     return issues
@@ -2025,16 +2060,6 @@ def detect_raw_c_array(
         array_match = array_pattern.search(source_line)
         if array_match:
             var_name = array_match.group(1)
-            # Extract type and size for the suggestion
-            type_match = re.search(
-                r"\b(\w+)\s+" + re.escape(var_name) + r"\s*\[\s*(\d+)",
-                source_line,
-            )
-            if type_match:
-                elem_type = type_match.group(1)
-                fix = f"TArray<{elem_type}> {var_name};"
-            else:
-                fix = ""
             issues.append(
                 {
                     "asset_path": file_path,
@@ -2052,8 +2077,8 @@ def detect_raw_c_array(
                         "UE5 serialization support."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": fix,
-                    "is_auto_fixable": bool(fix),
+                    "fix_suggestion": "Replace raw C array with TArray",
+                    "is_auto_fixable": _is_fixable("CB018"),
                 }
             )
     return issues
@@ -2114,12 +2139,8 @@ def detect_non_virtual_destructor(
                             "prevent memory leaks."
                         ),
                         "snippet": source_line.strip(),
-                        "fix_suggestion": re.sub(
-                            r"~(\w+)",
-                            r"virtual ~\1",
-                            source_line,
-                        ).strip(),
-                        "is_auto_fixable": True,
+                        "fix_suggestion": "Add virtual to destructor",
+                        "is_auto_fixable": _is_fixable("CB019"),
                     }
                 )
     return issues
@@ -2172,10 +2193,8 @@ def detect_fstring_as_identifier(
                         "of FString for efficient comparisons."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": re.sub(
-                        r"\bFString\b", "FName", source_line
-                    ).strip(),
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Use FName instead of FString",
+                    "is_auto_fixable": _is_fixable("CB020"),
                 }
             )
     return issues
@@ -2229,12 +2248,84 @@ def detect_lambda_implicit_capture(
                         "captures for safety and readability."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": re.sub(
-                        r"\[\s*[&=]\s*\]", "[this]", source_line.strip()
-                    ),
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Use explicit capture list [this]",
+                    "is_auto_fixable": _is_fixable("CB021"),
                 }
             )
+
+    return issues
+
+
+# ------------------------------------------------------------------
+# CB022 — ensure() sin variante Always
+# ------------------------------------------------------------------
+def detect_ensure_not_always(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detecta ensure() que podría usar ensureAlways().
+
+    ensure() solo dispara una vez por sesión; fallos siguientes se
+    ignoran silenciosamente. ensureAlways() reporta cada fallo.
+
+    El autofix reemplaza `ensure(` por `ensureAlways(` en la línea
+    exacta. El detector excluye variantes que NO deben transformarse
+    (ensureAlways, ensureMsgf, ensureAlwaysMsgf) para garantizar
+    idempotencia del fix — si el detector reportara una línea que
+    contiene `ensureAlways(`, el replace_text del fixer produciría
+    `ensureAlwaysAlways(` y rompería la compilación.
+    """
+    if not _is_cpp(file_path):
+        return []
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+
+    # Negative lookbehind: matchea `ensure(` SOLO si no está precedido
+    # por letra/dígito/underscore. Esto evita matchear substrings como
+    # `my_ensure(` o el prefijo de `ensureAlways(` vía scan por
+    # substring.
+    ensure_re = re.compile(r"(?<![A-Za-z0-9_])ensure\s*\(")
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        code_line = _code_part(source_line)
+        stripped = code_line.strip()
+        if not stripped or stripped.startswith("//"):
+            continue
+
+        m = ensure_re.search(code_line)
+        if not m:
+            continue
+
+        # Exclusión defensiva extra: si la línea ya contiene
+        # ensureAlways o ensureMsgf en cualquier posición, la saltamos
+        # (casos raros de múltiples macros en la misma línea).
+        if "ensureAlways" in code_line or "ensureMsgf" in code_line:
+            continue
+
+        issues.append(
+            {
+                "asset_path": file_path,
+                "line": line_no,
+                "class": _extract_class_name(
+                    content,
+                    _char_pos_for_line(source_lines, line_no),
+                ),
+                "severity": "info",
+                "rule_id": "CB022",
+                "category": "Best Practices",
+                "message": (
+                    "ensure() solo dispara una vez por sesión — usa "
+                    "ensureAlways() si cada fallo debe reportarse."
+                ),
+                "snippet": source_line.strip(),
+                "fix_suggestion": source_line.replace(
+                    "ensure(", "ensureAlways(", 1
+                ).strip(),
+                "is_auto_fixable": True,
+            }
+        )
 
     return issues
 
@@ -2301,10 +2392,6 @@ def detect_missing_override(
 
         func_name = virtual_match.group(1)
 
-        # Build fix: remove trailing ; then append " override;"
-        # Works for both "... );" and "... ) const;"
-        fix = re.sub(r"\s*;\s*$", " override;", stripped)
-
         issues.append(
             {
                 "asset_path": file_path,
@@ -2322,8 +2409,8 @@ def detect_missing_override(
                     "catch signature mismatches."
                 ),
                 "snippet": stripped,
-                "fix_suggestion": fix,
-                "is_auto_fixable": True,
+                "fix_suggestion": "Add override keyword",
+                "is_auto_fixable": _is_fixable("CB023"),
             }
         )
 
@@ -2371,8 +2458,8 @@ def detect_missing_super_beginplay(
                         "initialization chain."
                     ),
                     "snippet": f"void {class_name}::BeginPlay()",
-                    "fix_suggestion": "",
-                    "is_auto_fixable": False,
+                    "fix_suggestion": "Add Super::BeginPlay() call",
+                    "is_auto_fixable": _is_fixable("CB024"),
                 }
             )
 
@@ -2419,14 +2506,339 @@ def detect_ufunction_missing_category(
                             "discoverability in Blueprint."
                         ),
                         "snippet": source_line.strip(),
-                        "fix_suggestion": re.sub(
-                            r"BlueprintCallable",
-                            'BlueprintCallable, Category="Default"',
-                            source_line.strip(),
-                        ),
-                        "is_auto_fixable": True,
+                        "fix_suggestion": "Add Category to UFUNCTION",
+                        "is_auto_fixable": _is_fixable("CB025"),
                     }
                 )
+
+    return issues
+
+
+# CB026 — UPROPERTY(ExposeOnSpawn) sin valor por defecto
+# ------------------------------------------------------------------
+def detect_exposed_on_spawn_no_default(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detecta UPROPERTY(ExposeOnSpawn) sin valor por defecto en la
+    declaración. Si el spawner olvida setear el valor, quedará
+    garbage / uninitialized.
+
+    El autofix inserta `= <default>` antes del `;` según el tipo
+    detectado (int32 → 0, bool → false, UObject* → nullptr, etc.).
+    Insertar un default es idempotente con el constructor: si el
+    constructor ya lo setea, ese valor gana (el default init corre
+    antes). Si no lo setea, evita el garbage.
+    """
+    if not _is_header(file_path):
+        return []
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+
+    # Regex para el field_declaration que sigue al UPROPERTY(ExposeOnSpawn).
+    # Captura: tipo (permisivo, incluye templates anidados), nombre, sufijo.
+    field_re = re.compile(
+        r"^\s*([A-Za-z_][A-Za-z0-9_:<>,\s\*&]*?)\s+"
+        r"([A-Za-z_]\w*)\s*(\[[^\]]*\])?\s*"
+        r"(=\s*[^;]+)?;"
+    )
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        if "ExposeOnSpawn" not in source_line:
+            continue
+        # Siempre es UPROPERTY(...ExposeOnSpawn...). El field_declaration
+        # está en la línea SIGUIENTE (convención Epic) o dos líneas abajo
+        # si hay un comentario.
+        next_idx = line_no  # 0-indexed siguiente línea
+        while next_idx < len(source_lines):
+            candidate = source_lines[next_idx]
+            stripped = candidate.strip()
+            if not stripped or stripped.startswith("//"):
+                next_idx += 1
+                continue
+            break
+        else:
+            continue
+
+        candidate = source_lines[next_idx]
+        m = field_re.match(candidate)
+        if not m:
+            continue
+
+        type_token = m.group(1).strip()
+        default_expr = m.group(4)
+
+        if default_expr is not None:
+            # Ya tiene default, nada que hacer.
+            continue
+
+        # Inferir default seguro por tipo.
+        default_value = _infer_default_for_type(type_token)
+        if default_value is None:
+            # Tipo no reconocido → no arriesgamos un autofix.
+            continue
+
+        fix_line = candidate.rstrip()
+        if fix_line.endswith(";"):
+            fix_line_noSemi = fix_line[:-1].rstrip()
+            fix_preview = f"{fix_line_noSemi} = {default_value};"
+        else:
+            fix_preview = fix_line
+
+        issues.append(
+            {
+                "asset_path": file_path,
+                "line": next_idx + 1,  # línea del field, no del UPROPERTY
+                "class": _extract_class_name(
+                    content,
+                    _char_pos_for_line(source_lines, next_idx + 1),
+                ),
+                "severity": "warning",
+                "rule_id": "CB026",
+                "category": "Best Practices",
+                "message": (
+                    "ExposeOnSpawn sin valor por defecto — quedará "
+                    "uninitialized si el spawner no lo setea."
+                ),
+                "snippet": candidate.strip(),
+                "fix_suggestion": fix_preview.strip(),
+                "is_auto_fixable": True,
+            }
+        )
+
+    return issues
+
+
+# Helper usado por CB026.  Pegar cerca de los otros helpers al inicio
+# del archivo (no dentro del detector).
+def _infer_default_for_type(type_token: str) -> "str | None":
+    """
+    Devuelve el literal de inicialización default-safe para un tipo
+    C++/UE dado, o None si no podemos garantizar seguridad.
+    """
+    t = type_token.strip()
+
+    # Quitar const / volatile / refs / whitespace interno redundante.
+    t = re.sub(r"\b(const|volatile|mutable)\b", "", t).strip()
+    t = re.sub(r"\s+", " ", t)
+
+    # Punteros crudos y TObjectPtr — nullptr es seguro.
+    if t.endswith("*"):
+        return "nullptr"
+    if t.startswith("TObjectPtr<") or t.startswith("TWeakObjectPtr<"):
+        return "nullptr"
+    if t.startswith("TSoftObjectPtr<") or t.startswith("TSoftClassPtr<"):
+        return "nullptr"
+    if t.startswith("TSubclassOf<"):
+        return "nullptr"
+
+    # Numéricos.
+    numeric_types = {
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+        "float",
+        "double",
+        "int",
+        "short",
+        "long",
+        "size_t",
+        "SIZE_T",
+    }
+    if t in numeric_types:
+        return "0"
+
+    # Bool.
+    if t == "bool":
+        return "false"
+
+    # Tipos UE con default init "oficial".
+    ue_zero_defaults = {
+        "FVector": "FVector::ZeroVector",
+        "FVector2D": "FVector2D::ZeroVector",
+        "FVector4": "FVector4(ForceInitToZero)",
+        "FRotator": "FRotator::ZeroRotator",
+        "FQuat": "FQuat::Identity",
+        "FTransform": "FTransform::Identity",
+        "FLinearColor": "FLinearColor::White",
+        "FColor": "FColor::White",
+    }
+    if t in ue_zero_defaults:
+        return ue_zero_defaults[t]
+
+    # Contenedores — default construct vacío. Pero no necesitan
+    # initializer porque el default constructor hace lo correcto.
+    # Retornamos None para indicar "no hay que tocarla" (evita
+    # false positive sobre contenedores).
+    if t.startswith(("TArray<", "TMap<", "TSet<", "TQueue<")):
+        return None
+    if t in {"FString", "FName", "FText"}:
+        return None
+
+    return None
+
+
+# ------------------------------------------------------------------
+# CB028 — SetTimer con lambda capturando `this` crudo
+# ------------------------------------------------------------------
+def detect_timer_lambda_raw_this(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detecta SetTimer con lambda que captura `this` directamente.
+    Si el objeto se destruye antes de que el timer dispare, crashea.
+
+    El autofix envuelve la lambda con
+    FTimerDelegate::CreateWeakLambda(this, <lambda original>). Es una
+    sobrecarga oficial de SetTimer y CreateWeakLambda solo añade un
+    check de validez del UObject — no cambia semántica de la lambda,
+    solo previene el crash que la regla quiere evitar.
+    """
+    if not _is_cpp(file_path):
+        return []
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+
+    # Buscamos el inicio de una llamada SetTimer. Después del `(`
+    # escaneamos hasta encontrar `[` con `this` o `&` o `=`.
+    settimer_re = re.compile(r"\bSetTimer\w*\s*\(")
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        code_line = _code_part(source_line)
+        if code_line.lstrip().startswith("//"):
+            continue
+
+        m = settimer_re.search(code_line)
+        if not m:
+            continue
+
+        # Juntamos hasta ~4 líneas para soportar SetTimer multilínea.
+        window = "\n".join(
+            source_lines[line_no - 1 : min(line_no + 3, len(source_lines))]
+        )
+
+        # Descartar si ya usa patrón seguro.
+        if (
+            "CreateWeakLambda" in window
+            or "FTimerDelegate::CreateUObject" in window
+            or "TWeakObjectPtr" in window
+        ):
+            continue
+
+        # Necesita una lambda que capture this/&/= dentro del SetTimer.
+        if not re.search(r"\[\s*(?:this|&|=)[^\]]*\]\s*\(", window):
+            continue
+
+        issues.append(
+            {
+                "asset_path": file_path,
+                "line": line_no,
+                "class": _extract_class_name(
+                    content,
+                    _char_pos_for_line(source_lines, line_no),
+                ),
+                "severity": "warning",
+                "rule_id": "CB028",
+                "category": "Best Practices",
+                "message": (
+                    "Timer lambda captura 'this' directamente — crash "
+                    "si el objeto se destruye antes del disparo. Usar "
+                    "FTimerDelegate::CreateWeakLambda(this, ...)."
+                ),
+                "snippet": source_line.strip(),
+                "fix_suggestion": (
+                    "FTimerDelegate::CreateWeakLambda(this, [this](){ ... })"
+                ),
+                "is_auto_fixable": True,
+            }
+        )
+
+    return issues
+
+
+# ------------------------------------------------------------------
+# CB029 — UE_LOG(Verbose/VeryVerbose) sin shipping guard
+# ------------------------------------------------------------------
+def detect_log_verbose_shipping(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detecta UE_LOG con nivel Verbose o VeryVerbose sin estar dentro
+    de un guard `#if !UE_BUILD_SHIPPING`.
+
+    El autofix envuelve el statement en
+    `#if !UE_BUILD_SHIPPING ... #endif`. Aunque UE5 ya strippea
+    Verbose/VeryVerbose a nivel de compilación por defecto, wrappear
+    explícitamente sigue siendo la práctica recomendada de Epic
+    porque también elimina el coste del string formatting (FString::Printf
+    implícito) en Shipping.
+    """
+    if not _is_cpp(file_path):
+        return []
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+
+    # State machine manual para saber si estamos dentro de un
+    # #if !UE_BUILD_SHIPPING ... #endif. Soporta anidación básica.
+    shipping_guard_stack = 0
+
+    log_re = re.compile(r"\bUE_LOG\s*\(\s*\w+\s*,\s*(Verbose|VeryVerbose)\s*,")
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        stripped = source_line.strip()
+
+        if stripped.startswith("#if"):
+            if "!UE_BUILD_SHIPPING" in stripped or "UE_BUILD_SHIPPING" not in stripped:
+                # Incrementamos solo si es !UE_BUILD_SHIPPING real.
+                if "!UE_BUILD_SHIPPING" in stripped:
+                    shipping_guard_stack += 1
+        elif stripped.startswith("#endif"):
+            if shipping_guard_stack > 0:
+                shipping_guard_stack -= 1
+
+        if shipping_guard_stack > 0:
+            continue
+
+        if stripped.startswith("//"):
+            continue
+
+        if log_re.search(source_line):
+            issues.append(
+                {
+                    "asset_path": file_path,
+                    "line": line_no,
+                    "class": _extract_class_name(
+                        content,
+                        _char_pos_for_line(source_lines, line_no),
+                    ),
+                    "severity": "info",
+                    "rule_id": "CB029",
+                    "category": "Best Practices",
+                    "message": (
+                        "UE_LOG Verbose sin shipping guard — envolver "
+                        "en #if !UE_BUILD_SHIPPING para eliminar el "
+                        "string formatting del build final."
+                    ),
+                    "snippet": source_line.strip(),
+                    "fix_suggestion": (
+                        "#if !UE_BUILD_SHIPPING\n"
+                        f"    {source_line.strip()}\n"
+                        "#endif"
+                    ),
+                    "is_auto_fixable": True,
+                }
+            )
 
     return issues
 
@@ -2475,12 +2887,8 @@ def detect_string_literal_no_text_macro(
                                 'use TEXT("...") for Unicode safety.'
                             ),
                             "snippet": source_line.strip(),
-                            "fix_suggestion": re.sub(
-                                r'=\s*"([^"]+)"',
-                                r'= TEXT("\1")',
-                                source_line,
-                            ).strip(),
-                            "is_auto_fixable": True,
+                            "fix_suggestion": "Wrap string literal with TEXT()",
+                            "is_auto_fixable": _is_fixable("CB030"),
                         }
                     )
             in_uproperty = False
@@ -2523,6 +2931,30 @@ def detect_blueprint_pure_side_effects(
 
         func_line = source_lines[func_line_no - 1]
 
+        # Static member functions cannot be const in C++ (no 'this'
+        # pointer). Skip CB031 for them entirely — adding 'const' would
+        # produce invalid code ("static member function cannot have
+        # 'const' qualifier"). Inspect the signature line and, as a
+        # safety net, the immediate non-comment line above it in case
+        # 'static' is written on its own line.
+        is_static = bool(re.search(r"\bstatic\b", func_line))
+        if not is_static:
+            prev_idx = func_line_no - 2  # 0-based index of previous line
+            while prev_idx >= 0:
+                prev_line = source_lines[prev_idx].strip()
+                if not prev_line or prev_line.startswith("//"):
+                    prev_idx -= 1
+                    continue
+                # Only the immediate previous non-comment line, and
+                # ignore the UFUNCTION macro line itself.
+                if not prev_line.startswith("UFUNCTION") and re.search(
+                    r"\bstatic\b", prev_line
+                ):
+                    is_static = True
+                break
+        if is_static:
+            continue
+
         # Check if function is const (pure functions should be const)
         if ") const" not in func_line and ")const" not in func_line:
             # Extract function name
@@ -2545,8 +2977,8 @@ def detect_blueprint_pure_side_effects(
                         "effects. Add 'const' or remove BlueprintPure."
                     ),
                     "snippet": func_line.strip(),
-                    "fix_suggestion": re.sub(r"\)\s*;", ") const;", func_line.strip()),
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Add const qualifier to function",
+                    "is_auto_fixable": _is_fixable("CB031"),
                 }
             )
 
@@ -2596,10 +3028,8 @@ def detect_const_ref_uproperty(
                             "Use pointer or value type."
                         ),
                         "snippet": source_line.strip(),
-                        "fix_suggestion": re.sub(
-                            r"\bconst\s+(\w+)\s*&", r"\1", source_line.strip()
-                        ),
-                        "is_auto_fixable": True,
+                        "fix_suggestion": "Remove const reference from UPROPERTY",
+                        "is_auto_fixable": _is_fixable("CB032"),
                     }
                 )
 
@@ -2640,28 +3070,6 @@ def detect_getworld_no_check(
             continue
         code = _code_part(source_line)
         if re.search(r"\bGetWorld\(\)\s*->", code):
-            # Only auto-fix standalone calls (no assignment before GetWorld).
-            # If the call is part of an assignment expression the fix would
-            # produce invalid code, so leave it as a manual fix in that case.
-            before_call = re.sub(r"\bGetWorld\(\).*", "", stripped)
-            is_standalone = before_call.strip() in ("", "return")
-            if is_standalone:
-                fix = re.sub(
-                    r"\bGetWorld\(\)\s*->",
-                    "if (UWorld* World = GetWorld()) World->",
-                    stripped,
-                )
-                fixable = True
-            else:
-                fix = (
-                    "if (UWorld* World = GetWorld())\n"
-                    + "{\n"
-                    + "    "
-                    + stripped
-                    + "\n"
-                    + "}"
-                )
-                fixable = False
             issues.append(
                 {
                     "asset_path": file_path,
@@ -2679,8 +3087,8 @@ def detect_getworld_no_check(
                         "'if (UWorld* W = GetWorld())'."
                     ),
                     "snippet": stripped,
-                    "fix_suggestion": fix,
-                    "is_auto_fixable": fixable,
+                    "fix_suggestion": "Add null-check for GetWorld()",
+                    "is_auto_fixable": _is_fixable("CS001"),
                 }
             )
     return issues
@@ -2750,8 +3158,8 @@ def detect_spawnactor_no_check(
                                 "SpawnActor can return nullptr."
                             ),
                             "snippet": stripped,
-                            "fix_suggestion": "if (" + var_name + ") " + stripped,
-                            "is_auto_fixable": True,
+                            "fix_suggestion": "Add null-check for SpawnActor result",
+                            "is_auto_fixable": _is_fixable("CS002"),
                         }
                     )
             break
@@ -2824,8 +3232,8 @@ def detect_cast_no_check(
                                 " match."
                             ),
                             "snippet": stripped,
-                            "fix_suggestion": "if (" + var_name + ") " + stripped,
-                            "is_auto_fixable": True,
+                            "fix_suggestion": "Add null-check for Cast result",
+                            "is_auto_fixable": _is_fixable("CS003"),
                         }
                     )
             break
@@ -2895,13 +3303,8 @@ def detect_division_no_zero_check(
                         f"'{divisor} != 0' before dividing."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": re.sub(
-                        r"/\s*" + re.escape(divisor) + r"\b",
-                        f"/ (!FMath::IsNearlyZero({divisor}) ? {divisor} : 1.f)",
-                        source_line.strip(),
-                        count=1,
-                    ),
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Add zero-division check",
+                    "is_auto_fixable": _is_fixable("CS004"),
                 }
             )
     return issues
@@ -2972,9 +3375,8 @@ def detect_array_no_bounds_check(
                         "if index is out of bounds."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": f"if ({array_name}.IsValidIndex({index_var})) "
-                    + source_line.strip(),
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Add bounds check with IsValidIndex()",
+                    "is_auto_fixable": _is_fixable("CS005"),
                 }
             )
     return issues
@@ -3012,25 +3414,6 @@ def detect_getowner_no_check(
             continue
         code = _code_part(source_line)
         if re.search(r"\bGetOwner\(\)\s*->", code):
-            before_call = re.sub(r"\bGetOwner\(\).*", "", stripped)
-            is_standalone = before_call.strip() in ("", "return")
-            if is_standalone:
-                fix = re.sub(
-                    r"\bGetOwner\(\)\s*->",
-                    "if (AActor* Owner = GetOwner()) Owner->",
-                    stripped,
-                )
-                fixable = True
-            else:
-                fix = (
-                    "if (AActor* Owner = GetOwner())\n"
-                    + "{\n"
-                    + "    "
-                    + stripped
-                    + "\n"
-                    + "}"
-                )
-                fixable = False
             issues.append(
                 {
                     "asset_path": file_path,
@@ -3048,8 +3431,8 @@ def detect_getowner_no_check(
                         "'if (AActor* Owner = GetOwner())'."
                     ),
                     "snippet": stripped,
-                    "fix_suggestion": fix,
-                    "is_auto_fixable": fixable,
+                    "fix_suggestion": "Add null-check for GetOwner()",
+                    "is_auto_fixable": _is_fixable("CS006"),
                 }
             )
     return issues
@@ -3123,8 +3506,8 @@ def detect_overlap_actor_no_check(
                                 "'if (OtherActor)' first."
                             ),
                             "snippet": source_line.strip(),
-                            "fix_suggestion": "if (OtherActor) " + source_line.strip(),
-                            "is_auto_fixable": True,
+                            "fix_suggestion": "Add null-check for OtherActor",
+                            "is_auto_fixable": _is_fixable("CS007"),
                         }
                     )
     return issues
@@ -3200,11 +3583,8 @@ def detect_weak_ptr_no_check(
                             "garbage collected."
                         ),
                         "snippet": source_line.strip(),
-                        "fix_suggestion": "if ("
-                        + var_name
-                        + ".IsValid()) "
-                        + source_line.strip(),
-                        "is_auto_fixable": True,
+                        "fix_suggestion": "Check IsValid() before dereferencing",
+                        "is_auto_fixable": _is_fixable("CS008"),
                     }
                 )
     return issues
@@ -3251,10 +3631,8 @@ def detect_http_insecure(
                         "to encrypt data in transit."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": source_line.replace(
-                        "http://", "https://"
-                    ).strip(),
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Replace http:// with https://",
+                    "is_auto_fixable": _is_fixable("CS011"),
                 }
             )
 
@@ -3310,8 +3688,8 @@ def detect_hardcoded_secret(
                             "variables, never in source code."
                         ),
                         "snippet": source_line.strip(),
-                        "fix_suggestion": "// " + source_line.strip(),
-                        "is_auto_fixable": True,
+                        "fix_suggestion": "Comment out hardcoded secret",
+                        "is_auto_fixable": _is_fixable("CS012"),
                     }
                 )
                 break
@@ -3354,7 +3732,6 @@ def detect_debug_message(
         code = _code_part(source_line)
         if re.search(r"GEngine->AddOnScreenDebugMessage", code):
             # Fix: comment out the debug message
-            fix = "// " + source_line.strip()
             issues.append(
                 {
                     "asset_path": file_path,
@@ -3371,8 +3748,8 @@ def detect_debug_message(
                         "remove before shipping."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": fix,
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Remove debug message from production",
+                    "is_auto_fixable": _is_fixable("CM001"),
                 }
             )
     return issues
@@ -3443,8 +3820,8 @@ def detect_long_function(
                             "into smaller functions (max 80)."
                         ),
                         "snippet": snippet_line,
-                        "fix_suggestion": "",
-                        "is_auto_fixable": False,
+                        "fix_suggestion": "Extract to smaller functions",
+                        "is_auto_fixable": _is_fixable("CM002"),
                     }
                 )
             line_idx = end_idx
@@ -3497,8 +3874,8 @@ def detect_todo_comments(
                         "and resolve before shipping."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": "// " + source_line.strip(),
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Remove or resolve TODO comment",
+                    "is_auto_fixable": _is_fixable("CM003"),
                 }
             )
     return issues
@@ -3534,7 +3911,7 @@ def detect_file_too_long(
             "line": 1,
             "class": "Unknown",
             "severity": "warning",
-            "rule_id": "CM005",
+            "rule_id": "CM004",
             "category": "Maintainability",
             "message": (
                 f"File has {total_lines} lines "
@@ -3542,8 +3919,8 @@ def detect_file_too_long(
                 "smaller, focused files."
             ),
             "snippet": content.splitlines()[0].strip(),
-            "fix_suggestion": "",
-            "is_auto_fixable": False,
+            "fix_suggestion": "Split file into smaller modules",
+            "is_auto_fixable": _is_fixable("CM004"),
         }
     ]
 
@@ -3620,7 +3997,7 @@ def detect_too_many_parameters(
                     _char_pos_for_line(source_lines, line_no),
                 ),
                 "severity": "warning",
-                "rule_id": "CM006",
+                "rule_id": "CM005",
                 "category": "Maintainability",
                 "message": (
                     f"Function '{func_name}' has {param_count} "
@@ -3628,8 +4005,8 @@ def detect_too_many_parameters(
                     "passing a dedicated struct instead."
                 ),
                 "snippet": source_line.strip(),
-                "fix_suggestion": "",
-                "is_auto_fixable": False,
+                "fix_suggestion": "Use parameter object pattern",
+                "is_auto_fixable": _is_fixable("CM005"),
             }
         )
 
@@ -3686,8 +4063,8 @@ def detect_deep_nesting(
                             "reduce complexity."
                         ),
                         "snippet": source_line.strip(),
-                        "fix_suggestion": "",
-                        "is_auto_fixable": False,
+                        "fix_suggestion": "Reduce nesting with early returns",
+                        "is_auto_fixable": _is_fixable("CM006"),
                     }
                 )
 
@@ -3734,8 +4111,8 @@ def detect_duplicate_include(
                             f"{seen_includes[header]}."
                         ),
                         "snippet": source_line.strip(),
-                        "fix_suggestion": "// " + source_line.strip(),
-                        "is_auto_fixable": True,
+                        "fix_suggestion": "Remove duplicate #include",
+                        "is_auto_fixable": _is_fixable("CM007"),
                     }
                 )
             else:
@@ -3779,12 +4156,8 @@ def detect_empty_destructor(
                         "'= default' unless it must be virtual."
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": re.sub(
-                        r"(~\w+\s*\(\s*\))\s*\{\s*\}",
-                        r"\1 = default;",
-                        source_line.strip(),
-                    ),
-                    "is_auto_fixable": True,
+                    "fix_suggestion": "Use = default for empty destructor",
+                    "is_auto_fixable": _is_fixable("CM008"),
                 }
             )
 
@@ -3823,8 +4196,7 @@ def run_all_cpp_rules(
     issues += detect_fstring_by_value(content, file_path)
     issues += detect_tarray_copy_in_loop(content, file_path)
     issues += detect_new_object_in_loop(content, file_path)
-    #       issues += detect_ftext_format_in_tick(content, file_path)
-    #       issues += detect_ensure_in_tick(content, file_path)
+    issues += detect_ensure_in_tick(content, file_path)
     issues += detect_garbage_collect_call(content, file_path)
 
     # Best Practices
@@ -3849,14 +4221,13 @@ def run_all_cpp_rules(
     issues += detect_non_virtual_destructor(content, file_path)
     issues += detect_fstring_as_identifier(content, file_path)
     issues += detect_lambda_implicit_capture(content, file_path)
-    #       issues += detect_ensure_not_always(content, file_path)
+    issues += detect_ensure_not_always(content, file_path)
     issues += detect_missing_override(content, file_path)
     issues += detect_missing_super_beginplay(content, file_path)
     issues += detect_ufunction_missing_category(content, file_path)
-    #     issues += detect_exposed_on_spawn_no_default(content, file_path)
-    #     issues += detect_delegate_no_broadcast(content, file_path)
-    #     issues += detect_timer_lambda_raw_this(content, file_path)
-    #     issues += detect_log_verbose_shipping(content, file_path)
+    issues += detect_exposed_on_spawn_no_default(content, file_path)
+    issues += detect_timer_lambda_raw_this(content, file_path)
+    issues += detect_log_verbose_shipping(content, file_path)
     issues += detect_string_literal_no_text_macro(content, file_path)
     issues += detect_blueprint_pure_side_effects(content, file_path)
     issues += detect_const_ref_uproperty(content, file_path)
@@ -3870,8 +4241,6 @@ def run_all_cpp_rules(
     issues += detect_getowner_no_check(content, file_path)
     issues += detect_overlap_actor_no_check(content, file_path)
     issues += detect_weak_ptr_no_check(content, file_path)
-    #     issues += detect_exec_console_command(content, file_path)
-    #     issues += detect_fpath_unsanitized(content, file_path)
     issues += detect_http_insecure(content, file_path)
     issues += detect_hardcoded_secret(content, file_path)
 
@@ -3884,12 +4253,11 @@ def run_all_cpp_rules(
     issues += detect_deep_nesting(content, file_path)
     issues += detect_duplicate_include(content, file_path)
     issues += detect_empty_destructor(content, file_path)
-    #     issues += detect_commented_code_block(content, file_path)
-    #     issues += detect_inconsistent_pointer_style(content, file_path)
-    #     issues += detect_multiple_returns(content, file_path)
 
     # Inject context window (2 lines before + issue line + 2 lines after) so
     # the plugin can show a before/after diff without re-reading the file.
+    # AFTER window is produced by running the actual fixer so the plugin sees
+    # real corrected code, not human-readable fix_suggestion description text.
     _CONTEXT = 2
     source_lines = content.splitlines()
     for issue in issues:
@@ -3901,14 +4269,26 @@ def run_all_cpp_rules(
         window = source_lines[start:end]
         issue["context_before"] = "\n".join(window)
         issue["context_line_start"] = start + 1  # 1-based
-        fix = issue.get("fix_suggestion", "")
-        if fix:
-            after_window = window[:]
-            idx = (line_no - 1) - start
-            if 0 <= idx < len(after_window):
-                after_window[idx] = fix
-            issue["context_after"] = "\n".join(after_window)
-        else:
-            issue["context_after"] = ""
+
+        # Compute context_after using the fixer so the plugin shows actual code.
+        # Falls back to empty string if the fix is unavailable or unchanged.
+        after_context = ""
+        rule_id = issue.get("rule_id", "")
+        if (
+            _fixer is not None
+            and issue.get("is_auto_fixable")
+            and rule_id in RULE_TO_PATTERN
+        ):
+            try:
+                fixed_code, _, _ = _fixer.fix(rule_id, content, line_no)
+                if fixed_code != content:
+                    fixed_lines = fixed_code.splitlines()
+                    # Extract the same start position; allow extra lines for
+                    # multi-line fixes (null_check, bounds_check expand 1→4 lines).
+                    f_end = min(len(fixed_lines), start + len(window) + 4)
+                    after_context = "\n".join(fixed_lines[start:f_end])
+            except Exception:
+                pass  # fixer failed — AFTER panel will be empty
+        issue["context_after"] = after_context
 
     return issues

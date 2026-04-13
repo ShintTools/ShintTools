@@ -3,7 +3,9 @@
 # UE5 Asset Naming Rules — ShintTools Naming Validator
 #
 # Detects naming convention violations from asset paths.
-# All rules return severity "warning", category "Best Practices".
+# All rules return severity "warning". Category is derived from
+# the asset_type and maps to Dashboard filters:
+#   Widgets, Data, Materials, Textures, Audio, VFX (and "Other").
 #
 # Each rule receives List[AssetRecord] where AssetRecord is:
 #   { "asset_path": str, "asset_type": str }
@@ -75,11 +77,154 @@ _TYPE_TO_EXPECTED_FOLDER: Dict[str, str] = {
 }
 
 # ---------------------------------------------------------------------------
+# TYPE_TO_CATEGORY
+#
+# Maps UE5 asset_type → Dashboard filter category.
+# The Dashboard exposes 6 filterable categories for naming issues:
+#   Widgets, Data, Materials, Textures, Audio, VFX
+# Any asset_type that does not fit these is tagged "Other".
+# ---------------------------------------------------------------------------
+
+_TYPE_TO_CATEGORY: Dict[str, str] = {
+    # Widgets
+    "WidgetBlueprint": "Widgets",
+    # Data
+    "DataTable": "Data",
+    "DataAsset": "Data",
+    "CurveFloat": "Data",
+    "CurveVector": "Data",
+    "CurveLinearColor": "Data",
+    "UserDefinedEnum": "Data",
+    "UserDefinedStruct": "Data",
+    # Materials
+    "Material": "Materials",
+    "MaterialInstance": "Materials",
+    "MaterialInstanceConstant": "Materials",
+    "MaterialFunction": "Materials",
+    "MaterialParameterCollection": "Materials",
+    # Textures
+    "Texture2D": "Textures",
+    "RenderTarget": "Textures",
+    "TextureRenderTarget2D": "Textures",
+    "TextureCube": "Textures",
+    # Audio
+    "SoundCue": "Audio",
+    "SoundWave": "Audio",
+    "SoundClass": "Audio",
+    "SoundMix": "Audio",
+    "SoundAttenuation": "Audio",
+    # VFX
+    "ParticleSystem": "VFX",
+    "NiagaraSystem": "VFX",
+    "NiagaraEmitter": "VFX",
+}
+
+_CATEGORY_FALLBACK: str = "Other"
+
+# ---------------------------------------------------------------------------
+# Folder-segment → Dashboard category mapping.
+#
+# Used as a fallback when the asset_type is unknown/empty. Any segment in
+# the asset path that matches (case-insensitive) assigns its category.
+# First match wins (walks the path from deepest to root).
+# ---------------------------------------------------------------------------
+
+_FOLDER_TO_CATEGORY: Dict[str, str] = {
+    # Widgets
+    "widgets": "Widgets",
+    "widget": "Widgets",
+    "ui": "Widgets",
+    "hud": "Widgets",
+    "menus": "Widgets",
+    # Data
+    "data": "Data",
+    "datatables": "Data",
+    "datatable": "Data",
+    "dataassets": "Data",
+    "dataasset": "Data",
+    "curves": "Data",
+    "enums": "Data",
+    "structs": "Data",
+    # Materials
+    "materials": "Materials",
+    "material": "Materials",
+    "materialinstances": "Materials",
+    "matinst": "Materials",
+    "materialfunctions": "Materials",
+    # Textures
+    "textures": "Textures",
+    "texture": "Textures",
+    "rendertargets": "Textures",
+    "cubemaps": "Textures",
+    # Audio
+    "audio": "Audio",
+    "sounds": "Audio",
+    "sound": "Audio",
+    "soundwaves": "Audio",
+    "music": "Audio",
+    "sfx": "Audio",
+    # VFX
+    "vfx": "VFX",
+    "particles": "VFX",
+    "particle": "VFX",
+    "niagara": "VFX",
+    "effects": "VFX",
+}
+
+
+def _category_for_type(asset_type: str) -> str:
+    """Return the Dashboard filter category for a UE5 asset type.
+
+    Falls back to ``"Other"`` when the type is empty, unknown, or does
+    not belong to one of the 6 filterable categories.
+    """
+    if not asset_type:
+        return _CATEGORY_FALLBACK
+    return _TYPE_TO_CATEGORY.get(asset_type, _CATEGORY_FALLBACK)
+
+
+def _category_from_path(asset_path: str) -> str:
+    """Return the Dashboard filter category inferred from the folder path.
+
+    Walks the path segments (case-insensitive) and returns the category of
+    the first matching folder segment. Returns ``"Other"`` if no segment
+    matches any known folder keyword.
+
+    Example:
+        "/Game/Environment/Textures/Rocks/bad_name"
+        → "Textures"  (matched segment "Textures")
+    """
+    if not asset_path:
+        return _CATEGORY_FALLBACK
+    # Split on both Unix and Windows separators; drop empties.
+    segments = [seg for seg in re.split(r"[\\/]+", asset_path) if seg]
+    # Walk from deepest to root so the closest folder wins.
+    for segment in reversed(segments):
+        category = _FOLDER_TO_CATEGORY.get(segment.lower())
+        if category is not None:
+            return category
+    return _CATEGORY_FALLBACK
+
+
+def _resolve_category(asset_type: str, asset_path: str) -> str:
+    """Resolve the Dashboard category with type-first, path-fallback logic.
+
+    Priority:
+        1. If ``asset_type`` maps to a known category → use it.
+        2. Otherwise, infer from folder segments in ``asset_path``.
+        3. Otherwise, ``"Other"``.
+    """
+    category = _category_for_type(asset_type)
+    if category != _CATEGORY_FALLBACK:
+        return category
+    return _category_from_path(asset_path)
+
+
+# ---------------------------------------------------------------------------
 # Rule metadata
 # ---------------------------------------------------------------------------
 
 _NM_SEVERITY: str = "warning"
-_NM_CATEGORY: str = "Best Practices"
 
 # ---------------------------------------------------------------------------
 # FOLDER_RULES
@@ -213,7 +358,7 @@ def _build_issue(
         "suggested_name": suggested_name,
         "severity": _NM_SEVERITY,
         "rule_id": rule_id,
-        "category": _NM_CATEGORY,
+        "category": _resolve_category(asset_type, asset_path),
         "asset_type": asset_type,
         "message": message,
     }
