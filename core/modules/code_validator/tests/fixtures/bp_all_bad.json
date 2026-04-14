@@ -1,0 +1,79 @@
+{
+  "name": "MyActor",
+  "path": "Content/Blueprints/MyActor.uasset",
+  "type": "blueprint",
+  "graphs": [
+    {
+      "name": "EventGraph",
+      "nodes_count": 210,
+      "nodes": [
+        {"type": "CastTo", "count": 15},
+        {"type": "EventBeginPlay", "count": 1},
+        {"type": "EventEndPlay", "count": 1},
+        {"type": "PrintString", "count": 50},
+        {"type": "SetActorLocation", "count": 30},
+        {"type": "BranchNode", "count": 20}
+      ]
+    },
+    {
+      "name": "EventTick",
+      "nodes_count": 45,
+      "nodes": [
+        {"type": "GetActorLocation", "count": 10},
+        {"type": "SetActorLocation", "count": 10},
+        {"type": "MathExpression", "count": 25}
+      ]
+    }
+  ],
+  "variables": [
+    {
+      "name": "NewVar",
+      "used": false,
+      "is_public": true,
+      "category": "",
+      "has_tooltip": false
+    },
+    {
+      "name": "Temp",
+      "used": true,
+      "is_public": true,
+      "category": "Default",
+      "has_tooltip": false
+    },
+    {
+      "name": "Var_1",
+      "used": false,
+      "is_public": false,
+      "category": "",
+      "has_tooltip": false
+    },
+    {
+      "name": "PlayerHealth",
+      "used": true,
+      "is_public": true,
+      "category": "",
+      "has_tooltip": true
+    }
+  ],
+  "functions": [
+    {
+      "name": "UpdateHealth",
+      "complexity": 15,
+      "is_public": true,
+      "has_tooltip": false
+    },
+    {
+      "name": "CalculateDamage",
+      "complexity": 3,
+      "is_public": true,
+      "has_tooltip": true
+    }
+  ],
+  "stats": {
+    "total_nodes": 255,
+    "disconnected_nodes": 8,
+    "tick_enabled": true,
+    "has_begin_play_super": false,
+    "has_end_play_super": false
+  }
+}

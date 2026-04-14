@@ -139,10 +139,11 @@ def _analyse_file(
 
     if engine == "unreal" and file_ext in _CPP_EXTENSIONS:
         issues = run_all_cpp_rules(content, file_path)
-        # Add is_auto_fixable based on fix_patterns
+        # Add is_auto_fixable and normalize file_path for plugin contract
         for issue in issues:
             rule_id = issue.get("rule_id", "")
             issue["is_auto_fixable"] = rule_id in RULE_TO_PATTERN
+            issue["file_path"] = file_path
         return issues
 
     return []
@@ -251,10 +252,11 @@ async def validate_blueprints(payload: ValidateBlueprintsRequest):
     plugin_export = {"files": payload.files}
     all_issues = run_all_blueprint_rules_from_export(plugin_export)
 
-    # Add is_auto_fixable for Blueprint rules
+    # Add is_auto_fixable and normalize file_path for plugin contract
     for issue in all_issues:
         rule_id = issue.get("rule_id", "")
         issue["is_auto_fixable"] = rule_id in RULE_TO_PATTERN
+        issue["file_path"] = issue.get("asset_path", "")
 
     blueprints_scanned = sum(1 for f in payload.files if f.get("type") == "blueprint")
 
