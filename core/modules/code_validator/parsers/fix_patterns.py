@@ -167,4 +167,149 @@ RULE_TO_PATTERN = {
     "CM004": ("mark_for_review", "File too long - structural refactor needed"),
     "CM005": ("mark_for_review", "Too many parameters - structural refactor needed"),
     "CM006": ("mark_for_review", "Deep nesting - consider extracting functions"),
+    # ==========================================================
+    # Blueprint (BPB/BPP/BPM) — fix instructions sent to plugin
+    # Plugin executes via UE5 editor API; Core only emits JSON.
+    # ==========================================================
+    # Fully automatic (no user input needed)
+    "BPB001": ("bp_rename_asset", None),
+    "BPP001": ("bp_set_property", "tick_enabled"),
+    "BPM001": ("bp_remove_variable", None),
+    "BPM002": ("bp_delete_disconnected", None),
+    # Semi-automatic (plugin shows dialog for user input)
+    "BPB003": ("bp_rename_variable", None),
+    "BPB007": ("bp_set_variable_category", None),
+}
+
+
+# ================================================================
+# Blueprint fix instruction builders
+#
+# Each builder receives the issue dict emitted by blueprint_rules
+# and returns a fix_instruction dict that the UE5 plugin can
+# execute directly via its editor API.
+#
+# Schema:
+#   action   — str: what the plugin should do
+#   target   — str: asset path or variable/node identifier
+#   value    — any: new value (name, bool, category, etc.)
+#   needs_input — bool: if True, plugin must prompt the user
+# ================================================================
+
+
+def build_bp_fix_instruction(issue: dict) -> dict:
+    """Build a fix_instruction dict for a Blueprint issue.
+
+    Returns an empty dict for rules that are not auto-fixable
+    or have no defined builder.
+    """
+    rule_id = issue.get("rule_id", "")
+    builder = _BP_FIX_BUILDERS.get(rule_id)
+    if builder is None:
+        return {}
+    return builder(issue)
+
+
+def _build_bpb001(issue: dict) -> dict:
+    """BPB001: add BP_ prefix to asset name."""
+    msg = issue.get("message", "")
+    # Extract old name from message pattern "'<name>' does not use"
+    old_name = ""
+    if "'" in msg:
+        parts = msg.split("'")
+        if len(parts) >= 2:
+            old_name = parts[1]
+    return {
+        "action": "rename_asset",
+        "target": issue.get("asset_path", ""),
+        "old_name": old_name,
+        "value": f"BP_{old_name}" if old_name else "",
+        "needs_input": False,
+    }
+
+
+def _build_bpb003(issue: dict) -> dict:
+    """BPB003: rename generic variable — needs user input."""
+    msg = issue.get("message", "")
+    var_name = ""
+    if "'" in msg:
+        parts = msg.split("'")
+        if len(parts) >= 2:
+            var_name = parts[1]
+    return {
+        "action": "rename_variable",
+        "target": issue.get("asset_path", ""),
+        "variable": var_name,
+        "value": "",
+        "needs_input": True,
+        "prompt": (
+            f"Enter a descriptive name for '{var_name}' "
+            "(e.g. 'PlayerHealth', 'MoveSpeed')"
+        ),
+    }
+
+
+def _build_bpb007(issue: dict) -> dict:
+    """BPB007: assign category to public variable — needs input."""
+    msg = issue.get("message", "")
+    var_name = ""
+    if "'" in msg:
+        parts = msg.split("'")
+        if len(parts) >= 2:
+            var_name = parts[1]
+    return {
+        "action": "set_variable_category",
+        "target": issue.get("asset_path", ""),
+        "variable": var_name,
+        "value": "",
+        "needs_input": True,
+        "prompt": (
+            f"Enter a category for '{var_name}' " "(e.g. 'Combat', 'Movement', 'UI')"
+        ),
+    }
+
+
+def _build_bpp001(issue: dict) -> dict:
+    """BPP001: disable tick."""
+    return {
+        "action": "set_property",
+        "target": issue.get("asset_path", ""),
+        "property": "bCanEverTick",
+        "value": False,
+        "needs_input": False,
+    }
+
+
+def _build_bpm001(issue: dict) -> dict:
+    """BPM001: remove unused variable."""
+    msg = issue.get("message", "")
+    var_name = ""
+    if "'" in msg:
+        parts = msg.split("'")
+        if len(parts) >= 2:
+            var_name = parts[1]
+    return {
+        "action": "remove_variable",
+        "target": issue.get("asset_path", ""),
+        "variable": var_name,
+        "needs_input": False,
+    }
+
+
+def _build_bpm002(issue: dict) -> dict:
+    """BPM002: delete disconnected nodes."""
+    return {
+        "action": "delete_disconnected_nodes",
+        "target": issue.get("asset_path", ""),
+        "needs_input": False,
+    }
+
+
+_BP_FIX_BUILDERS = {
+    "BPB001": _build_bpb001,
+    "BPB003": _build_bpb003,
+    "BPB007": _build_bpb007,
+    "BPP001": _build_bpp001,
+    "BPM001": _build_bpm001,
+    "BPM002": _build_bpm002,
 }

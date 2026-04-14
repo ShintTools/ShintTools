@@ -17,6 +17,11 @@
 import re
 from typing import Dict, List
 
+try:
+    from code_validator.parsers.fix_patterns import build_bp_fix_instruction
+except ModuleNotFoundError:
+    build_bp_fix_instruction = None  # type: ignore[assignment]
+
 # Type alias for issue dictionary
 Issue = Dict[str, object]
 
@@ -791,6 +796,15 @@ def run_all_blueprint_rules(
     issues += detect_large_graph(blueprint)
     issues += detect_blueprint_no_functions(blueprint)
     issues += detect_abandoned_blueprint(blueprint)
+
+    # Inject fix_instruction for auto-fixable BP rules so the
+    # UE5 plugin can execute the fix directly via its editor API.
+    if build_bp_fix_instruction is not None:
+        for issue in issues:
+            if issue.get("is_auto_fixable"):
+                fix_inst = build_bp_fix_instruction(issue)
+                if fix_inst:
+                    issue["fix_instruction"] = fix_inst
 
     return issues
 

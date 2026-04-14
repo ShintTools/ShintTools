@@ -1,0 +1,54 @@
+{
+  "name": "BP_PlayerCharacter",
+  "path": "Content/Blueprints/BP_PlayerCharacter.uasset",
+  "type": "blueprint",
+  "graphs": [
+    {
+      "name": "EventGraph",
+      "nodes_count": 30,
+      "nodes": [
+        {"type": "EventBeginPlay", "count": 1},
+        {"type": "EventEndPlay", "count": 1},
+        {"type": "CastTo", "count": 2},
+        {"type": "SetActorLocation", "count": 5}
+      ]
+    }
+  ],
+  "variables": [
+    {
+      "name": "MaxHealth",
+      "used": true,
+      "is_public": true,
+      "category": "Combat",
+      "has_tooltip": true
+    },
+    {
+      "name": "MoveSpeed",
+      "used": true,
+      "is_public": true,
+      "category": "Movement",
+      "has_tooltip": true
+    }
+  ],
+  "functions": [
+    {
+      "name": "TakeDamage",
+      "complexity": 4,
+      "is_public": true,
+      "has_tooltip": true
+    },
+    {
+      "name": "Heal",
+      "complexity": 2,
+      "is_public": true,
+      "has_tooltip": true
+    }
+  ],
+  "stats": {
+    "total_nodes": 30,
+    "disconnected_nodes": 0,
+    "tick_enabled": false,
+    "has_begin_play_super": true,
+    "has_end_play_super": true
+  }
+}

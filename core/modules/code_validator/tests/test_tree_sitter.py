@@ -82,19 +82,19 @@ print("\n=== NULL CHECK WITH IsValid() ===")
 # ================================================================
 
 test(
-    "CS001: GetWorld() -> IsValid(World)",
+    "CS001: GetWorld() -> if (UWorld* World = GetWorld())",
     "CS001",
     "void AMyActor::Setup() {\n" "    GetWorld()->SpawnActor();\n}",
     2,
-    "IsValid(World)",
+    "if (UWorld* World = GetWorld())",
 )
 
 test(
-    "CS003: Cast<> -> IsValid(CastedPtr)",
+    "CS003: Cast<> -> extract + IsValid(CastedAEnemy)",
     "CS003",
     "void AMyActor::OnHit() {\n" "    Cast<AEnemy>(Other)->TakeDamage(10);\n}",
     2,
-    "IsValid(CastedPtr)",
+    "IsValid(CastedAEnemy)",
 )
 
 test(

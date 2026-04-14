@@ -152,14 +152,15 @@ class CppFixer:
         line_number: int,
         expression: str,
     ) -> Tuple[str, str, List[str]]:
-        """Wrap in null-check using UE5 idiomatic IsValid() pattern.
+        """Wrap in null-check using UE5 idiomatic patterns.
 
-        Two strategies:
-        - EXTRACT: expression is a complete callable (GetWorld(), GetOwner()).
-          Assigns it to a local var and wraps usage in IsValid().
-        - WRAP: expression is a fragment/marker (Cast<, ->, SpawnActor, …).
-          The variable already exists; find it from `Var->` on the line and
-          wrap the whole line in IsValid(Var) without re-assigning anything.
+        Three strategies:
+        - EXTRACT_CALLABLE: GetWorld(), GetOwner() — assign to local
+          var with inline if-assignment.
+        - EXTRACT_CAST: Cast<Type>(Arg) — extract result into a
+          typed local var, then guard with IsValid().
+        - WRAP: other expressions (SpawnActor, ->, OtherActor, …)
+          — variable already exists, wrap line in IsValid(Var).
         """
         lines = code.split("\n")
         idx = line_number - 1
@@ -169,7 +170,7 @@ class CppFixer:
         original = lines[idx]
         indent = " " * (len(original) - len(original.lstrip()))
 
-        # Expressions that are full callables — safe to extract into a local var
+        # --- EXTRACT_CALLABLE: GetWorld(), GetOwner() ---
         EXTRACT_EXPRESSIONS = {"GetWorld()", "GetOwner()"}
 
         if expression in EXTRACT_EXPRESSIONS:
@@ -177,34 +178,78 @@ class CppFixer:
                 expression, ("auto", "Ptr")
             )
             var_type, var_name = config
-            inner = original.strip().replace(f"{expression}->", f"{var_name}->")
-            lines[idx] = (
-                f"{indent}{var_type} {var_name} = {expression};\n"
-                f"{indent}if (IsValid({var_name}))\n"
-                f"{indent}{{\n"
-                f"{indent}    {inner}\n"
-                f"{indent}}}"
+            inner = re.sub(
+                re.escape(f"{expression}->"),
+                f"{var_name}->",
+                original.strip(),
             )
+            guard_line = f"{indent}if ({var_type} {var_name} = {expression})"
+            new_lines = [
+                guard_line,
+                f"{indent}{{",
+                f"{indent}    {inner}",
+                f"{indent}}}",
+            ]
+            lines[idx : idx + 1] = new_lines
             return (
                 "\n".join(lines),
                 "",
-                [f"Line {line_number}: Added null-check for {expression}"],
+                [f"Line {line_number}: Added null-check " f"for {expression}"],
             )
 
-        # For all other expressions (Cast<, ->, SpawnActor, OtherActor, WeakPtr …):
-        # the variable already exists on the line — just find it and wrap.
+        # --- EXTRACT_CAST: Cast<Type>(Arg)->Method() ---
+        if expression == "Cast<":
+            cast_match = re.search(
+                r"\bCast<(\w+)>\(([^)]+)\)\s*->",
+                original,
+            )
+            if cast_match:
+                cast_type = cast_match.group(1)
+                cast_arg = cast_match.group(2).strip()
+                var_name = f"Casted{cast_type}"
+                # Replace the full Cast<T>(Arg)-> with VarName->
+                inner = re.sub(
+                    r"\bCast<\w+>\([^)]+\)\s*->",
+                    f"{var_name}->",
+                    original.strip(),
+                )
+                new_lines = [
+                    f"{indent}{cast_type}* {var_name} = "
+                    f"Cast<{cast_type}>({cast_arg});",
+                    f"{indent}if (IsValid({var_name}))",
+                    f"{indent}{{",
+                    f"{indent}    {inner}",
+                    f"{indent}}}",
+                ]
+                lines[idx : idx + 1] = new_lines
+                return (
+                    "\n".join(lines),
+                    "",
+                    [
+                        f"Line {line_number}: Extracted "
+                        f"Cast<{cast_type}> into {var_name} "
+                        f"with IsValid() guard"
+                    ],
+                )
+
+        # --- WRAP: variable already exists on the line ---
         match = re.search(r"(\w+)\s*->", original)
         if not match:
-            return code, "", [f"No pointer dereference found on line {line_number}"]
+            return (
+                code,
+                "",
+                [f"No pointer dereference found on line {line_number}"],
+            )
 
         ptr_var = match.group(1)
         inner = original.strip()
-        lines[idx] = (
-            f"{indent}if (IsValid({ptr_var}))\n"
-            f"{indent}{{\n"
-            f"{indent}    {inner}\n"
-            f"{indent}}}"
-        )
+        new_lines = [
+            f"{indent}if (IsValid({ptr_var}))",
+            f"{indent}{{",
+            f"{indent}    {inner}",
+            f"{indent}}}",
+        ]
+        lines[idx : idx + 1] = new_lines
         return (
             "\n".join(lines),
             "",
@@ -574,6 +619,9 @@ class CppFixer:
         """Add bounds check before array access.
 
         Arr[i] -> if (Arr.IsValidIndex(i)) { Arr[i] }
+
+        Uses list splice so newlines are real list elements,
+        not embedded \\n inside a single string.
         """
         lines = code.split("\n")
         idx = line_number - 1
@@ -581,7 +629,6 @@ class CppFixer:
             return code, "", ["Invalid line number"]
 
         original = lines[idx]
-        # Match array access: ArrayName[index]
         match = re.search(r"(\w+)\[(\w+)\]", original)
         if not match:
             return code, "", ["No array access found"]
@@ -590,16 +637,20 @@ class CppFixer:
         index_expr = match.group(2)
         indent = " " * (len(original) - len(original.lstrip()))
 
-        lines[idx] = (
-            f"{indent}if ({array_name}.IsValidIndex({index_expr}))\n"
-            f"{indent}{{\n"
-            f"{indent}    {original.strip()}\n"
-            f"{indent}}}"
-        )
+        new_lines = [
+            f"{indent}if ({array_name}.IsValidIndex({index_expr}))",
+            f"{indent}{{",
+            f"{indent}    {original.strip()}",
+            f"{indent}}}",
+        ]
+        lines[idx : idx + 1] = new_lines
         return (
             "\n".join(lines),
             "",
-            [f"Line {line_number}: Added bounds check for {array_name}[{index_expr}]"],
+            [
+                f"Line {line_number}: Added bounds check "
+                f"for {array_name}[{index_expr}]"
+            ],
         )
 
     # ================================================================
