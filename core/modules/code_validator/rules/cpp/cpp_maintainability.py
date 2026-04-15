@@ -18,7 +18,7 @@
 import re
 from typing import List
 
-from code_validator.rules._cpp_helpers import (
+from core.modules.code_validator.rules.cpp._cpp_helpers import (
     Issue,
     _char_pos_for_line,
     _code_part,

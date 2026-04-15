@@ -618,7 +618,19 @@ class CppFixer:
     ) -> Tuple[str, str, List[str]]:
         """Add bounds check before array access.
 
-        Arr[i] -> if (Arr.IsValidIndex(i)) { Arr[i] }
+        Three cases handled:
+
+        A) Identifier index — Arr[i]:
+           if (Arr.IsValidIndex(i)) { Arr[i]; }
+
+        B) Arithmetic / pure expression — Arr[i+1], Arr[i*2]:
+           if (Arr.IsValidIndex(i+1)) { Arr[i+1]; }
+
+        C) Function call — Arr[GetIndex()]:
+           const int32 Index = GetIndex();
+           if (Arr.IsValidIndex(Index)) { Arr[Index]; }
+           (Extracted to a local var to avoid calling the
+           function twice — would re-execute side effects.)
 
         Uses list splice so newlines are real list elements,
         not embedded \\n inside a single string.
@@ -629,14 +641,49 @@ class CppFixer:
             return code, "", ["Invalid line number"]
 
         original = lines[idx]
-        match = re.search(r"(\w+)\[(\w+)\]", original)
+        # Match ArrayVar[<any non-empty expression>]
+        match = re.search(r"(\w+)\s*\[\s*([^\]\n]+?)\s*\]", original)
         if not match:
             return code, "", ["No array access found"]
 
         array_name = match.group(1)
-        index_expr = match.group(2)
+        index_expr = match.group(2).strip()
         indent = " " * (len(original) - len(original.lstrip()))
 
+        # Case C — function call in the index: extract to local
+        # var so the call runs exactly once.
+        if "(" in index_expr and ")" in index_expr:
+            local_var = "Index"
+            # Replace the original bracket content with the local
+            # var name for the access line.
+            pattern = (
+                rf"{re.escape(array_name)}\s*\[" rf"\s*{re.escape(index_expr)}\s*\]"
+            )
+            rewritten = re.sub(
+                pattern,
+                f"{array_name}[{local_var}]",
+                original,
+            )
+            new_lines = [
+                f"{indent}const int32 {local_var} = {index_expr};",
+                f"{indent}if ({array_name}.IsValidIndex({local_var}))",
+                f"{indent}{{",
+                f"{indent}    {rewritten.strip()}",
+                f"{indent}}}",
+            ]
+            lines[idx : idx + 1] = new_lines
+            return (
+                "\n".join(lines),
+                "",
+                [
+                    f"Line {line_number}: Extracted {index_expr} "
+                    f"to local var and added bounds check "
+                    f"for {array_name}[{local_var}]"
+                ],
+            )
+
+        # Cases A and B — identifier or pure arithmetic: safe to
+        # pass the expression directly to IsValidIndex.
         new_lines = [
             f"{indent}if ({array_name}.IsValidIndex({index_expr}))",
             f"{indent}{{",
@@ -901,18 +948,18 @@ class CppFixer:
         """Extract function body to a separate function, leaving it minimal."""
         root = self.parser.parse(code)
 
-        # Encontrar el cuerpo de la función
+        # Find the function body
         func_body = self.parser.find_function_body(root, func_name)
         if not func_body:
             return code, "", [f"No {func_name} function found"]
 
         lines = code.split("\n")
 
-        # Encontrar líneas dentro de la función
+        # Find lines within the function
         start_line = func_body.start_point[0]
         end_line = func_body.end_point[0]
 
-        # Encontrar la línea de Super::Tick (la mantenemos)
+        # Find the Super::Tick line (we keep it in place)
         super_line_idx = None
         for i in range(start_line, end_line + 1):
             if i < len(lines) and "Super::" in lines[i]:
@@ -920,43 +967,43 @@ class CppFixer:
                 break
 
         if super_line_idx is None:
-            # No hay Super::, extraer todo
-            extract_start = start_line + 1  # Después del {
-            extract_end = end_line - 1  # Antes del }
+            # No Super:: call — extract the whole body
+            extract_start = start_line + 1  # After the opening {
+            extract_end = end_line - 1  # Before the closing }
         else:
-            # Extraer después de Super::
+            # Extract everything after Super::
             extract_start = super_line_idx + 1
             extract_end = end_line - 1
 
         if extract_start >= extract_end:
             return code, "", ["Not enough code to extract"]
 
-        # Extraer las líneas
+        # Extract the lines
         extracted_lines = lines[extract_start:extract_end]
         if not any(line.strip() for line in extracted_lines):
             return code, "", ["No code to extract"]
 
-        # Obtener indentación
+        # Detect indentation
         indent = "    "
         for line in extracted_lines:
             if line.strip():
                 indent = " " * (len(line) - len(line.lstrip()))
                 break
 
-        # Detectar si usa DeltaTime
+        # Detect if the body uses DeltaTime
         uses_delta = any("DeltaTime" in line for line in extracted_lines)
         call_params = "DeltaTime" if uses_delta else ""
         func_params = "float DeltaTime" if uses_delta else ""
 
-        # Reemplazar con llamada a función nueva
+        # Replace with a call to the new function
         new_call = f"{indent}{new_func_name}({call_params});"
 
-        # Construir nuevo código
+        # Build the new code
         new_lines = lines[:extract_start]
         new_lines.append(new_call)
         new_lines.extend(lines[extract_end:])
 
-        # Generar función extraída
+        # Generate the extracted function
         extracted_code = "\n".join(extracted_lines)
         additions = f"""
 // Add to .h file:

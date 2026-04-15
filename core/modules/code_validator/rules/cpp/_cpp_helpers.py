@@ -1,4 +1,4 @@
-# core/modules/code_validator/rules/_cpp_helpers.py
+# core/modules/code_validator/rules/cpp/_cpp_helpers.py
 #
 # Shared helper functions and constants for C++ rules.
 # This module provides common utilities for C++ file analysis and validation

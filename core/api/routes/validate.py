@@ -24,7 +24,7 @@ from code_validator.parsers.fix_patterns import RULE_TO_PATTERN  # noqa: E402
 from code_validator.rules.blueprint_rules import (  # noqa: E402
     run_all_blueprint_rules_from_export,
 )
-from code_validator.rules.ue5_cpp_rules import run_all_cpp_rules  # noqa: E402
+from code_validator.rules.cpp.ue5_cpp_rules import run_all_cpp_rules  # noqa: E402
 
 router = APIRouter()
 

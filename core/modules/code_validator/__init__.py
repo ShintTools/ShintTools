@@ -20,7 +20,8 @@ from code_validator.rules.blueprint_rules import (
     run_all_blueprint_rules,
     run_all_blueprint_rules_from_export,
 )
-from code_validator.rules.ue5_cpp_rules import run_all_cpp_rules
+
+from core.modules.code_validator.rules.cpp.ue5_cpp_rules import run_all_cpp_rules
 
 
 def analyse(file_path: str, content: str) -> list[dict]:
