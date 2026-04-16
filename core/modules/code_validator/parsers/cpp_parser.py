@@ -34,9 +34,26 @@ class CppParser:
     """Parses C++ code using Tree-sitter."""
 
     def __init__(self) -> None:
-        """Initialize the parser."""
-        cpp_language = Language(tscpp.language())
-        self.parser = Parser(cpp_language)
+        """Initialize the parser.
+
+        Handles both tree-sitter API versions:
+          - 0.22+: Language(ptr), Parser(language)
+          - 0.21.x: Language(ptr, name), Parser() + set_language()
+        """
+        try:
+            # tree-sitter >= 0.22
+            cpp_language = Language(tscpp.language())  # type: ignore[call-arg]
+        except TypeError:
+            # tree-sitter 0.21.x requires the name argument
+            cpp_language = Language(tscpp.language(), "cpp")  # type: ignore[call-arg]
+
+        try:
+            # tree-sitter >= 0.22
+            self.parser = Parser(cpp_language)  # type: ignore[call-arg]
+        except TypeError:
+            # tree-sitter 0.21.x: no-arg constructor + set_language
+            self.parser = Parser()  # type: ignore[call-arg]
+            self.parser.set_language(cpp_language)
 
     def parse(self, code: str) -> Node:
         """Parse code and return the root node."""

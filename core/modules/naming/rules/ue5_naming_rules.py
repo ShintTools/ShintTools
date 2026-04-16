@@ -80,46 +80,105 @@ _TYPE_TO_EXPECTED_FOLDER: Dict[str, str] = {
 # TYPE_TO_CATEGORY
 #
 # Maps UE5 asset_type → Dashboard filter category.
-# The Dashboard exposes 6 filterable categories for naming issues:
-#   Widgets, Data, Materials, Textures, Audio, VFX
-# Any asset_type that does not fit these is tagged "Other".
+# The Dashboard exposes 8 filterable categories for naming issues:
+#   Textures, Meshes, Materials, Blueprints, Widgets, Audio, VFX, Data
+#
+# Every known UE5 asset type is forced into one of these 8 — there is
+# no "Other" bucket. Types that don't fit naturally (Animations,
+# Physics, LevelSequence) are routed to the category that best
+# matches their usage:
+#   - Animations (AnimSequence, AnimMontage, BlendSpace, …)
+#     → Meshes   (skeletal-mesh bound, cannot exist without one)
+#   - PhysicsAsset
+#     → Meshes   (physics body for a mesh)
+#   - PhysicalMaterial
+#     → Materials (defines physics surface properties — is a material)
+#   - LevelSequence
+#     → Data     (timeline definition, behaves like configuration data)
 # ---------------------------------------------------------------------------
 
 _TYPE_TO_CATEGORY: Dict[str, str] = {
-    # Widgets
-    "WidgetBlueprint": "Widgets",
-    # Data
-    "DataTable": "Data",
-    "DataAsset": "Data",
-    "CurveFloat": "Data",
-    "CurveVector": "Data",
-    "CurveLinearColor": "Data",
-    "UserDefinedEnum": "Data",
-    "UserDefinedStruct": "Data",
-    # Materials
+    # ── Textures ──────────────────────────────────────
+    "Texture2D": "Textures",
+    "Texture": "Textures",
+    "TextureCube": "Textures",
+    "RenderTarget": "Textures",
+    "TextureRenderTarget2D": "Textures",
+    "TextureRenderTargetCube": "Textures",
+    "MediaTexture": "Textures",
+    # ── Meshes ────────────────────────────────────────
+    "StaticMesh": "Meshes",
+    "SkeletalMesh": "Meshes",
+    "Skeleton": "Meshes",
+    "DestructibleMesh": "Meshes",
+    # Animations are skeletal-mesh bound → grouped with Meshes
+    "AnimSequence": "Meshes",
+    "AnimMontage": "Meshes",
+    "BlendSpace": "Meshes",
+    "BlendSpace1D": "Meshes",
+    "AimOffsetBlendSpace": "Meshes",
+    "AimOffsetBlendSpace1D": "Meshes",
+    "AnimComposite": "Meshes",
+    "PoseAsset": "Meshes",
+    # PhysicsAsset is a physics body attached to a mesh → Meshes
+    "PhysicsAsset": "Meshes",
+    # ── Materials ─────────────────────────────────────
     "Material": "Materials",
     "MaterialInstance": "Materials",
     "MaterialInstanceConstant": "Materials",
+    "MaterialInstanceDynamic": "Materials",
     "MaterialFunction": "Materials",
+    "MaterialFunctionInstance": "Materials",
     "MaterialParameterCollection": "Materials",
-    # Textures
-    "Texture2D": "Textures",
-    "RenderTarget": "Textures",
-    "TextureRenderTarget2D": "Textures",
-    "TextureCube": "Textures",
-    # Audio
+    "SubsurfaceProfile": "Materials",
+    # PhysicalMaterial defines surface physics properties → Materials
+    "PhysicalMaterial": "Materials",
+    # ── Blueprints ────────────────────────────────────
+    "Blueprint": "Blueprints",
+    "AnimBlueprint": "Blueprints",
+    "BlueprintInterface": "Blueprints",
+    "BlueprintGeneratedClass": "Blueprints",
+    "BlueprintMacroLibrary": "Blueprints",
+    "BlueprintFunctionLibrary": "Blueprints",
+    # ── Widgets ───────────────────────────────────────
+    "WidgetBlueprint": "Widgets",
+    "WidgetBlueprintGeneratedClass": "Widgets",
+    # ── Audio ─────────────────────────────────────────
     "SoundCue": "Audio",
     "SoundWave": "Audio",
     "SoundClass": "Audio",
     "SoundMix": "Audio",
     "SoundAttenuation": "Audio",
-    # VFX
+    "SoundConcurrency": "Audio",
+    "MetaSoundSource": "Audio",
+    "MetaSoundPatch": "Audio",
+    "DialogueVoice": "Audio",
+    "DialogueWave": "Audio",
+    # ── VFX ───────────────────────────────────────────
     "ParticleSystem": "VFX",
     "NiagaraSystem": "VFX",
     "NiagaraEmitter": "VFX",
+    "NiagaraScript": "VFX",
+    # ── Data ──────────────────────────────────────────
+    "DataTable": "Data",
+    "DataAsset": "Data",
+    "PrimaryDataAsset": "Data",
+    "CurveFloat": "Data",
+    "CurveVector": "Data",
+    "CurveLinearColor": "Data",
+    "UserDefinedEnum": "Data",
+    "UserDefinedStruct": "Data",
+    "CompositeDataTable": "Data",
+    "StringTable": "Data",
+    # LevelSequence is a timeline/config asset → Data
+    "LevelSequence": "Data",
 }
 
-_CATEGORY_FALLBACK: str = "Other"
+# Final fallback when neither the asset_type nor the folder path
+# resolve to a known category. Data is chosen because it's the most
+# "meta" bucket (definitions, tables, configuration) and least
+# likely to mask a real issue belonging to another category.
+_CATEGORY_FALLBACK: str = "Data"
 
 # ---------------------------------------------------------------------------
 # Folder-segment → Dashboard category mapping.
@@ -130,72 +189,139 @@ _CATEGORY_FALLBACK: str = "Other"
 # ---------------------------------------------------------------------------
 
 _FOLDER_TO_CATEGORY: Dict[str, str] = {
-    # Widgets
+    # ── Textures ──────────────────────────────────────
+    "textures": "Textures",
+    "texture": "Textures",
+    "tex": "Textures",
+    "rendertargets": "Textures",
+    "rendertarget": "Textures",
+    "cubemaps": "Textures",
+    "cubemap": "Textures",
+    # ── Meshes ────────────────────────────────────────
+    "meshes": "Meshes",
+    "mesh": "Meshes",
+    "staticmeshes": "Meshes",
+    "staticmesh": "Meshes",
+    "skeletalmeshes": "Meshes",
+    "skeletalmesh": "Meshes",
+    "characters": "Meshes",
+    "character": "Meshes",
+    "props": "Meshes",
+    "environment": "Meshes",
+    "environments": "Meshes",
+    "skeletons": "Meshes",
+    "skeleton": "Meshes",
+    # Animations — mesh-bound, grouped with Meshes
+    "animations": "Meshes",
+    "animation": "Meshes",
+    "anim": "Meshes",
+    "anims": "Meshes",
+    "montages": "Meshes",
+    "blendspaces": "Meshes",
+    "poses": "Meshes",
+    # Physics — PhysicsAsset is mesh-bound, grouped with Meshes
+    "physics": "Meshes",
+    # ── Materials ─────────────────────────────────────
+    "materials": "Materials",
+    "material": "Materials",
+    "mat": "Materials",
+    "mats": "Materials",
+    "materialinstances": "Materials",
+    "materialinstance": "Materials",
+    "matinst": "Materials",
+    "materialfunctions": "Materials",
+    "materialfunction": "Materials",
+    "shaders": "Materials",
+    "shader": "Materials",
+    "physicsmaterials": "Materials",
+    "physicalmaterials": "Materials",
+    # ── Blueprints ────────────────────────────────────
+    "blueprints": "Blueprints",
+    "blueprint": "Blueprints",
+    "bp": "Blueprints",
+    "bps": "Blueprints",
+    "animblueprints": "Blueprints",
+    "animblueprint": "Blueprints",
+    "abp": "Blueprints",
+    "actors": "Blueprints",
+    "actor": "Blueprints",
+    "pawns": "Blueprints",
+    "pawn": "Blueprints",
+    "controllers": "Blueprints",
+    "interfaces": "Blueprints",
+    "macros": "Blueprints",
+    # ── Widgets ───────────────────────────────────────
     "widgets": "Widgets",
     "widget": "Widgets",
+    "wbp": "Widgets",
     "ui": "Widgets",
     "hud": "Widgets",
     "menus": "Widgets",
-    # Data
+    "menu": "Widgets",
+    # ── Audio ─────────────────────────────────────────
+    "audio": "Audio",
+    "sounds": "Audio",
+    "sound": "Audio",
+    "soundwaves": "Audio",
+    "soundcues": "Audio",
+    "music": "Audio",
+    "sfx": "Audio",
+    "voice": "Audio",
+    "dialogue": "Audio",
+    "metasounds": "Audio",
+    # ── VFX ───────────────────────────────────────────
+    "vfx": "VFX",
+    "particles": "VFX",
+    "particle": "VFX",
+    "niagara": "VFX",
+    "effects": "VFX",
+    "fx": "VFX",
+    # ── Data ──────────────────────────────────────────
     "data": "Data",
     "datatables": "Data",
     "datatable": "Data",
     "dataassets": "Data",
     "dataasset": "Data",
     "curves": "Data",
+    "curve": "Data",
     "enums": "Data",
+    "enum": "Data",
     "structs": "Data",
-    # Materials
-    "materials": "Materials",
-    "material": "Materials",
-    "materialinstances": "Materials",
-    "matinst": "Materials",
-    "materialfunctions": "Materials",
-    # Textures
-    "textures": "Textures",
-    "texture": "Textures",
-    "rendertargets": "Textures",
-    "cubemaps": "Textures",
-    # Audio
-    "audio": "Audio",
-    "sounds": "Audio",
-    "sound": "Audio",
-    "soundwaves": "Audio",
-    "music": "Audio",
-    "sfx": "Audio",
-    # VFX
-    "vfx": "VFX",
-    "particles": "VFX",
-    "particle": "VFX",
-    "niagara": "VFX",
-    "effects": "VFX",
+    "struct": "Data",
+    "sequences": "Data",
+    "cinematics": "Data",
+    "stringtables": "Data",
+    "configs": "Data",
+    "config": "Data",
 }
 
 
-def _category_for_type(asset_type: str) -> str:
+def _category_for_type(asset_type: str) -> Optional[str]:
     """Return the Dashboard filter category for a UE5 asset type.
 
-    Falls back to ``"Other"`` when the type is empty, unknown, or does
-    not belong to one of the 6 filterable categories.
+    Returns ``None`` when the type is empty or not mapped, so the caller
+    can fall through to path-based inference. The final fallback is
+    applied by :func:`_resolve_category`, never here.
     """
     if not asset_type:
-        return _CATEGORY_FALLBACK
-    return _TYPE_TO_CATEGORY.get(asset_type, _CATEGORY_FALLBACK)
+        return None
+    return _TYPE_TO_CATEGORY.get(asset_type)
 
 
-def _category_from_path(asset_path: str) -> str:
+def _category_from_path(asset_path: str) -> Optional[str]:
     """Return the Dashboard filter category inferred from the folder path.
 
-    Walks the path segments (case-insensitive) and returns the category of
-    the first matching folder segment. Returns ``"Other"`` if no segment
-    matches any known folder keyword.
+    Walks the path segments (case-insensitive) and returns the category
+    of the first matching folder segment (deepest first). Returns
+    ``None`` if no segment matches — the final fallback is applied by
+    :func:`_resolve_category`.
 
     Example:
         "/Game/Environment/Textures/Rocks/bad_name"
         → "Textures"  (matched segment "Textures")
     """
     if not asset_path:
-        return _CATEGORY_FALLBACK
+        return None
     # Split on both Unix and Windows separators; drop empties.
     segments = [seg for seg in re.split(r"[\\/]+", asset_path) if seg]
     # Walk from deepest to root so the closest folder wins.
@@ -203,7 +329,7 @@ def _category_from_path(asset_path: str) -> str:
         category = _FOLDER_TO_CATEGORY.get(segment.lower())
         if category is not None:
             return category
-    return _CATEGORY_FALLBACK
+    return None
 
 
 def _resolve_category(asset_type: str, asset_path: str) -> str:
@@ -212,12 +338,18 @@ def _resolve_category(asset_type: str, asset_path: str) -> str:
     Priority:
         1. If ``asset_type`` maps to a known category → use it.
         2. Otherwise, infer from folder segments in ``asset_path``.
-        3. Otherwise, ``"Other"``.
+        3. Otherwise, ``_CATEGORY_FALLBACK`` (currently ``"Data"``).
+
+    This function **never** returns ``"Other"`` — every asset is
+    guaranteed to land in one of the 8 Dashboard categories.
     """
     category = _category_for_type(asset_type)
-    if category != _CATEGORY_FALLBACK:
+    if category is not None:
         return category
-    return _category_from_path(asset_path)
+    category = _category_from_path(asset_path)
+    if category is not None:
+        return category
+    return _CATEGORY_FALLBACK
 
 
 # ---------------------------------------------------------------------------

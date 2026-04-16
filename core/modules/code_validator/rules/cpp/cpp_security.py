@@ -20,7 +20,7 @@
 import re
 from typing import List
 
-from code_validator.rules._cpp_helpers import (
+from code_validator.rules.cpp._cpp_helpers import (
     Issue,
     _char_pos_for_line,
     _code_part,
@@ -387,16 +387,27 @@ def detect_array_no_bounds_check(
         if stripped.startswith("//"):
             continue
 
-        # Match: ArrayVar[SomeVariable] — skip numeric literals
+        # Match: ArrayVar[<any non-empty expression>]
+        # Captures identifiers, arithmetic (i+1), and calls
+        # (GetIndex()). Skips numeric literals and string keys.
         access_match = re.search(
-            r"\b(\w+)\s*\[\s*([A-Za-z_]\w*)\s*\]",
+            r"\b(\w+)\s*\[\s*([^\]\n]+?)\s*\]",
             source_line,
         )
         if not access_match:
             continue
 
         array_name = access_match.group(1)
-        index_var = access_match.group(2)
+        index_expr = access_match.group(2).strip()
+
+        # Skip pure numeric literals — those are compile-time
+        # constants and the dev knows what they're doing.
+        if re.fullmatch(r"\d+", index_expr):
+            continue
+
+        # Skip string keys (TMap lookups, not TArray access).
+        if index_expr.startswith('"') or index_expr.startswith("'"):
+            continue
 
         # Skip C/C++ keywords and common non-array identifiers
         _SKIP_ARRAYS = {
@@ -413,13 +424,14 @@ def detect_array_no_bounds_check(
             continue
 
         # Loop variables are safe ONLY if the enclosing for-loop
-        # uses .Num() of the same array as its bound.
+        # uses .Num() of the same array as its bound. Only applies
+        # when the index is a bare loop variable, not an expression.
         _LOOP_VARS = {"i", "j", "k", "idx", "Index"}
-        if index_var in _LOOP_VARS:
+        if index_expr in _LOOP_VARS:
             start = max(0, line_no - 1 - _LOOKBACK)
             preceding = " ".join(source_lines[start : line_no - 1])
             safe_loop = re.search(
-                rf"for\s*\(.*{re.escape(index_var)}\s*"
+                rf"for\s*\(.*{re.escape(index_expr)}\s*"
                 rf".*{re.escape(array_name)}\s*\.\s*Num\(\)",
                 preceding,
             )
@@ -435,15 +447,15 @@ def detect_array_no_bounds_check(
 
         has_check = re.search(
             rf"\b{re.escape(array_name)}\s*\.\s*IsValidIndex\s*"
-            rf"\(\s*{re.escape(index_var)}",
+            rf"\(\s*{re.escape(index_expr)}",
             preceding_plus,
         )
         if has_check:
             continue
 
-        # Also accept: if (index_var < Array.Num())
+        # Also accept: if (index_expr < Array.Num())
         has_num_guard = re.search(
-            rf"\b{re.escape(index_var)}\s*<\s*"
+            rf"{re.escape(index_expr)}\s*<\s*"
             rf"{re.escape(array_name)}\s*\.\s*Num\(\)",
             preceding_plus,
         )
@@ -463,7 +475,7 @@ def detect_array_no_bounds_check(
                 "category": "Security",
                 "message": (
                     f"TArray '{array_name}' accessed at "
-                    f"index '{index_var}' without "
+                    f"index '{index_expr}' without "
                     "IsValidIndex() check — will crash "
                     "if index is out of bounds."
                 ),

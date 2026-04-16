@@ -1,4 +1,4 @@
-# core/modules/code_validator/rules/ue5_cpp_rules.py
+# core/modules/code_validator/rules/cpp/ue5_cpp_rules.py
 #
 # Thin runner that imports all C++ rules from category modules
 # and exposes run_all_cpp_rules() as the single entry point.
@@ -14,7 +14,7 @@
 
 from typing import List
 
-from code_validator.rules._cpp_helpers import RULE_TO_PATTERN, Issue, _fixer
+from code_validator.rules.cpp._cpp_helpers import RULE_TO_PATTERN, Issue, _fixer
 
 # ── Best Practices (CB) ──────────────────────────────
 from code_validator.rules.cpp.cpp_best_practices import (  # noqa: E402
@@ -202,6 +202,13 @@ def run_all_cpp_rules(
 
         # Compute context_after using the fixer so the plugin
         # shows actual corrected code, not description text.
+        #
+        # Fallback chain:
+        #   1. Try the rule's real fix pattern.
+        #   2. If it returns unchanged code (edge case the fixer
+        #      can't handle), fall back to mark_for_review so the
+        #      AFTER panel shows a [SHINTTOOLS REVIEW] marker
+        #      instead of being empty.
         after_context = ""
         rule_id = issue.get("rule_id", "")
         if (
@@ -209,18 +216,36 @@ def run_all_cpp_rules(
             and issue.get("is_auto_fixable")
             and rule_id in RULE_TO_PATTERN
         ):
+            fixed_code = content
             try:
                 fixed_code, _, _ = _fixer.fix(rule_id, content, line_no)
-                if fixed_code != content:
-                    fixed_lines = fixed_code.splitlines()
-                    # Allow extra lines for multi-line fixes
-                    f_end = min(
-                        len(fixed_lines),
-                        start + len(window) + 4,
-                    )
-                    after_context = "\n".join(fixed_lines[start:f_end])
             except Exception:
-                pass  # fixer failed — AFTER panel empty
+                fixed_code = content  # fall through to fallback
+
+            # Fallback: fixer couldn't transform the line — mark
+            # it for manual review so the AFTER panel isn't empty.
+            if fixed_code == content:
+                try:
+                    reason = issue.get(
+                        "fix_suggestion",
+                        "Manual review required",
+                    )
+                    fixed_code, _, _ = _fixer._apply_mark_for_review(
+                        content,
+                        line_no,
+                        reason,
+                    )
+                except Exception:
+                    fixed_code = content
+
+            if fixed_code != content:
+                fixed_lines = fixed_code.splitlines()
+                # Allow extra lines for multi-line fixes
+                f_end = min(
+                    len(fixed_lines),
+                    start + len(window) + 4,
+                )
+                after_context = "\n".join(fixed_lines[start:f_end])
         issue["context_after"] = after_context
 
     return issues
