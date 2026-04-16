@@ -65,7 +65,7 @@ PATTERNS = {
 #   - Real auto-fix: client sees before/after diff
 #   - mark_for_review: only when NO safe transformation exists
 #
-# Total: 73 rules
+# Total: 70 rules
 #   - CP014 discarded (requires cross-file refactor — caching FText
 #     in a class member). No safe mechanical transformation.
 #   - CP015 reintroduced with wrap_shipping_guard (was move_to_beginplay,
@@ -155,7 +155,7 @@ RULE_TO_PATTERN = {
     "CM008": ("replace_destructor_default", None),
     # ==========================================================
     # TRUE mark_for_review — NO safe automatic transformation
-    # Only 6 rules: structural refactors or need semantic analysis
+    # Only 7 rules: structural refactors or need semantic analysis
     # ==========================================================
     "CB010": ("mark_for_review", "Magic number - extract to named constant"),
     "CB014": ("mark_for_review", "Hardcoded path - use FPaths or config"),
