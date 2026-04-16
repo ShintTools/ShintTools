@@ -33,7 +33,12 @@ __all__ = [
     "_is_fixable",
 ]
 
-_fixer: "CppFixer | None" = CppFixer() if CppFixer is not None else None
+try:
+    _fixer: "CppFixer | None" = CppFixer() if CppFixer is not None else None
+except Exception:
+    # tree-sitter runtime init can fail (version mismatch, missing lib, etc.)
+    # Rules still work without the fixer — auto-fix just won't be available.
+    _fixer = None
 
 # Type alias for issue dictionary
 Issue = Dict
