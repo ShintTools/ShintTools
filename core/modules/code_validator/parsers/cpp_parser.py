@@ -35,8 +35,8 @@ class CppParser:
 
     def __init__(self) -> None:
         """Initialize the parser."""
-        cpp_language = Language(tscpp.language())
-        self.parser = Parser(cpp_language)
+        cpp_language = Language(tscpp.language())  # type: ignore[call-arg]
+        self.parser = Parser(cpp_language)  # type: ignore[call-arg]
 
     def parse(self, code: str) -> Node:
         """Parse code and return the root node."""
