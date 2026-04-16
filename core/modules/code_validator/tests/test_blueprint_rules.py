@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from core.modules.code_validator.rules.cpp.ue5_cpp_rules import (
+from code_validator.rules.cpp.ue5_cpp_rules import (
     detect_find_object_in_tick,
     detect_get_component_in_tick,
     detect_infinite_loop,

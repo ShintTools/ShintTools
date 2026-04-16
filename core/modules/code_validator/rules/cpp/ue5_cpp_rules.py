@@ -14,6 +14,8 @@
 
 from typing import List
 
+from code_validator.rules.cpp._cpp_helpers import RULE_TO_PATTERN, Issue, _fixer
+
 # ── Best Practices (CB) ──────────────────────────────
 from code_validator.rules.cpp.cpp_best_practices import (  # noqa: E402
     detect_auto_without_obvious_type,
@@ -92,12 +94,6 @@ from code_validator.rules.cpp.cpp_security import (  # noqa: E402
     detect_overlap_actor_no_check,
     detect_spawnactor_no_check,
     detect_weak_ptr_no_check,
-)
-
-from core.modules.code_validator.rules.cpp._cpp_helpers import (
-    RULE_TO_PATTERN,
-    Issue,
-    _fixer,
 )
 
 # ── RUNNER ────────────────────────────────────────────
