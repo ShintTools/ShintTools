@@ -4,11 +4,11 @@
 # and exposes run_all_cpp_rules() as the single entry point.
 #
 # Rule modules:
-#   cpp/cpp_performance.py       — CP001-CP016  (15 rules)
-#   cpp/cpp_best_practices.py    — CB001-CB032  (31 rules)
-#   cpp/cpp_security.py          — CS001-CS012  (10 rules)
+#   cpp/cpp_performance.py       — CP001-CP017  (16 rules)
+#   cpp/cpp_best_practices.py    — CB001-CB035  (34 rules)
+#   cpp/cpp_security.py          — CS001-CS015  (13 rules)
 #   cpp/cpp_maintainability.py   — CM001-CM008  (8 rules)
-# Total: 64 rules
+# Total: 71 rules
 #
 # Shared helpers live in _cpp_helpers.py
 
@@ -34,6 +34,7 @@ from code_validator.rules.cpp.cpp_best_practices import (  # noqa: E402
     detect_magic_numbers,
     detect_missing_override,
     detect_missing_super_beginplay,
+    detect_missing_super_endplay,
     detect_non_virtual_destructor,
     detect_nullptr_deref,
     detect_printf,
@@ -41,6 +42,7 @@ from code_validator.rules.cpp.cpp_best_practices import (  # noqa: E402
     detect_raw_c_array,
     detect_raw_delete,
     detect_raw_new,
+    detect_raw_pointer_in_uproperty,
     detect_runtime_load,
     detect_stl_usage,
     detect_string_concat_in_loop,
@@ -48,6 +50,7 @@ from code_validator.rules.cpp.cpp_best_practices import (  # noqa: E402
     detect_system_headers,
     detect_timer_lambda_raw_this,
     detect_ufunction_missing_category,
+    detect_uproperty_missing_category,
     detect_uproperty_nullptr,
 )
 
@@ -65,6 +68,7 @@ from code_validator.rules.cpp.cpp_maintainability import (  # noqa: E402
 
 # ── Performance (CP) ─────────────────────────────────
 from code_validator.rules.cpp.cpp_performance import (  # noqa: E402
+    detect_empty_tick_override,
     detect_ensure_in_tick,
     detect_find_object_in_tick,
     detect_forceinline_large_function,
@@ -87,11 +91,14 @@ from code_validator.rules.cpp.cpp_security import (  # noqa: E402
     detect_array_no_bounds_check,
     detect_cast_no_check,
     detect_division_no_zero_check,
+    detect_game_instance_no_check,
     detect_getowner_no_check,
     detect_getworld_no_check,
     detect_hardcoded_secret,
     detect_http_insecure,
     detect_overlap_actor_no_check,
+    detect_player_controller_no_check,
+    detect_player_state_no_check,
     detect_spawnactor_no_check,
     detect_weak_ptr_no_check,
 )
@@ -107,9 +114,9 @@ def run_all_cpp_rules(
     Runs all deterministic C++ rules against the given
     file content and returns a merged list of issues.
 
-    Performance (CP):      CP001-CP016  (15 rules)
-    Best Practices (CB):   CB001-CB032  (31 rules)
-    Security (CS):         CS001-CS012  (10 rules)
+    Performance (CP):      CP001-CP017  (16 rules)
+    Best Practices (CB):   CB001-CB035  (34 rules)
+    Security (CS):         CS001-CS015  (13 rules)
     Maintainability (CM):  CM001-CM008  (8 rules)
     """
     issues: List[Issue] = []
@@ -130,6 +137,7 @@ def run_all_cpp_rules(
     issues += detect_new_object_in_loop(content, file_path)
     issues += detect_ensure_in_tick(content, file_path)
     issues += detect_garbage_collect_call(content, file_path)
+    issues += detect_empty_tick_override(content, file_path)
 
     # Best Practices
     issues += detect_infinite_loop(content, file_path)
@@ -163,6 +171,9 @@ def run_all_cpp_rules(
     issues += detect_string_literal_no_text_macro(content, file_path)
     issues += detect_blueprint_pure_side_effects(content, file_path)
     issues += detect_const_ref_uproperty(content, file_path)
+    issues += detect_missing_super_endplay(content, file_path)
+    issues += detect_raw_pointer_in_uproperty(content, file_path)
+    issues += detect_uproperty_missing_category(content, file_path)
 
     # Security
     issues += detect_getworld_no_check(content, file_path)
@@ -175,6 +186,9 @@ def run_all_cpp_rules(
     issues += detect_weak_ptr_no_check(content, file_path)
     issues += detect_http_insecure(content, file_path)
     issues += detect_hardcoded_secret(content, file_path)
+    issues += detect_player_controller_no_check(content, file_path)
+    issues += detect_game_instance_no_check(content, file_path)
+    issues += detect_player_state_no_check(content, file_path)
 
     # Maintainability
     issues += detect_debug_message(content, file_path)

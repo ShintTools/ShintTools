@@ -25,6 +25,9 @@ PATTERNS = {
             "OtherActor": ("AActor*", "OtherActor"),
             "WeakPtr": ("auto", "StrongPtr"),
             "->": ("auto", "Ptr"),
+            "GetPlayerController()": ("APlayerController*", "PC"),
+            "GetGameInstance()": ("UGameInstance*", "GI"),
+            "GetPlayerState()": ("auto", "PS"),
         },
     },
     # Delete the entire line
@@ -65,18 +68,25 @@ PATTERNS = {
 #   - Real auto-fix: client sees before/after diff
 #   - mark_for_review: only when NO safe transformation exists
 #
-# Total: 70 rules
+# Total: 77 rules
 #   - CP014 discarded (requires cross-file refactor — caching FText
 #     in a class member). No safe mechanical transformation.
 #   - CP015 reintroduced with wrap_shipping_guard (was move_to_beginplay,
 #     which made no semantic sense for ensure()).
 #   - CB026, CB028, CB029 reintroduced from the old discarded list
 #     now that Tree-sitter + safe defaults make them auto-fixable.
+#   - CS013, CS014, CS015 added (null-check for GetPlayerController,
+#     GetGameInstance, GetPlayerState).
+#   - CB033 added (Super::EndPlay missing — analogue of CB024).
+#   - CB034 added (raw pointer in UPROPERTY → TObjectPtr<T>).
+#   - CB035 added (UPROPERTY EditAnywhere without Category).
+#   - CP017 added (empty Tick override).
+#   - CB017 promoted from mark_for_review to insert_uproperty.
 # ================================================================
 
 RULE_TO_PATTERN = {
     # ==========================================================
-    # Performance (CP) — 15 rules with real auto-fix (CP014 discarded)
+    # Performance (CP) — 16 rules with real auto-fix (CP014 discarded)
     # ==========================================================
     "CP001": ("move_to_beginplay", "FindObjectOfType"),
     "CP002": ("move_to_beginplay", "GetComponent"),
@@ -96,6 +106,8 @@ RULE_TO_PATTERN = {
     # CP015: ensure() in Tick → wrap in #if !UE_BUILD_SHIPPING
     "CP015": ("wrap_shipping_guard", None),
     "CP016": ("delete_line", "CollectGarbage"),
+    # CP017: Empty Tick → comment out (actor should disable tick)
+    "CP017": ("comment_line", None),
     # ==========================================================
     # Best Practices (CB) — real auto-fix patterns
     # ==========================================================
@@ -131,6 +143,12 @@ RULE_TO_PATTERN = {
     "CB029": ("wrap_shipping_guard", None),
     "CB031": ("add_const_qualifier", None),  # Add const to BlueprintPure
     "CB032": ("remove_const_ref", None),  # Remove const& from UPROPERTY
+    # CB033: EndPlay without Super call → insert Super::EndPlay()
+    "CB033": ("insert_endplay_super", None),
+    # CB034: Raw pointer in UPROPERTY → TObjectPtr<T>
+    "CB034": ("replace_raw_ptr_tobjectptr", None),
+    # CB035: UPROPERTY EditAnywhere without Category → add Category
+    "CB035": ("add_uproperty_category", None),
     # ==========================================================
     # Security (CS) — real auto-fix patterns
     # ==========================================================
@@ -145,6 +163,9 @@ RULE_TO_PATTERN = {
     "CS004": ("add_zero_check", None),  # Division -> ternary zero check
     "CS005": ("add_bounds_check", None),  # Array[] -> IsValidIndex() guard
     "CS012": ("comment_line", None),  # Hardcoded secret -> comment out
+    "CS013": ("null_check", "GetPlayerController()"),
+    "CS014": ("null_check", "GetGameInstance()"),
+    "CS015": ("null_check", "GetPlayerState()"),
     # ==========================================================
     # Maintainability (CM) — real auto-fix patterns
     # ==========================================================
@@ -155,15 +176,12 @@ RULE_TO_PATTERN = {
     "CM008": ("replace_destructor_default", None),
     # ==========================================================
     # TRUE mark_for_review — NO safe automatic transformation
-    # Only 7 rules: structural refactors or need semantic analysis
+    # Only 6 rules: structural refactors or need semantic analysis
     # ==========================================================
     "CB010": ("mark_for_review", "Magic number - extract to named constant"),
     "CB014": ("mark_for_review", "Hardcoded path - use FPaths or config"),
     "CB015": ("mark_for_review", "auto without obvious type - needs Clang AST"),
-    "CB017": (
-        "mark_for_review",
-        "Public member without UPROPERTY - needs specifier choice",
-    ),
+    "CB017": ("insert_uproperty", None),  # Insert bare UPROPERTY() above member
     "CM004": ("mark_for_review", "File too long - structural refactor needed"),
     "CM005": ("mark_for_review", "Too many parameters - structural refactor needed"),
     "CM006": ("mark_for_review", "Deep nesting - consider extracting functions"),

@@ -20,7 +20,8 @@
 #   CP013  NewObject called inside loop
 #   CP015  ensure() inside Tick/Update
 #   CP016  Manual CollectGarbage call
-# Total: 15 rules
+#   CP017  Empty Tick() override (only calls Super)
+# Total: 16 rules
 
 import re
 from typing import List
@@ -950,6 +951,78 @@ def detect_garbage_collect_call(
                     "snippet": source_line.strip(),
                     "fix_suggestion": "Remove manual CollectGarbage() call",
                     "is_auto_fixable": _is_fixable("CP016"),
+                }
+            )
+
+    return issues
+
+
+# CP017: Empty Tick() override — only calls Super or is empty
+def detect_empty_tick_override(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects Tick() overrides that are empty or only call
+    Super::Tick(DeltaTime) without adding any logic.
+    An empty Tick costs ~0.1ms per actor per frame due to
+    the virtual call overhead and tick registration. If the
+    actor doesn't need per-frame updates, remove the Tick
+    override and set bCanEverTick = false in the constructor.
+    """
+    if not _is_source(file_path):
+        return []
+
+    issues: List[Issue] = []
+
+    # Match Tick implementations with their full body
+    tick_pattern = re.compile(
+        r"void\s+(\w+)::Tick\s*\(\s*float\s+(\w+)\s*\)\s*"
+        r"\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
+        re.DOTALL,
+    )
+
+    for tick_match in tick_pattern.finditer(content):
+        class_name = tick_match.group(1)
+        param_name = tick_match.group(2)
+        body = tick_match.group(3).strip()
+
+        # Strip comments from the body for analysis
+        body_no_comments = re.sub(r"//[^\n]*", "", body).strip()
+        body_no_comments = re.sub(
+            r"/\*.*?\*/", "", body_no_comments, flags=re.DOTALL
+        ).strip()
+
+        # Empty body
+        is_empty = not body_no_comments
+
+        # Body that only contains Super::Tick(DeltaTime);
+        is_super_only = bool(
+            re.fullmatch(
+                r"Super::Tick\s*\(\s*" + re.escape(param_name) + r"\s*\)\s*;",
+                body_no_comments,
+            )
+        )
+
+        if is_empty or is_super_only:
+            line_no = _get_line_number(content, tick_match.start())
+            issues.append(
+                {
+                    "asset_path": file_path,
+                    "line": line_no,
+                    "class": class_name,
+                    "severity": "warning",
+                    "rule_id": "CP017",
+                    "category": "Performance",
+                    "message": (
+                        f"{class_name}::Tick() is empty or only "
+                        "calls Super — costs ~0.1ms per actor "
+                        "per frame. Remove Tick override and set "
+                        "bCanEverTick = false in the constructor."
+                    ),
+                    "snippet": (f"void {class_name}::Tick(float " f"{param_name})"),
+                    "fix_suggestion": ("Comment out empty Tick override"),
+                    "is_auto_fixable": _is_fixable("CP017"),
                 }
             )
 

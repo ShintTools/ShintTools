@@ -36,6 +36,9 @@
 #   CB030: String literal in UPROPERTY without TEXT()
 #   CB031: BlueprintPure function with side effects
 #   CB032: const reference in UPROPERTY
+#   CB033: EndPlay without Super:: call
+#   CB034: Raw pointer in UPROPERTY (use TObjectPtr)
+#   CB035: UPROPERTY EditAnywhere without Category
 
 import re
 from typing import List
@@ -2033,5 +2036,220 @@ def detect_const_ref_uproperty(
                         "is_auto_fixable": _is_fixable("CB032"),
                     }
                 )
+
+    return issues
+
+
+# CB033: EndPlay without Super::EndPlay() call
+def detect_missing_super_endplay(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects EndPlay implementations that don't call
+    Super::EndPlay(EndPlayReason). Forgetting Super breaks
+    the teardown chain — timers, delegates and component
+    cleanup will not run, causing crashes or leaks.
+    """
+    if not _is_source(file_path):
+        return []
+
+    issues: List[Issue] = []
+
+    # EndPlay signature: void ClassName::EndPlay(const EEndPlayReason::Type X)
+    endplay_pattern = re.compile(
+        r"void\s+(\w+)::EndPlay\s*\("
+        r"[^)]*EEndPlayReason::Type\s+(\w+)"
+        r"[^)]*\)\s*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
+        re.DOTALL,
+    )
+
+    for ep_match in endplay_pattern.finditer(content):
+        class_name = ep_match.group(1)
+        param_name = ep_match.group(2)
+        body = ep_match.group(3)
+
+        if "Super::EndPlay" not in body:
+            line_no = _get_line_number(content, ep_match.start())
+            issues.append(
+                {
+                    "asset_path": file_path,
+                    "line": line_no,
+                    "class": class_name,
+                    "severity": "error",
+                    "rule_id": "CB033",
+                    "category": "Best Practices",
+                    "message": (
+                        f"{class_name}::EndPlay() does not call "
+                        f"Super::EndPlay({param_name}) — this "
+                        "breaks the teardown chain (timers, "
+                        "delegates, component cleanup)."
+                    ),
+                    "snippet": (
+                        f"void {class_name}::EndPlay("
+                        f"const EEndPlayReason::Type "
+                        f"{param_name})"
+                    ),
+                    "fix_suggestion": (f"Add Super::EndPlay({param_name}) call"),
+                    "is_auto_fixable": _is_fixable("CB033"),
+                }
+            )
+
+    return issues
+
+
+# CB034: Raw pointer in UPROPERTY — use TObjectPtr<T> (UE5.1+)
+def detect_raw_pointer_in_uproperty(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects UPROPERTY-decorated members that use raw pointers
+    (e.g. 'AMyActor* Ref') instead of TObjectPtr<T>.
+    Since UE5.1, Epic recommends TObjectPtr for all UPROPERTY
+    raw pointers — it enables lazy loading, access tracking,
+    and future editor tooling. This rule only fires in headers
+    where UPROPERTY is on the preceding line, guaranteeing zero
+    false positives on non-reflected members.
+
+    Skips: TArray<T*>, TMap, TSet (container element pointers
+    are NOT migratable to TObjectPtr), and TSubclassOf/
+    TSoftObjectPtr/TWeakObjectPtr which are already smart refs.
+    """
+    if not _is_header(file_path):
+        return []
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+
+    # Match: UE5ClassName* VarName; (or ClassName* VarName = ...)
+    # Captures the type and variable name. Requires uppercase-start
+    # class name to avoid matching primitive types.
+    _RAW_PTR_RE = re.compile(
+        r"^\s*(?:class\s+)?" r"([A-Z]\w+)\s*\*\s+(\w+)" r"\s*(?:=\s*[^;]*)?;"
+    )
+
+    # Types that are already smart references — skip
+    _SMART_REFS = {
+        "TObjectPtr",
+        "TSubclassOf",
+        "TSoftObjectPtr",
+        "TSoftClassPtr",
+        "TWeakObjectPtr",
+        "TSharedPtr",
+        "TUniquePtr",
+    }
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        stripped = source_line.strip()
+        if stripped.startswith("//"):
+            continue
+
+        # Only fire when UPROPERTY is on the preceding non-empty line
+        prev_line = ""
+        for prev_idx in range(line_no - 2, max(line_no - 4, -1), -1):
+            prev_stripped = source_lines[prev_idx].strip()
+            if prev_stripped:
+                prev_line = prev_stripped
+                break
+
+        if not prev_line.startswith("UPROPERTY"):
+            continue
+
+        # Skip lines that already use smart references
+        if any(smart in stripped for smart in _SMART_REFS):
+            continue
+
+        # Skip container element pointers (TArray<T*>, TMap, TSet)
+        if re.search(r"TArray|TMap|TSet", stripped):
+            continue
+
+        ptr_match = _RAW_PTR_RE.match(source_line)
+        if not ptr_match:
+            continue
+
+        class_type = ptr_match.group(1)
+        var_name = ptr_match.group(2)
+
+        issues.append(
+            {
+                "asset_path": file_path,
+                "line": line_no,
+                "class": _extract_class_name(
+                    content,
+                    _char_pos_for_line(source_lines, line_no),
+                ),
+                "severity": "warning",
+                "rule_id": "CB034",
+                "category": "Best Practices",
+                "message": (
+                    f"UPROPERTY raw pointer '{class_type}* "
+                    f"{var_name}' — use "
+                    f"TObjectPtr<{class_type}> for lazy "
+                    "loading and access tracking (UE5.1+)."
+                ),
+                "snippet": source_line.strip(),
+                "fix_suggestion": (
+                    f"Replace '{class_type}*' with " f"'TObjectPtr<{class_type}>'"
+                ),
+                "is_auto_fixable": _is_fixable("CB034"),
+            }
+        )
+
+    return issues
+
+
+# CB035: UPROPERTY EditAnywhere without Category
+def detect_uproperty_missing_category(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects UPROPERTY with EditAnywhere or EditDefaultsOnly
+    that lacks a Category specifier. Without Category, the
+    property appears under 'Default' in the Details panel,
+    making it hard to organize in complex actors.
+    """
+    if not _is_header(file_path):
+        return []
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        stripped = source_line.strip()
+        if not stripped.startswith("UPROPERTY"):
+            continue
+
+        # Only flag EditAnywhere / EditDefaultsOnly
+        has_edit = "EditAnywhere" in source_line or "EditDefaultsOnly" in source_line
+        if not has_edit:
+            continue
+
+        # Already has Category — skip
+        if "Category" in source_line:
+            continue
+
+        issues.append(
+            {
+                "asset_path": file_path,
+                "line": line_no,
+                "class": _extract_class_name(
+                    content,
+                    _char_pos_for_line(source_lines, line_no),
+                ),
+                "severity": "warning",
+                "rule_id": "CB035",
+                "category": "Best Practices",
+                "message": (
+                    "UPROPERTY with editor-visible specifier "
+                    "but no Category — property will appear "
+                    "under 'Default' in the Details panel."
+                ),
+                "snippet": source_line.strip(),
+                "fix_suggestion": ('Add Category="Default" to UPROPERTY'),
+                "is_auto_fixable": _is_fixable("CB035"),
+            }
+        )
 
     return issues
