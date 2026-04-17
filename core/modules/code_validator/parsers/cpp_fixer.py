@@ -91,6 +91,14 @@ class CppFixer:
             return self._apply_insert_field_default(code, line_number)
         elif pattern_name == "wrap_weak_lambda" and line_number is not None:
             return self._apply_wrap_weak_lambda(code, line_number)
+        elif pattern_name == "insert_endplay_super" and line_number is not None:
+            return self._apply_insert_endplay_super(code, line_number)
+        elif pattern_name == "replace_raw_ptr_tobjectptr" and line_number is not None:
+            return self._apply_replace_raw_ptr_tobjectptr(code, line_number)
+        elif pattern_name == "add_uproperty_category" and line_number is not None:
+            return self._apply_add_uproperty_category(code, line_number)
+        elif pattern_name == "insert_uproperty" and line_number is not None:
+            return self._apply_insert_uproperty(code, line_number)
         elif pattern_name == "mark_for_review" and line_number is not None:
             reason = param if param else "Requires manual review"
             return self._apply_mark_for_review(code, line_number, reason)
@@ -170,8 +178,12 @@ class CppFixer:
         original = lines[idx]
         indent = " " * (len(original) - len(original.lstrip()))
 
-        # --- EXTRACT_CALLABLE: GetWorld(), GetOwner() ---
-        EXTRACT_EXPRESSIONS = {"GetWorld()", "GetOwner()"}
+        # --- EXTRACT_CALLABLE: GetWorld(), GetOwner(), etc. ---
+        EXTRACT_EXPRESSIONS = {
+            "GetWorld()",
+            "GetOwner()",
+            "GetGameInstance()",
+        }
 
         if expression in EXTRACT_EXPRESSIONS:
             config = PATTERNS["null_check"]["expressions"].get(
@@ -196,6 +208,44 @@ class CppFixer:
                 "",
                 [f"Line {line_number}: Added null-check " f"for {expression}"],
             )
+
+        # --- EXTRACT_PARAMETERIZED: GetPlayerController(0),
+        #     GetPlayerState<T>() — calls with args or templates ---
+        _PARAM_CALLS = {
+            "GetPlayerController()": (
+                r"\bGetPlayerController\s*(?:<[^>]*>)?\s*\([^)]*\)",
+                "APlayerController*",
+                "PC",
+            ),
+            "GetPlayerState()": (
+                r"\bGetPlayerState\s*(?:<[^>]*>)?\s*\([^)]*\)",
+                "auto*",
+                "PS",
+            ),
+        }
+        if expression in _PARAM_CALLS:
+            call_re, var_type, var_name = _PARAM_CALLS[expression]
+            call_match = re.search(call_re, original)
+            if call_match:
+                actual_call = call_match.group(0)
+                inner = re.sub(
+                    re.escape(actual_call) + r"\s*->",
+                    f"{var_name}->",
+                    original.strip(),
+                )
+                guard = f"{indent}if ({var_type} {var_name} = " f"{actual_call})"
+                new_lines = [
+                    guard,
+                    f"{indent}{{",
+                    f"{indent}    {inner}",
+                    f"{indent}}}",
+                ]
+                lines[idx : idx + 1] = new_lines
+                return (
+                    "\n".join(lines),
+                    "",
+                    [f"Line {line_number}: Added null-check " f"for {actual_call}"],
+                )
 
         # --- EXTRACT_CAST: Cast<Type>(Arg)->Method() ---
         if expression == "Cast<":
@@ -1258,4 +1308,166 @@ void AMyClass::{new_func_name}({func_params})
                 f"Line {line_number}: Wrapped lambda in "
                 "FTimerDelegate::CreateWeakLambda"
             ],
+        )
+
+    # ── New handlers (2026-04-17) ────────────────────────
+
+    def _apply_insert_endplay_super(
+        self,
+        code: str,
+        line_number: int,
+    ) -> Tuple[str, str, List[str]]:
+        """CB033 — Insert Super::EndPlay(ParamName) after the
+        opening brace of EndPlay().
+
+        Detects the parameter name from the function signature
+        so the call matches exactly (e.g. EndPlayReason).
+        """
+        lines = code.split("\n")
+        idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        # Scan from the reported line to find the EndPlay signature
+        # and extract the parameter name.
+        window = "\n".join(lines[idx : min(idx + 5, len(lines))])
+        sig_match = re.search(
+            r"void\s+\w+::EndPlay\s*\([^)]*" r"EEndPlayReason::Type\s+(\w+)",
+            window,
+        )
+        param_name = sig_match.group(1) if sig_match else "EndPlayReason"
+
+        # Find the opening brace
+        for brace_idx in range(idx, min(idx + 5, len(lines))):
+            if "{" in lines[brace_idx]:
+                indent = " " * (len(lines[brace_idx]) - len(lines[brace_idx].lstrip()))
+                inner_indent = indent + "    "
+                insert_text = f"{inner_indent}Super::EndPlay({param_name});"
+                lines.insert(brace_idx + 1, insert_text)
+                return (
+                    "\n".join(lines),
+                    "",
+                    [
+                        f"Line {brace_idx + 2}: Inserted "
+                        f"Super::EndPlay({param_name})"
+                    ],
+                )
+
+        return code, "", ["Could not find opening brace for EndPlay"]
+
+    def _apply_replace_raw_ptr_tobjectptr(
+        self,
+        code: str,
+        line_number: int,
+    ) -> Tuple[str, str, List[str]]:
+        """CB034 — Replace raw pointer with TObjectPtr<T>.
+
+        'AMyActor* Ref' → 'TObjectPtr<AMyActor> Ref'
+
+        Only operates on the specific reported line to avoid
+        unintended changes elsewhere.
+        """
+        lines = code.split("\n")
+        idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        original = lines[idx]
+
+        # Match: ClassName* VarName (possibly with 'class' prefix)
+        ptr_match = re.search(
+            r"(?:class\s+)?([A-Z]\w+)\s*\*\s+(\w+)",
+            original,
+        )
+        if not ptr_match:
+            return code, "", ["No raw pointer found on line"]
+
+        class_type = ptr_match.group(1)
+        var_name = ptr_match.group(2)
+
+        # Replace 'ClassName* VarName' with 'TObjectPtr<ClassName> VarName'
+        new_line = re.sub(
+            rf"(?:class\s+)?{re.escape(class_type)}\s*\*\s+" rf"{re.escape(var_name)}",
+            f"TObjectPtr<{class_type}> {var_name}",
+            original,
+            count=1,
+        )
+        if new_line == original:
+            return code, "", ["Replacement failed"]
+
+        lines[idx] = new_line
+        return (
+            "\n".join(lines),
+            "",
+            [
+                f"Line {line_number}: {class_type}* {var_name} → "
+                f"TObjectPtr<{class_type}> {var_name}"
+            ],
+        )
+
+    def _apply_add_uproperty_category(
+        self,
+        code: str,
+        line_number: int,
+    ) -> Tuple[str, str, List[str]]:
+        """CB035 — Add Category to UPROPERTY(EditAnywhere).
+
+        UPROPERTY(EditAnywhere) → UPROPERTY(EditAnywhere, Category="Default")
+        Also handles EditDefaultsOnly.
+        """
+        lines = code.split("\n")
+        idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        original = lines[idx]
+        if "Category" in original:
+            return code, "", ["Already has Category"]
+
+        # Insert Category before the closing paren
+        new_line = re.sub(
+            r"(EditAnywhere|EditDefaultsOnly)",
+            r'\1, Category="Default"',
+            original,
+            count=1,
+        )
+        if new_line == original:
+            return code, "", ["No EditAnywhere/EditDefaultsOnly found"]
+
+        lines[idx] = new_line
+        return (
+            "\n".join(lines),
+            "",
+            [f"Line {line_number}: Added Category to UPROPERTY"],
+        )
+
+    def _apply_insert_uproperty(
+        self,
+        code: str,
+        line_number: int,
+    ) -> Tuple[str, str, List[str]]:
+        """CB017 — Insert bare UPROPERTY() above a public member.
+
+        Inserts 'UPROPERTY()' on the line above the member
+        declaration. This enables GC tracking without choosing
+        specific specifiers (EditAnywhere, BlueprintReadWrite, etc.)
+        — the developer can refine them later.
+        """
+        lines = code.split("\n")
+        idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        original = lines[idx]
+        indent = " " * (len(original) - len(original.lstrip()))
+
+        # Check if UPROPERTY is already on the preceding line
+        if idx > 0 and "UPROPERTY" in lines[idx - 1]:
+            return code, "", ["UPROPERTY already present"]
+
+        lines.insert(idx, f"{indent}UPROPERTY()")
+        return (
+            "\n".join(lines),
+            "",
+            [f"Line {line_number}: Inserted UPROPERTY() above member"],
         )

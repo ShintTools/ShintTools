@@ -15,7 +15,10 @@
 #   CS008  TWeakObjectPtr without IsValid()
 #   CS011  HTTP insecure (http:// instead of https://)
 #   CS012  Hardcoded password or API key
-# Total: 10 rules
+#   CS013  GetPlayerController() without null-check
+#   CS014  GetGameInstance() without null-check
+#   CS015  GetPlayerState() without null-check
+# Total: 13 rules
 
 import re
 from typing import List
@@ -816,4 +819,262 @@ def detect_hardcoded_secret(
                 )
                 break
 
+    return issues
+
+
+# CS013: GetPlayerController() without null-check
+def detect_player_controller_no_check(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects GetPlayerController()-> or GetController()->
+    calls without a null-check guard.
+    GetPlayerController() returns nullptr on dedicated servers,
+    during level transitions, or when no local player exists
+    (e.g. spectator-only mode). Always guard with
+    'if (APlayerController* PC = ...)' before dereferencing.
+
+    Lookback: scans the preceding 10 lines for safe
+    guard patterns to avoid false positives.
+    """
+    if not _is_source(file_path):
+        return []
+
+    _LOOKBACK = 10
+
+    # Patterns that prove the call was already guarded
+    _GUARD_RE = re.compile(
+        r"if\s*\(\s*(?:APlayerController\s*\*\s*\w+\s*=\s*)?"
+        r"(?:GetPlayerController|GetController)\s*(?:<[^>]*>)?\s*\("
+        r"|"
+        r"(?:APlayerController\s*\*\s*\w+\s*=\s*"
+        r"(?:GetPlayerController|GetController)\s*(?:<[^>]*>)?\s*\()"
+    )
+
+    _CALL_RE = re.compile(
+        r"\b(?:GetPlayerController|GetController)" r"\s*(?:<[^>]*>)?\s*\([^)]*\)\s*->"
+    )
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+    in_block_comment = False
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        stripped = source_line.strip()
+        if in_block_comment:
+            if "*/" in source_line:
+                in_block_comment = False
+            continue
+        if "/*" in stripped:
+            after_open = stripped[stripped.find("/*") + 2 :]
+            if "*/" not in after_open:
+                in_block_comment = True
+                continue
+        if _is_comment_line(stripped):
+            continue
+
+        code = _code_part(source_line)
+        if not _CALL_RE.search(code):
+            continue
+
+        # Lookback: check preceding lines for a guard
+        start = max(0, line_no - 1 - _LOOKBACK)
+        preceding = " ".join(source_lines[start : line_no - 1])
+        if _GUARD_RE.search(preceding):
+            continue
+
+        issues.append(
+            {
+                "asset_path": file_path,
+                "line": line_no,
+                "class": _extract_class_name(
+                    content,
+                    _char_pos_for_line(source_lines, line_no),
+                ),
+                "severity": "error",
+                "rule_id": "CS013",
+                "category": "Security",
+                "message": (
+                    "GetPlayerController() called without "
+                    "null-check — returns nullptr on "
+                    "dedicated servers and during level "
+                    "transitions. Guard with "
+                    "'if (APlayerController* PC = "
+                    "GetPlayerController(0))'."
+                ),
+                "snippet": stripped,
+                "fix_suggestion": ("Add null-check for GetPlayerController()"),
+                "is_auto_fixable": _is_fixable("CS013"),
+            }
+        )
+    return issues
+
+
+# CS014: GetGameInstance() without null-check
+def detect_game_instance_no_check(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects GetGameInstance()-> calls without a null-check.
+    GetGameInstance() returns nullptr during engine shutdown,
+    in commandlets, and in certain editor utilities.
+    Always guard with
+    'if (UGameInstance* GI = GetGameInstance())' before use.
+
+    Lookback: scans the preceding 10 lines for safe
+    guard patterns to avoid false positives.
+    """
+    if not _is_source(file_path):
+        return []
+
+    _LOOKBACK = 10
+
+    _GUARD_RE = re.compile(
+        r"if\s*\(\s*(?:UGameInstance\s*\*\s*\w+\s*=\s*)?"
+        r"GetGameInstance\s*\("
+        r"|"
+        r"(?:UGameInstance\s*\*\s*\w+\s*=\s*"
+        r"GetGameInstance\s*\()"
+    )
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+    in_block_comment = False
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        stripped = source_line.strip()
+        if in_block_comment:
+            if "*/" in source_line:
+                in_block_comment = False
+            continue
+        if "/*" in stripped:
+            after_open = stripped[stripped.find("/*") + 2 :]
+            if "*/" not in after_open:
+                in_block_comment = True
+                continue
+        if _is_comment_line(stripped):
+            continue
+
+        code = _code_part(source_line)
+        if not re.search(r"\bGetGameInstance\s*\(\s*\)\s*->", code):
+            continue
+
+        start = max(0, line_no - 1 - _LOOKBACK)
+        preceding = " ".join(source_lines[start : line_no - 1])
+        if _GUARD_RE.search(preceding):
+            continue
+
+        issues.append(
+            {
+                "asset_path": file_path,
+                "line": line_no,
+                "class": _extract_class_name(
+                    content,
+                    _char_pos_for_line(source_lines, line_no),
+                ),
+                "severity": "warning",
+                "rule_id": "CS014",
+                "category": "Security",
+                "message": (
+                    "GetGameInstance() called without "
+                    "null-check — returns nullptr during "
+                    "engine shutdown and in commandlets. "
+                    "Guard with "
+                    "'if (UGameInstance* GI = "
+                    "GetGameInstance())'."
+                ),
+                "snippet": stripped,
+                "fix_suggestion": ("Add null-check for GetGameInstance()"),
+                "is_auto_fixable": _is_fixable("CS014"),
+            }
+        )
+    return issues
+
+
+# CS015: GetPlayerState() without null-check
+def detect_player_state_no_check(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects GetPlayerState()-> calls without a null-check.
+    GetPlayerState() returns nullptr before the player has
+    fully joined (common in multiplayer), during seamless
+    travel, and on dedicated servers for AI controllers.
+    Always guard with
+    'if (auto* PS = GetPlayerState<AMyPlayerState>())'
+    before dereferencing.
+
+    Lookback: scans the preceding 10 lines for safe
+    guard patterns to avoid false positives.
+    """
+    if not _is_source(file_path):
+        return []
+
+    _LOOKBACK = 10
+
+    _GUARD_RE = re.compile(
+        r"if\s*\(\s*(?:auto\s*\*\s*\w+\s*=\s*)?"
+        r"GetPlayerState\s*(?:<[^>]*>)?\s*\("
+        r"|"
+        r"(?:(?:auto|A\w+)\s*\*\s*\w+\s*=\s*"
+        r"GetPlayerState\s*(?:<[^>]*>)?\s*\()"
+    )
+
+    _CALL_RE = re.compile(r"\bGetPlayerState\s*(?:<[^>]*>)?\s*\(\s*\)\s*->")
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+    in_block_comment = False
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        stripped = source_line.strip()
+        if in_block_comment:
+            if "*/" in source_line:
+                in_block_comment = False
+            continue
+        if "/*" in stripped:
+            after_open = stripped[stripped.find("/*") + 2 :]
+            if "*/" not in after_open:
+                in_block_comment = True
+                continue
+        if _is_comment_line(stripped):
+            continue
+
+        code = _code_part(source_line)
+        if not _CALL_RE.search(code):
+            continue
+
+        start = max(0, line_no - 1 - _LOOKBACK)
+        preceding = " ".join(source_lines[start : line_no - 1])
+        if _GUARD_RE.search(preceding):
+            continue
+
+        issues.append(
+            {
+                "asset_path": file_path,
+                "line": line_no,
+                "class": _extract_class_name(
+                    content,
+                    _char_pos_for_line(source_lines, line_no),
+                ),
+                "severity": "error",
+                "rule_id": "CS015",
+                "category": "Security",
+                "message": (
+                    "GetPlayerState() called without "
+                    "null-check — returns nullptr before "
+                    "player has fully joined in multiplayer "
+                    "and on dedicated servers for AI. "
+                    "Guard with "
+                    "'if (auto* PS = "
+                    "GetPlayerState<T>())'."
+                ),
+                "snippet": stripped,
+                "fix_suggestion": ("Add null-check for GetPlayerState()"),
+                "is_auto_fixable": _is_fixable("CS015"),
+            }
+        )
     return issues
