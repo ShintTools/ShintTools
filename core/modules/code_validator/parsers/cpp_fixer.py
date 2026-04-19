@@ -282,6 +282,60 @@ class CppFixer:
                     ],
                 )
 
+        # --- CS008: TWeakObjectPtr / TSharedPtr dereference ---
+        # TWeakObjectPtr has no null state — it has IsValid(). Any
+        # `WeakPtr.Get()` / `WeakPtr.Pin()` / `WeakPtr->` deref must
+        # be guarded by `WeakPtr.IsValid()` (not `IsValid(WeakPtr)`).
+        if expression == "WeakPtr":
+            wp_match = re.search(
+                r"(\w+)\s*(?:\.\s*Get\s*\(\s*\)|\.\s*Pin\s*\(\s*\)|->)",
+                original,
+            )
+            if not wp_match:
+                return (
+                    code,
+                    "",
+                    [f"No weak-ptr dereference on line {line_number}"],
+                )
+            wp_var = wp_match.group(1)
+            stripped = original.strip()
+
+            # One-liner `return WeakPtr.Get();` → turn into ternary
+            # to preserve the inline-body shape used in UE getters.
+            get_expr = f"{wp_var}.Get()"
+            return_pattern = re.compile(
+                rf"return\s+{re.escape(get_expr)}\s*;"
+            )
+            if return_pattern.search(stripped):
+                new_line = return_pattern.sub(
+                    f"return {wp_var}.IsValid() "
+                    f"? {get_expr} : nullptr;",
+                    original,
+                )
+                lines[idx] = new_line
+                return (
+                    "\n".join(lines),
+                    "",
+                    [
+                        f"Line {line_number}: Guarded {get_expr} "
+                        f"with IsValid() ternary"
+                    ],
+                )
+
+            # General case: wrap the line in an IsValid() block.
+            new_lines = [
+                f"{indent}if ({wp_var}.IsValid())",
+                f"{indent}{{",
+                f"{indent}    {stripped}",
+                f"{indent}}}",
+            ]
+            lines[idx : idx + 1] = new_lines
+            return (
+                "\n".join(lines),
+                "",
+                [f"Line {line_number}: Added {wp_var}.IsValid() guard"],
+            )
+
         # --- WRAP: variable already exists on the line ---
         match = re.search(r"(\w+)\s*->", original)
         if not match:
