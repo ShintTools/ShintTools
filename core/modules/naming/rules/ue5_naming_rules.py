@@ -764,24 +764,41 @@ def detect_duplicate_names(asset_records: List[AssetRecord]) -> List[Issue]:
 # NM006 — detect_missing_tex_suffix
 
 # Valid channel suffixes for Texture2D assets.
-# Confirm final list with Raúl / Tech Art before Sprint 5 freeze.
-#   _D  = Diffuse / Base Color
-#   _N  = Normal map
-#   _R  = Roughness
-#   _M  = Metallic
-#   _E  = Emissive
-#   _AO = Ambient Occlusion
-#   _H  = Height / Displacement
-#   _S  = Specular
+# Single-channel and Epic-standard packed suffixes.
+#   _D    = Diffuse / Base Color (_BC / _A also accepted as aliases)
+#   _N    = Normal map
+#   _R    = Roughness
+#   _M    = Metallic
+#   _E    = Emissive (_EM = emissive mask)
+#   _AO   = Ambient Occlusion
+#   _H    = Height / Displacement
+#   _S    = Specular
+#   _O    = Opacity / Alpha mask
+#   _ORM  = Packed Occlusion / Roughness / Metallic (Epic standard)
+#   _RMA  = Packed Roughness / Metallic / AO
+#   _MRA  = Packed Metallic / Roughness / AO
+#   _RGH  = Roughness (explicit alias)
+#   _MSK  = Generic RGBA mask
+#   _LUT  = Look-up table
 _TEXTURE_VALID_SUFFIXES: tuple = (
     "_D",
+    "_BC",
+    "_A",
     "_N",
     "_R",
+    "_RGH",
     "_M",
     "_E",
+    "_EM",
     "_AO",
     "_H",
     "_S",
+    "_O",
+    "_ORM",
+    "_RMA",
+    "_MRA",
+    "_MSK",
+    "_LUT",
 )
 
 # Texture prefix — only Texture2D assets are checked for channel suffix.
@@ -824,7 +841,7 @@ def detect_missing_tex_suffix(
                 message=(
                     f"Texture '{asset_name}' has no channel suffix. "
                     "Append a suffix to identify its type "
-                    "(_D, _N, _R, _M, _E, _AO, _H, _S)."
+                    "(_D, _N, _R, _M, _E, _AO, _H, _S, _ORM, _RMA, _MSK)."
                 ),
             )
         )
