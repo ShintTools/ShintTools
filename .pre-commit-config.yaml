@@ -1,4 +1,22 @@
 repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: fix-byte-order-marker
+        # Removes BOM from files (prevents encoding issues)
+      - id: fix-encoding-pragma
+        args: ["--remove"]
+        # Removes unnecessary encoding pragmas
+
+  - repo: local
+    hooks:
+      - id: strip-null-bytes
+        name: Strip null bytes from Python files
+        entry: python -c "import sys; [open(f,'wb').write(open(f,'rb').read().replace(b'\\x00',b'')) for f in sys.argv[1:] if b'\\x00' in open(f,'rb').read()]"
+        language: system
+        types: [python]
+        # Removes null bytes injected by NTFS/Windows mount issues
+
   - repo: https://github.com/pycqa/flake8
     rev: 7.0.0
     hooks:
