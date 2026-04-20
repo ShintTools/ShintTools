@@ -4,9 +4,12 @@ WORKDIR /app
 
 COPY requirements.txt .
 
-RUN pip install --no-cache-dir fastapi==0.111.0 uvicorn==0.30.1 pydantic==2.7.1 pytest==8.2.0 httpx==0.27.0 transformers==4.41.0 opencv-python-headless==4.9.0.80
-
+# torch needs a separate index for the CPU-only wheel
 RUN pip install --no-cache-dir torch==2.3.0+cpu --index-url https://download.pytorch.org/whl/cpu
+
+# Install all remaining dependencies from requirements.txt
+# (torch is already installed above, pip will skip it)
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 

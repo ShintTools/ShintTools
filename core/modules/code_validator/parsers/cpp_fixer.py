@@ -9,8 +9,8 @@ try:
     from code_validator.parsers.cpp_parser import CppParser
     from code_validator.parsers.fix_patterns import PATTERNS, RULE_TO_PATTERN
 except ModuleNotFoundError:
-    from cpp_parser import CppParser
-    from fix_patterns import PATTERNS, RULE_TO_PATTERN
+    from cpp_parser import CppParser  # type: ignore[no-redef]
+    from fix_patterns import PATTERNS, RULE_TO_PATTERN  # type: ignore[no-redef]
 
 
 class CppFixer:
@@ -29,11 +29,15 @@ class CppFixer:
         if rule_id not in RULE_TO_PATTERN:
             return code, "", [f"No pattern for {rule_id}"]
 
-        pattern_name, param = RULE_TO_PATTERN[rule_id]
+        entry = RULE_TO_PATTERN[rule_id]
+        pattern_name: str = entry[0]
+        param = entry[1]  # type: str | tuple[str, str] | None
 
         if pattern_name == "move_to_beginplay":
+            assert isinstance(param, str)
             return self._apply_move_to_beginplay(code, param)
         elif pattern_name == "null_check" and line_number is not None:
+            assert isinstance(param, str)
             return self._apply_null_check(code, line_number, param)
         elif pattern_name == "delete_line" and line_number is not None:
             return self._apply_delete_line(code, line_number)
@@ -47,12 +51,13 @@ class CppFixer:
             if isinstance(param, tuple):
                 old_text, new_text = param
             else:
-                old_text, new_text = param, ""
+                old_text = param if isinstance(param, str) else ""
+                new_text = ""
             return self._apply_replace_text(code, line_number, old_text, new_text)
         elif pattern_name == "extract_function":
             return self._apply_extract_function(code, "Tick", "TickLogic")
         elif pattern_name == "add_suffix" and line_number is not None:
-            suffix = param if param else "f"
+            suffix = param if isinstance(param, str) else "f"
             return self._apply_add_suffix(code, line_number, suffix)
         elif pattern_name == "add_virtual" and line_number is not None:
             return self._apply_add_virtual(code, line_number)
@@ -65,7 +70,7 @@ class CppFixer:
         elif pattern_name == "wrap_static_cast" and line_number is not None:
             return self._apply_wrap_static_cast(code, line_number)
         elif pattern_name == "insert_line" and line_number is not None:
-            insert_text = param if param else ""
+            insert_text = param if isinstance(param, str) else ""
             return self._apply_insert_line(code, line_number, insert_text)
         elif pattern_name == "add_zero_check" and line_number is not None:
             return self._apply_add_zero_check(code, line_number)
@@ -100,7 +105,7 @@ class CppFixer:
         elif pattern_name == "insert_uproperty" and line_number is not None:
             return self._apply_insert_uproperty(code, line_number)
         elif pattern_name == "mark_for_review" and line_number is not None:
-            reason = param if param else "Requires manual review"
+            reason = param if isinstance(param, str) else "Requires manual review"
             return self._apply_mark_for_review(code, line_number, reason)
 
         return code, "", ["Pattern not implemented or missing line_number"]
@@ -186,9 +191,9 @@ class CppFixer:
         }
 
         if expression in EXTRACT_EXPRESSIONS:
-            config = PATTERNS["null_check"]["expressions"].get(
-                expression, ("auto", "Ptr")
-            )
+            null_check_cfg: dict = PATTERNS["null_check"]  # type: ignore[assignment]
+            expressions_map: dict = null_check_cfg["expressions"]
+            config = expressions_map.get(expression, ("auto", "Ptr"))
             var_type, var_name = config
             inner = re.sub(
                 re.escape(f"{expression}->"),
@@ -1073,11 +1078,11 @@ class CppFixer:
         if super_line_idx is None:
             # No Super:: call — extract the whole body
             extract_start = start_line + 1  # After the opening {
-            extract_end = end_line - 1  # Before the closing }
+            extract_end = end_line  # Up to (not including) closing }
         else:
             # Extract everything after Super::
             extract_start = super_line_idx + 1
-            extract_end = end_line - 1
+            extract_end = end_line  # Up to (not including) closing }
 
         if extract_start >= extract_end:
             return code, "", ["Not enough code to extract"]

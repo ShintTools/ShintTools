@@ -10,6 +10,11 @@ import tree_sitter_cpp as tscpp
 from tree_sitter import Language, Node, Parser
 
 
+def _text(node: Node) -> str:
+    """Safely decode node text, returning '' if None."""
+    return node.text.decode() if node.text else ""
+
+
 @dataclass
 class VariableInfo:
     """Information about a variable declaration."""
@@ -45,7 +50,9 @@ class CppParser:
             cpp_language = Language(tscpp.language())  # type: ignore[call-arg]
         except TypeError:
             # tree-sitter 0.21.x requires the name argument
-            cpp_language = Language(tscpp.language(), "cpp")  # type: ignore[call-arg]
+            cpp_language = Language(  # type: ignore[call-overload]
+                tscpp.language(), "cpp"
+            )
 
         try:
             # tree-sitter >= 0.22
@@ -53,7 +60,7 @@ class CppParser:
         except TypeError:
             # tree-sitter 0.21.x: no-arg constructor + set_language
             self.parser = Parser()  # type: ignore[call-arg]
-            self.parser.set_language(cpp_language)
+            self.parser.set_language(cpp_language)  # type: ignore[attr-defined]
 
     def parse(self, code: str) -> Node:
         """Parse code and return the root node."""
@@ -71,7 +78,7 @@ class CppParser:
                 declarator = self._find_child(node, "function_declarator")
                 if declarator:
                     name_node = self._find_identifier_in_declarator(declarator)
-                    if name_node and name_node.text.decode() == func_name:
+                    if name_node and _text(name_node) == func_name:
                         return self._find_child(node, "compound_statement")
         return None
 
@@ -93,7 +100,7 @@ class CppParser:
                         calls.append(
                             FunctionCallInfo(
                                 function_name=function_name,
-                                full_expression=n.text.decode(),
+                                full_expression=_text(n),
                                 variable_assigned=var_name,
                                 line=line,
                             )
@@ -108,7 +115,7 @@ class CppParser:
         """Find all lines where a variable is used."""
         uses: List[int] = []
         for n in self._traverse(node):
-            if n.type == "identifier" and n.text.decode() == var_name:
+            if n.type == "identifier" and _text(n) == var_name:
                 line = n.start_point[0] + 1
                 if line not in uses:
                     uses.append(line)
@@ -141,15 +148,15 @@ class CppParser:
     def _extract_function_name(self, callee_node: Node) -> str:
         """Extract function name from a callee node."""
         if callee_node.type == "identifier":
-            return callee_node.text.decode()
+            return _text(callee_node)
         if callee_node.type == "template_function":
             for child in callee_node.children:
                 if child.type == "identifier":
-                    return child.text.decode()
+                    return _text(child)
         if callee_node.type == "qualified_identifier":
             for child in reversed(callee_node.children):
                 if child.type == "identifier":
-                    return child.text.decode()
+                    return _text(child)
         return ""
 
     def _find_assigned_variable(self, call_node: Node) -> Optional[str]:
@@ -161,9 +168,9 @@ class CppParser:
                     if child.type == "pointer_declarator":
                         for sub in child.children:
                             if sub.type == "identifier":
-                                return sub.text.decode()
+                                return _text(sub)
                     if child.type == "identifier":
-                        return child.text.decode()
+                        return _text(child)
             if parent.type == "declaration":
                 break
             parent = parent.parent
