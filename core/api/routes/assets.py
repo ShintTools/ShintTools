@@ -5,12 +5,19 @@
 # POST /assets/scan - detect all naming violations (target: < 10 s)
 # POST /assets/fix - apply renaming corrections
 
+import sys
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
-from api.database import analysis_results
+from api.database import analysis_results, resolve_tier
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
+
+# Add modules path for tiers import
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "modules"))
+
+from code_validator.tiers import get_asset_limit  # noqa: E402
 
 router = APIRouter()
 
@@ -74,6 +81,10 @@ async def scan_assets(payload: AssetScanRequest):
     """
     from modules.naming import run_all_naming_rules
 
+    # Resolve subscription tier and apply asset limit
+    tier = await resolve_tier(payload.api_key)
+    asset_limit = get_asset_limit(tier)
+
     # Build asset records passing both path and type to the rules.
     # asset_type comes from UE5 AssetRegistry via the plugin — used
     # by NM001 (prefix) and NM009 (wrong folder) for accurate detection.
@@ -86,14 +97,22 @@ async def scan_assets(payload: AssetScanRequest):
         if asset.asset_path
     ]
 
+    # Cap assets scanned based on tier (Free = 500, Indie = unlimited)
+    total_before_cap = len(asset_records)
+    if asset_limit is not None and len(asset_records) > asset_limit:
+        asset_records = asset_records[:asset_limit]
+
     t0 = time.perf_counter()
     issues = run_all_naming_rules(asset_records)
     scan_time = round(time.perf_counter() - t0, 4)
 
     summary = {
-        "total_assets": len(asset_records),
+        "total_assets": total_before_cap,
+        "assets_scanned": len(asset_records),
+        "assets_capped": asset_limit is not None and total_before_cap > asset_limit,
         "invalid_assets": len(issues),
         "scan_time_seconds": scan_time,
+        "tier": tier,
     }
 
     # Persist to MongoDB

@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from api.database import analysis_results
+from api.database import analysis_results, resolve_tier
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
@@ -25,6 +25,7 @@ from code_validator.rules.blueprint_rules import (  # noqa: E402
     run_all_blueprint_rules_from_export,
 )
 from code_validator.rules.cpp.ue5_cpp_rules import run_all_cpp_rules  # noqa: E402
+from code_validator.tiers import filter_issues_by_tier  # noqa: E402
 
 router = APIRouter()
 
@@ -51,6 +52,7 @@ class ValidateCodeRequest(BaseModel):
     engine: str = Field(
         default="unreal", description="Target engine: 'unreal' | 'unity'"
     )
+    api_key: str = Field(default="", description="License API key")
 
 
 class FileEntry(BaseModel):
@@ -102,6 +104,7 @@ class FixIssueEntry(BaseModel):
 class ApplyFixesRequest(BaseModel):
     """Request to apply auto-fixes using Tree-sitter."""
 
+    api_key: str = Field(default="", description="License API key")
     issues: list[FixIssueEntry] = Field(default_factory=list)
 
 
@@ -209,10 +212,15 @@ async def validate_code(payload: ValidateCodeRequest):
         payload.content,
         payload.engine,
     )
+
+    # Filter by subscription tier
+    tier = await resolve_tier(payload.api_key)
+    issues = filter_issues_by_tier(issues, tier)
+
     summary = _build_summary(issues, files_scanned=1)
     await _persist_result("code_validator", summary, issues)
 
-    return {"summary": summary, "issues": issues}
+    return {"summary": summary, "issues": issues, "tier": tier}
 
 
 @router.post("/validate/project")
@@ -232,13 +240,17 @@ async def validate_project(payload: ValidateProjectRequest):
         )
         all_issues.extend(file_issues)
 
+    # Filter by subscription tier
+    tier = await resolve_tier(payload.api_key)
+    all_issues = filter_issues_by_tier(all_issues, tier)
+
     summary = _build_summary(
         all_issues,
         files_scanned=len(payload.files),
     )
     await _persist_result("code_validator_project", summary, all_issues)
 
-    return {"summary": summary, "issues": all_issues}
+    return {"summary": summary, "issues": all_issues, "tier": tier}
 
 
 @router.post("/validate/blueprints")
@@ -258,6 +270,10 @@ async def validate_blueprints(payload: ValidateBlueprintsRequest):
         issue["is_auto_fixable"] = rule_id in RULE_TO_PATTERN
         issue["file_path"] = issue.get("asset_path", "")
 
+    # Filter by subscription tier
+    tier = await resolve_tier(payload.api_key)
+    all_issues = filter_issues_by_tier(all_issues, tier)
+
     blueprints_scanned = sum(1 for f in payload.files if f.get("type") == "blueprint")
 
     summary = _build_summary(
@@ -266,7 +282,7 @@ async def validate_blueprints(payload: ValidateBlueprintsRequest):
     )
     await _persist_result("code_validator_blueprints", summary, all_issues)
 
-    return {"summary": summary, "issues": all_issues}
+    return {"summary": summary, "issues": all_issues, "tier": tier}
 
 
 @router.post("/validate/fix")
@@ -318,11 +334,31 @@ async def apply_fixes(payload: ApplyFixesRequest):
     successful = 0
     failed = 0
 
+    # Resolve tier to block fixes on rules outside the plan
+    tier = await resolve_tier(payload.api_key)
+    from code_validator.tiers import get_tier_config  # noqa: E402
+
+    tier_cfg = get_tier_config(tier)
+    allowed_rules = tier_cfg["rules"]  # None = all allowed
+
     for issue in payload.issues:
         rule_id = issue.rule_id
         file_path = issue.file_path
         content = issue.content
         line_number = issue.line
+
+        # Block fixes for rules outside the client's tier
+        if allowed_rules is not None and rule_id not in allowed_rules:
+            fixes.append(
+                {
+                    "rule_id": rule_id,
+                    "file_path": file_path,
+                    "success": False,
+                    "error": (f"Rule {rule_id} requires Indie plan"),
+                }
+            )
+            failed += 1
+            continue
 
         # Check if rule has a Tree-sitter pattern
         if not _is_auto_fixable(rule_id):
