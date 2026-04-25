@@ -2,54 +2,28 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# gcc is required by Cython to compile .py -> .so
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends gcc build-essential && \
-    rm -rf /var/lib/apt/lists/*
-
 COPY requirements.txt .
 
 # torch needs a separate index for the CPU-only wheel
 RUN pip install --no-cache-dir torch==2.3.0+cpu --index-url https://download.pytorch.org/whl/cpu
 
 # Install all remaining dependencies from requirements.txt
+# (torch is already installed above, pip will skip it)
 RUN pip install --no-cache-dir -r requirements.txt
-
-# Cython is only needed at build time, not at runtime
-RUN pip install --no-cache-dir Cython setuptools
 
 COPY . .
 
-# ── Cython: compile protected modules to .so binaries ──
-# 1. Compile .py -> .so (binary, not readable)
-# 2. Delete original .py source files
-# 3. Delete .c intermediates and build artifacts
-# 4. Remove Cython (not needed at runtime)
-RUN python setup_cython.py build_ext --inplace && \
-    python -c "\
-import os; \
-files = [ \
-    'modules/code_validator/parsers/cpp_fixer.py', \
-    'modules/code_validator/parsers/cpp_parser.py', \
-    'modules/code_validator/parsers/fix_patterns.py', \
-    'modules/code_validator/rules/cpp/_cpp_helpers.py', \
-    'modules/code_validator/rules/cpp/cpp_best_practices.py', \
-    'modules/code_validator/rules/cpp/cpp_maintainability.py', \
-    'modules/code_validator/rules/cpp/cpp_performance.py', \
-    'modules/code_validator/rules/cpp/cpp_security.py', \
-    'modules/code_validator/rules/cpp/ue5_cpp_rules.py', \
-    'modules/code_validator/rules/blueprint_rules.py', \
-    'modules/code_validator/tiers.py', \
-    'modules/naming/rules/ue5_naming_rules.py', \
-]; \
-[os.remove(f) for f in files if os.path.exists(f)]; \
-[os.remove(f.replace('.py','.c')) for f in files if os.path.exists(f.replace('.py','.c'))]; \
-" && \
-    find /app/modules -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null; \
-    rm -rf build/ setup_cython.py && \
-    pip uninstall -y Cython && \
-    apt-get purge -y gcc build-essential && \
-    apt-get autoremove -y
+# ── Cython source-protection step intentionally REMOVED ───────────────────
+# The previous Dockerfile compiled rule modules to .so via Cython and then
+# deleted the original .py source — but anyone cloning the repo to build
+# already has the unencrypted source on disk, so the "protection" only
+# applied to the contents of the running container. In return it was a
+# frequent build-failure source: gcc unavailable, Cython codegen errors,
+# missing/renamed modules in the file list, or `pip uninstall -y Cython`
+# leaving the image in a broken state.
+#
+# If genuine source protection is needed in the future, ship a
+# pre-compiled wheel from CI rather than compiling at image build time.
 
 EXPOSE 18200
 
