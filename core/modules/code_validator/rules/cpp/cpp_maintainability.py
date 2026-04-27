@@ -13,7 +13,8 @@
 #   CM006  Deep nesting (> 4 levels)
 #   CM007  Duplicate #include
 #   CM008  Empty destructor
-# Total: 8 rules
+#   CM009  Large commented-out code block (>= 3 consecutive lines)
+# Total: 9 rules
 
 import re
 from typing import List
@@ -484,5 +485,134 @@ def detect_empty_destructor(
                     "is_auto_fixable": _is_fixable("CM008"),
                 }
             )
+
+    return issues
+
+
+# CM009: Large commented-out code block (>= 3 consecutive lines)
+def detect_commented_out_code(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects blocks of 3 or more consecutive lines that look like
+    commented-out code rather than documentation comments.
+    Commented-out code rots quickly, confuses readers, and
+    inflates diffs.  Use version control instead.
+
+    Heuristics — a comment line is likely code if it contains:
+      - C++ statement terminators (;)
+      - Scope braces ({ or })
+      - Assignment operators (=, +=, -=, etc.)
+      - Function calls  foo(...)
+      - Preprocessor directives (#include, #if, #define)
+      - Common C++ keywords in code positions (return, if, for,
+        while, switch, case, break, continue, auto, void, int,
+        float, bool, class, struct)
+      - Arrow / scope operators (-> or ::)
+
+    Lines that look like normal documentation (no code markers)
+    are NOT counted toward the block.
+
+    Threshold: _MIN_BLOCK = 3 consecutive code-like comment lines.
+    """
+    if not _is_cpp(file_path):
+        return []
+
+    _MIN_BLOCK: int = 3
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+
+    # Patterns that suggest commented-out code (not prose)
+    _CODE_HINTS = re.compile(
+        r"[;{}]"  # statement / scope
+        r"|[+\-*/]?="  # assignment
+        r"|\w+\s*\([^)]*\)"  # function call
+        r"|^\s*#\s*(?:include|if|define|endif|pragma)"  # preprocessor
+        r"|->"  # pointer dereference
+        r"|::"  # scope resolution
+        r"|\b(?:return|if|for|while|switch|case|break"
+        r"|continue|auto|void|int32|float|bool"
+        r"|class|struct|nullptr|true|false)\b"
+    )
+
+    # Licence / doc / separator patterns to SKIP
+    _DOC_HINTS = re.compile(
+        r"^\s*//\s*(?:Copyright|License|Author|@param"
+        r"|@return|@brief|@note|@see|@todo"
+        r"|\*|={3,}|-{3,}|/{3,})",
+        re.IGNORECASE,
+    )
+
+    streak_start: int = 0
+    streak_len: int = 0
+
+    def _flush_streak() -> None:
+        nonlocal streak_start, streak_len
+        if streak_len >= _MIN_BLOCK:
+            issues.append(
+                {
+                    "asset_path": file_path,
+                    "line": streak_start,
+                    "class": _extract_class_name(
+                        content,
+                        _char_pos_for_line(source_lines, streak_start),
+                    ),
+                    "severity": "info",
+                    "rule_id": "CM009",
+                    "category": "Maintainability",
+                    "message": (
+                        f"{streak_len} consecutive lines of "
+                        "commented-out code — remove dead "
+                        "code and rely on version control."
+                    ),
+                    "snippet": source_lines[streak_start - 1].strip(),
+                    "fix_suggestion": ("Remove commented-out code block"),
+                    "is_auto_fixable": _is_fixable("CM009"),
+                }
+            )
+        streak_start = 0
+        streak_len = 0
+
+    in_block_comment = False
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        stripped = source_line.strip()
+
+        # Track block comments (/* ... */) — ignore them
+        if in_block_comment:
+            if "*/" in source_line:
+                in_block_comment = False
+            continue
+        if stripped.startswith("/*"):
+            if "*/" not in source_line[stripped.find("/*") + 2 :]:
+                in_block_comment = True
+            _flush_streak()
+            continue
+
+        # Only interested in single-line // comments
+        if not stripped.startswith("//"):
+            _flush_streak()
+            continue
+
+        # Skip doc / licence / separator lines
+        if _DOC_HINTS.match(source_line):
+            _flush_streak()
+            continue
+
+        # Extract the text after //
+        comment_body = re.sub(r"^\s*//\s?", "", source_line)
+
+        # Does it look like code?
+        if _CODE_HINTS.search(comment_body):
+            if streak_len == 0:
+                streak_start = line_no
+            streak_len += 1
+        else:
+            _flush_streak()
+
+    # End of file — flush any pending streak
+    _flush_streak()
 
     return issues

@@ -18,7 +18,9 @@
 #   CS013  GetPlayerController() without null-check
 #   CS014  GetGameInstance() without null-check
 #   CS015  GetPlayerState() without null-check
-# Total: 13 rules
+#   CS016  Server RPC without WithValidation
+#   CS017  Client RPC modifying replicated state
+# Total: 15 rules
 
 import re
 from typing import List
@@ -31,6 +33,7 @@ from code_validator.rules.cpp._cpp_helpers import (
     _is_comment_line,
     _is_cpp,
     _is_fixable,
+    _is_header,
     _is_source,
 )
 
@@ -1077,4 +1080,199 @@ def detect_player_state_no_check(
                 "is_auto_fixable": _is_fixable("CS015"),
             }
         )
+    return issues
+
+
+# CS016: Server RPC without WithValidation
+def detect_server_rpc_no_validate(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects UFUNCTION(Server, Reliable) or UFUNCTION(Server, Unreliable)
+    declarations that lack WithValidation. Without a _Validate function,
+    a malicious client can send arbitrary parameters to the server RPC.
+    Epic recommends always using WithValidation for Server RPCs.
+
+    Checks both the UFUNCTION macro and the file body for a matching
+    _Validate implementation to reduce false positives.
+    """
+    if not _is_header(file_path):
+        return []
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+
+    # Regex: UFUNCTION(...Server...) without WithValidation
+    server_rpc_re = re.compile(r"UFUNCTION\s*\([^)]*\bServer\b[^)]*\)")
+
+    for line_no, source_line in enumerate(source_lines, start=1):
+        stripped = source_line.strip()
+        if stripped.startswith("//"):
+            continue
+
+        if not server_rpc_re.search(source_line):
+            continue
+
+        # Already has WithValidation — skip
+        if "WithValidation" in source_line:
+            continue
+
+        # Get the function name from the next non-empty, non-comment line
+        func_name = ""
+        for next_idx in range(line_no, min(line_no + 3, len(source_lines))):
+            next_line = source_lines[next_idx].strip()
+            if not next_line or next_line.startswith("//"):
+                continue
+            func_match = re.search(r"\b(\w+)\s*\(", next_line)
+            if func_match:
+                func_name = func_match.group(1)
+            break
+
+        # Check if a _Validate function exists in the file
+        validate_name = func_name + "_Validate" if func_name else ""
+        has_validate = validate_name and validate_name in content
+
+        if has_validate:
+            continue
+
+        issues.append(
+            {
+                "asset_path": file_path,
+                "line": line_no,
+                "class": _extract_class_name(
+                    content,
+                    _char_pos_for_line(source_lines, line_no),
+                ),
+                "severity": "error",
+                "rule_id": "CS016",
+                "category": "Security",
+                "message": (
+                    f"Server RPC '{func_name}' lacks "
+                    "WithValidation — a malicious client "
+                    "can send arbitrary parameters. Add "
+                    "WithValidation and implement "
+                    f"{func_name}_Validate()."
+                ),
+                "snippet": stripped,
+                "fix_suggestion": (
+                    "Add WithValidation to UFUNCTION and "
+                    f"implement {func_name}_Validate()"
+                ),
+                "is_auto_fixable": False,
+            }
+        )
+
+    return issues
+
+
+# CS017: Client RPC modifying replicated state
+def detect_client_rpc_modifies_replicated(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects Client RPC implementations that assign to variables
+    known to be UPROPERTY(Replicated). Client RPCs execute on
+    the owning client — modifying replicated state from the
+    client side causes desync because the server's version
+    overwrites it on the next replication tick.
+
+    Scans the header (.h) for UPROPERTY(Replicated*) variable
+    names, then checks Client RPC bodies in the source (.cpp)
+    for assignments to those variables.
+    """
+    if not _is_source(file_path):
+        return []
+
+    issues: List[Issue] = []
+    source_lines = content.splitlines()
+
+    # Step 1: Find all replicated variable names from UPROPERTY
+    # macros in this file (some projects put UPROPERTY in .cpp
+    # for generated code; also handles combined .h/.cpp analysis).
+    replicated_vars: set = set()
+    uproperty_re = re.compile(r"UPROPERTY\s*\([^)]*\bReplicated\w*[^)]*\)")
+    var_decl_re = re.compile(r"^\s*(?:[\w:<>*&]+\s+)+(\w+)\s*(?:=\s*[^;]*)?\s*;")
+
+    for i, line in enumerate(source_lines):
+        if uproperty_re.search(line):
+            # Variable is on the next non-empty, non-comment line
+            for j in range(i + 1, min(i + 4, len(source_lines))):
+                candidate = source_lines[j].strip()
+                if not candidate or candidate.startswith("//"):
+                    continue
+                var_match = var_decl_re.match(source_lines[j])
+                if var_match:
+                    replicated_vars.add(var_match.group(1))
+                break
+
+    if not replicated_vars:
+        return issues
+
+    # Step 2: Find Client RPC function bodies
+    # Pattern: void ClassName::FuncName_Implementation(...)
+    # where FuncName was declared with UFUNCTION(Client)
+    client_impl_re = re.compile(
+        r"void\s+(\w+)::(\w+_Implementation)\s*\([^)]*\)\s*"
+        r"\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
+        re.DOTALL,
+    )
+
+    # We also check if the function name starts with "Client"
+    # (UE5 convention for client RPCs)
+    for impl_match in client_impl_re.finditer(content):
+        class_name = impl_match.group(1)
+        func_name = impl_match.group(2)
+        body = impl_match.group(3)
+
+        # Only check functions that follow client RPC naming
+        base_name = func_name.replace("_Implementation", "")
+        if not base_name.startswith("Client"):
+            continue
+
+        # Check if body assigns to any replicated variable
+        body_start = impl_match.start(3)
+        for var_name in replicated_vars:
+            assign_re = re.compile(rf"\b{re.escape(var_name)}\s*(?:=|\+=|-=|\*=|/=)")
+            assign_match = assign_re.search(body)
+            if not assign_match:
+                continue
+
+            abs_pos = body_start + assign_match.start()
+            line_no = content[:abs_pos].count("\n") + 1
+
+            # Check it's not inside a comment
+            if line_no <= len(source_lines):
+                line_text = source_lines[line_no - 1].strip()
+                if line_text.startswith("//"):
+                    continue
+            else:
+                line_text = ""
+
+            issues.append(
+                {
+                    "asset_path": file_path,
+                    "line": line_no,
+                    "class": class_name,
+                    "severity": "error",
+                    "rule_id": "CS017",
+                    "category": "Security",
+                    "message": (
+                        f"Client RPC '{base_name}' modifies "
+                        f"replicated variable '{var_name}' — "
+                        "client-side writes to replicated "
+                        "state cause desync. Only the server "
+                        "should modify replicated variables."
+                    ),
+                    "snippet": line_text,
+                    "fix_suggestion": (
+                        f"Move '{var_name}' assignment to a "
+                        "Server RPC or remove it from the "
+                        "Client RPC"
+                    ),
+                    "is_auto_fixable": False,
+                }
+            )
+
     return issues

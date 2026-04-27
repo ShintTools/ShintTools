@@ -9,9 +9,9 @@
 #
 # Rule index:
 #   Best Practices (BPB): BPB001-BPB007
-#   Performance (BPP):    BPP001-BPP003
+#   Performance (BPP):    BPP001-BPP005
 #   Maintainability (BPM): BPM001-BPM007
-#   Security (BPS):       pending
+#   Security (BPS):       BPS001, BPS003
 
 # ──────────────────────────────────────────────────────
 import re
@@ -313,6 +313,122 @@ def detect_heavy_event_tick(
                         "infrequent logic to timers or events."
                     ),
                     "fix_suggestion": "",
+                    "is_auto_fixable": False,
+                }
+            )
+    return issues
+
+
+# BPP004: Delay node inside EventTick graph
+def detect_delay_in_tick(
+    blueprint: dict,
+) -> List[Issue]:
+    """BPP004: flag Blueprints that use a Delay node inside EventTick.
+    Delay does not pause Tick execution — it schedules a latent action
+    while Tick continues firing every frame. This accumulates pending
+    latent actions, leaks memory, and causes unpredictable behaviour.
+    Use a Timer or boolean gate instead.
+    """
+    issues: List[Issue] = []
+    bp_path = blueprint.get("path", "")
+    graphs = blueprint.get("graphs", [])
+
+    # Node types that represent a Delay in Blueprint exports
+    _DELAY_TYPES: frozenset = frozenset({"Delay", "K2Node_Delay", "RetriggerableDelay"})
+
+    for graph in graphs:
+        graph_name = graph.get("name", "")
+
+        if graph_name.lower() not in ("eventtick", "tick"):
+            continue
+
+        delay_count = sum(
+            node.get("count", 0)
+            for node in graph.get("nodes", [])
+            if node.get("type") in _DELAY_TYPES
+        )
+
+        if delay_count > 0:
+            issues.append(
+                {
+                    "asset_path": bp_path,
+                    "graph": graph_name,
+                    "severity": "error",
+                    "rule_id": "BPP004",
+                    "category": "Performance",
+                    "message": (
+                        f"Delay node found inside '{graph_name}' "
+                        f"({delay_count} instance(s)) — Delay does "
+                        "not pause Tick, it accumulates latent "
+                        "actions every frame causing memory leaks. "
+                        "Use a Timer or boolean gate instead."
+                    ),
+                    "fix_suggestion": (
+                        "Replace Delay with Set Timer by Event or "
+                        "a boolean gate that skips frames."
+                    ),
+                    "is_auto_fixable": False,
+                }
+            )
+    return issues
+
+
+# BPP005: GetAllActorsOfClass inside EventTick graph
+def detect_get_all_actors_in_tick(
+    blueprint: dict,
+) -> List[Issue]:
+    """BPP005: flag GetAllActorsOfClass called inside EventTick.
+    This node iterates every actor in the world each frame,
+    causing massive CPU overhead in scenes with many actors.
+    Cache the result in BeginPlay or use a timer-based refresh.
+    """
+    issues: List[Issue] = []
+    bp_path = blueprint.get("path", "")
+    graphs = blueprint.get("graphs", [])
+
+    _GET_ALL_TYPES: frozenset = frozenset(
+        {
+            "GetAllActorsOfClass",
+            "K2Node_GetAllActorsOfClass",
+            "GetAllActorsOfClassWithTag",
+            "GetAllActorsWithInterface",
+            "GetAllActorsWithTag",
+        }
+    )
+
+    for graph in graphs:
+        graph_name = graph.get("name", "")
+
+        if graph_name.lower() not in ("eventtick", "tick"):
+            continue
+
+        get_all_count = sum(
+            node.get("count", 0)
+            for node in graph.get("nodes", [])
+            if node.get("type") in _GET_ALL_TYPES
+        )
+
+        if get_all_count > 0:
+            issues.append(
+                {
+                    "asset_path": bp_path,
+                    "graph": graph_name,
+                    "severity": "error",
+                    "rule_id": "BPP005",
+                    "category": "Performance",
+                    "message": (
+                        f"GetAllActorsOfClass found inside "
+                        f"'{graph_name}' ({get_all_count} "
+                        "instance(s)) — iterating all world "
+                        "actors every frame is extremely "
+                        "expensive. Cache the result in BeginPlay "
+                        "or refresh on a timer."
+                    ),
+                    "fix_suggestion": (
+                        "Move GetAllActorsOfClass to BeginPlay and "
+                        "store the result in a variable. Refresh "
+                        "only when needed (timer or event)."
+                    ),
                     "is_auto_fixable": False,
                 }
             )
@@ -757,6 +873,145 @@ def detect_variable_no_category(
     return issues
 
 
+# ── SECURITY (BPS) ───────────────────────────────────
+
+
+# BPS001: Authority check missing for replicated variable writes
+def detect_missing_authority_check(
+    blueprint: dict,
+) -> List[Issue]:
+    """BPS001: flag Blueprints that modify replicated variables
+    without a HasAuthority or SwitchHasAuthority guard.
+    In multiplayer, only the server should modify replicated
+    state. Clients writing replicated variables directly can
+    cause desync, cheating, or server rejection.
+    """
+    issues: List[Issue] = []
+    bp_path = blueprint.get("path", "")
+    bp_name = blueprint.get("name", "")
+    variables = blueprint.get("variables", [])
+    graphs = blueprint.get("graphs", [])
+
+    # Check if the Blueprint has any replicated variables
+    replicated_vars = {
+        v.get("name", "") for v in variables if v.get("is_replicated", False)
+    }
+
+    if not replicated_vars:
+        return issues
+
+    # Authority-related node types the plugin may export
+    _AUTHORITY_TYPES: frozenset = frozenset(
+        {
+            "HasAuthority",
+            "SwitchHasAuthority",
+            "IsServer",
+            "IsLocalController",
+            "K2Node_HasAuthority",
+        }
+    )
+
+    for graph in graphs:
+        graph_name = graph.get("name", "Unknown")
+        nodes = graph.get("nodes", [])
+
+        node_types = {node.get("type", "") for node in nodes}
+
+        has_authority_check = bool(node_types & _AUTHORITY_TYPES)
+
+        # Check if any Set node targets a replicated variable
+        sets_replicated = any(
+            node.get("type") == "SetVariable"
+            and node.get("variable_name", "") in replicated_vars
+            for node in nodes
+        )
+
+        if sets_replicated and not has_authority_check:
+            issues.append(
+                {
+                    "asset_path": bp_path,
+                    "graph": graph_name,
+                    "severity": "error",
+                    "rule_id": "BPS001",
+                    "category": "Security",
+                    "message": (
+                        f"'{bp_name}' modifies replicated "
+                        f"variable(s) in '{graph_name}' without "
+                        "an authority check — add "
+                        "SwitchHasAuthority or HasAuthority "
+                        "before writing replicated state to "
+                        "prevent client-side desync and cheating."
+                    ),
+                    "fix_suggestion": (
+                        "Add a SwitchHasAuthority node before "
+                        "the Set node and only allow the "
+                        "Authority branch to write the variable."
+                    ),
+                    "is_auto_fixable": False,
+                }
+            )
+    return issues
+
+
+# BPS003: ExecuteConsoleCommand in Blueprint
+def detect_console_command_usage(
+    blueprint: dict,
+) -> List[Issue]:
+    """BPS003: flag Blueprints that contain ExecuteConsoleCommand nodes.
+    Console commands can change game state, enable cheats, or expose
+    debug functionality. In shipping builds this is a security risk
+    and potential exploit vector. Remove or gate behind development-
+    only checks.
+    """
+    issues: List[Issue] = []
+    bp_path = blueprint.get("path", "")
+    bp_name = blueprint.get("name", "")
+    graphs = blueprint.get("graphs", [])
+
+    _CONSOLE_TYPES: frozenset = frozenset(
+        {
+            "ExecuteConsoleCommand",
+            "K2Node_ExecuteConsoleCommand",
+            "ConsoleCommand",
+        }
+    )
+
+    for graph in graphs:
+        graph_name = graph.get("name", "Unknown")
+        nodes = graph.get("nodes", [])
+
+        console_count = sum(
+            node.get("count", 0) for node in nodes if node.get("type") in _CONSOLE_TYPES
+        )
+
+        if console_count > 0:
+            issues.append(
+                {
+                    "asset_path": bp_path,
+                    "graph": graph_name,
+                    "severity": "error",
+                    "rule_id": "BPS003",
+                    "category": "Security",
+                    "message": (
+                        f"ExecuteConsoleCommand found in "
+                        f"'{bp_name}' graph '{graph_name}' "
+                        f"({console_count} instance(s)) — "
+                        "console commands can change game "
+                        "state and enable cheats. Remove for "
+                        "shipping builds or gate behind a "
+                        "development-only check."
+                    ),
+                    "fix_suggestion": (
+                        "Remove ExecuteConsoleCommand or wrap "
+                        "it with a UE_BUILD_SHIPPING / "
+                        "WITH_EDITOR preprocessor check."
+                    ),
+                    "is_auto_fixable": False,
+                }
+            )
+    return issues
+
+
 # ── RUNNER ────────────────────────────────────────────
 
 
@@ -768,9 +1023,9 @@ def run_all_blueprint_rules(
     blueprint dict and returns a merged list of issues.
 
     Best Practices (BPB): BPB001-BPB007
-    Performance (BPP):    BPP001-BPP003
+    Performance (BPP):    BPP001-BPP005
     Maintainability (BPM): BPM001-BPM007
-    Security (BPS):       pending — no rules yet
+    Security (BPS):       BPS001, BPS003
     """
     issues: List[Issue] = []
 
@@ -787,6 +1042,8 @@ def run_all_blueprint_rules(
     issues += detect_tick_enabled(blueprint)
     issues += detect_excessive_casts(blueprint)
     issues += detect_heavy_event_tick(blueprint)
+    issues += detect_delay_in_tick(blueprint)
+    issues += detect_get_all_actors_in_tick(blueprint)
 
     # Maintainability
     issues += detect_unused_variables(blueprint)
@@ -796,6 +1053,10 @@ def run_all_blueprint_rules(
     issues += detect_large_graph(blueprint)
     issues += detect_blueprint_no_functions(blueprint)
     issues += detect_abandoned_blueprint(blueprint)
+
+    # Security
+    issues += detect_missing_authority_check(blueprint)
+    issues += detect_console_command_usage(blueprint)
 
     # Inject fix_instruction for auto-fixable BP rules so the
     # UE5 plugin can execute the fix directly via its editor API.

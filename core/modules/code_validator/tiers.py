@@ -3,7 +3,7 @@
 # Subscription tier definitions for ShintTools Code Validator.
 #
 # FREE  — 40 rules (30 C++ + 10 BP), Asset Naming capped at 500
-# INDIE — All rules unlocked, Asset Naming unlimited
+# INDIE — All rules unlocked (75 C++ + 21 BP + 18 NM), Asset Naming unlimited
 #
 # How it works:
 #   1. The UE5 plugin sends api_key with every request.
@@ -75,7 +75,9 @@ _FREE_CM = frozenset(
     }
 )
 
-# Blueprint — 10 of 17 (essentials)
+# Blueprint — 10 of 21 (essentials)
+# Indie-only: BPB003, BPB006, BPB007, BPM004-BPM007,
+#             BPP004, BPP005, BPS001, BPS003
 _FREE_BP = frozenset(
     {
         "BPB001",  # Missing BP_ prefix

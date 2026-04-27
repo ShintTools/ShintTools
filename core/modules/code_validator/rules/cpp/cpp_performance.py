@@ -21,7 +21,8 @@
 #   CP015  ensure() inside Tick/Update
 #   CP016  Manual CollectGarbage call
 #   CP017  Empty Tick() override (only calls Super)
-# Total: 16 rules
+#   CP018  SpawnActor called inside Tick/Update
+# Total: 17 rules
 
 import re
 from typing import List
@@ -1025,5 +1026,74 @@ def detect_empty_tick_override(
                     "is_auto_fixable": _is_fixable("CP017"),
                 }
             )
+
+    return issues
+
+
+# CP018: SpawnActor called inside Tick/Update
+def detect_spawn_actor_in_tick(
+    content: str,
+    file_path: str,
+) -> List[Issue]:
+    """
+    Detects SpawnActor calls inside Tick or Update functions.
+    Spawning an actor every frame creates thousands of objects
+    per minute, exhausts memory, and overwhelms the garbage
+    collector. Move spawning to BeginPlay, events, or timers.
+    Also catches SpawnActorDeferred.
+    """
+    if not _is_source(file_path):
+        return []
+
+    issues: List[Issue] = []
+    tick_pattern = re.compile(
+        r"void\s+(\w+)::(?:Tick|Update)\s*\([^)]*\)\s*"
+        r"\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
+        re.DOTALL,
+    )
+
+    spawn_pattern = re.compile(r"\bSpawnActor(?:Deferred)?\s*<")
+
+    for tick_match in tick_pattern.finditer(content):
+        class_name = tick_match.group(1)
+        tick_body = tick_match.group(2)
+
+        # Skip if body contains comment-only spawn mentions
+        spawn_match = spawn_pattern.search(tick_body)
+        if not spawn_match:
+            continue
+
+        # Verify the spawn is not inside a comment
+        body_start = tick_match.start(2)
+        abs_pos = body_start + spawn_match.start()
+        line_no = _get_line_number(content, abs_pos)
+        source_lines = content.splitlines()
+
+        if line_no <= len(source_lines):
+            line_text = source_lines[line_no - 1].strip()
+            if line_text.startswith("//"):
+                continue
+        else:
+            line_text = ""
+
+        issues.append(
+            {
+                "asset_path": file_path,
+                "line": line_no,
+                "class": class_name,
+                "severity": "error",
+                "rule_id": "CP018",
+                "category": "Performance",
+                "message": (
+                    "SpawnActor called inside Tick() — "
+                    "creates a new actor every frame "
+                    "(3600/min at 60fps). Move spawning "
+                    "to BeginPlay, events, or timers."
+                ),
+                "snippet": line_text,
+                "fix_suggestion": ("Move SpawnActor to BeginPlay or a timer"),
+                "is_auto_fixable": False,
+            }
+        )
 
     return issues
