@@ -13,21 +13,24 @@
 # Falls back to folder inference when asset_type is empty or Unknown.
 #
 # Rule index:
-#   NM001 — detect_missing_prefix         : asset lacks required type prefix
-#   NM002 — detect_spaces_in_name         : name contains whitespace
-#   NM003 — detect_special_chars          : name contains illegal characters
-#   NM004 — detect_lowercase_names        : name starts with lowercase letter
-#   NM005 — detect_duplicate_names        : same base name in multiple folders
-#   NM006 — detect_missing_tex_suffix     : Texture2D missing channel suffix
-#   NM007 — detect_non_pascal_case        : name not PascalCase after prefix
-#   NM008 — detect_name_too_long          : name exceeds max length (64 chars)
-#   NM009 — detect_wrong_folder           : asset type does not match folder
-#   NM010 — detect_double_prefix          : duplicated prefix (T_T_Hero)
-#   NM011 — detect_number_start           : name starts with a digit
-#   NM012 — detect_consecutive_underscores: double underscore in name
-#   NM013 — detect_trailing_underscore    : name ends with underscore
-#   NM014 — detect_generic_name           : placeholder or generic name
-#   NM015 — detect_version_suffix         : version suffix (_v2, _old)
+#   NM001 — detect_missing_prefix           : asset lacks required type prefix
+#   NM002 — detect_spaces_in_name           : name contains whitespace
+#   NM003 — detect_special_chars            : name contains illegal characters
+#   NM004 — detect_lowercase_names          : name starts with lowercase letter
+#   NM005 — detect_duplicate_names          : same base name in multiple folders
+#   NM006 — detect_missing_tex_suffix       : Texture2D missing channel suffix
+#   NM007 — detect_non_pascal_case          : name not PascalCase after prefix
+#   NM008 — detect_name_too_long            : name exceeds max length (64 chars)
+#   NM009 — detect_wrong_folder             : asset type does not match folder
+#   NM010 — detect_double_prefix            : duplicated prefix (T_T_Hero)
+#   NM011 — detect_number_start             : name starts with a digit
+#   NM012 — detect_consecutive_underscores  : double underscore in name
+#   NM013 — detect_trailing_underscore      : name ends with underscore
+#   NM014 — detect_generic_name             : placeholder or generic name
+#   NM015 — detect_version_suffix           : version suffix (_v2, _old)
+#   NM016 — detect_wrong_prefix_for_type    : valid prefix but wrong for type
+#   NM017 — detect_name_too_short           : body after prefix < 3 chars
+#   NM018 — detect_redundant_type_in_name   : type word repeated in body
 
 import re
 from collections import defaultdict
@@ -535,6 +538,20 @@ def _suggest_prefixed_name(
     else:
         stripped_name = asset_name
     return f"{correct_prefix}{stripped_name}"
+
+
+# ---------------------------------------------------------------------------
+# TYPE_TO_PREFIX
+#
+# Maps UE5 asset class name → required prefix.
+# Built once from _FOLDER_RULES. First match per type wins.
+# Used by NM016 to detect assets with a valid but wrong prefix.
+# ---------------------------------------------------------------------------
+
+_TYPE_TO_PREFIX: Dict[str, str] = {}
+for _fr in _FOLDER_RULES:
+    if _fr["type"] not in _TYPE_TO_PREFIX:
+        _TYPE_TO_PREFIX[_fr["type"]] = _fr["prefix"]
 
 
 # NM001 — detect_missing_prefix
@@ -1360,12 +1377,235 @@ def detect_version_suffix(asset_records: List[AssetRecord]) -> List[Issue]:
 
 
 # ---------------------------------------------------------------------------
+# NM016 — detect_wrong_prefix_for_type
+# ---------------------------------------------------------------------------
+
+
+def detect_wrong_prefix_for_type(
+    asset_records: List[AssetRecord],
+) -> List[Issue]:
+    """NM016: flag assets that have a valid prefix but wrong for their type.
+
+    NM001 catches assets with NO valid prefix. This rule catches assets
+    that DO have a valid prefix but it doesn't match the asset_type
+    reported by the UE5 AssetRegistry.
+
+    Example: a StaticMesh named 'T_Rock' — T_ is valid for Texture2D
+    but should be SM_ for StaticMesh.
+
+    Requires asset_type from AssetRegistry — skips assets with Unknown type.
+    """
+    issues: List[Issue] = []
+
+    for record in asset_records:
+        asset_path = record.get("asset_path", "")
+        asset_type = record.get("asset_type", "Unknown") or "Unknown"
+        asset_name = Path(asset_path).stem
+
+        if asset_type == "Unknown":
+            continue
+
+        # Only check assets that already have a valid prefix
+        if not _has_valid_prefix(asset_name):
+            continue
+
+        # Get the expected prefix for this asset type
+        expected_prefix = _TYPE_TO_PREFIX.get(asset_type)
+        if expected_prefix is None:
+            continue
+
+        # Check if the asset name starts with the expected prefix
+        if asset_name.startswith(expected_prefix):
+            continue
+
+        # Asset has a valid prefix but it's wrong for its type
+        suggested_name = _suggest_prefixed_name(asset_name, expected_prefix)
+        issues.append(
+            _build_issue(
+                rule_id="NM016",
+                asset_path=asset_path,
+                current_name=asset_name,
+                suggested_name=suggested_name,
+                asset_type=asset_type,
+                message=(
+                    f"'{asset_name}' has prefix for a different "
+                    f"type — expected '{expected_prefix}' for "
+                    f"{asset_type}. Rename to '{suggested_name}'."
+                ),
+            )
+        )
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# NM017 — detect_name_too_short
+# ---------------------------------------------------------------------------
+
+# Minimum body length after the prefix.
+# Names like SM_R, T_A, BP_X are not descriptive enough.
+_MIN_BODY_LENGTH: int = 3
+
+
+def detect_name_too_short(
+    asset_records: List[AssetRecord],
+) -> List[Issue]:
+    """NM017: flag asset names whose body is too short after the prefix.
+
+    A name like 'SM_R' or 'T_AB' has a valid prefix but the body
+    (1-2 characters) is not descriptive enough to identify the asset.
+    Only checks assets that have a valid prefix — assets without one
+    are handled by NM001.
+    """
+    issues: List[Issue] = []
+
+    for record in asset_records:
+        asset_path = record.get("asset_path", "")
+        asset_name = Path(asset_path).stem
+
+        if not _has_valid_prefix(asset_name):
+            continue
+
+        body = _PREFIX_STRIP_PATTERN.sub("", asset_name)
+
+        # Skip if body is long enough or empty (empty is caught by
+        # other rules)
+        if not body or len(body) >= _MIN_BODY_LENGTH:
+            continue
+
+        issues.append(
+            _build_issue(
+                rule_id="NM017",
+                asset_path=asset_path,
+                current_name=asset_name,
+                suggested_name=asset_name,
+                asset_type="Unknown",
+                message=(
+                    f"'{asset_name}' has only {len(body)} "
+                    f"character(s) after the prefix (min: "
+                    f"{_MIN_BODY_LENGTH}) — use a longer, "
+                    "descriptive name."
+                ),
+            )
+        )
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# NM018 — detect_redundant_type_in_name
+# ---------------------------------------------------------------------------
+
+# Words derived from asset class names that should not appear in the
+# body after the prefix. Lowercase for comparison.
+_REDUNDANT_TYPE_WORDS: Dict[str, frozenset] = {
+    "Texture2D": frozenset({"texture", "tex"}),
+    "StaticMesh": frozenset({"staticmesh", "mesh", "static"}),
+    "SkeletalMesh": frozenset({"skeletalmesh", "skeletal", "skel"}),
+    "Material": frozenset({"material", "mat"}),
+    "MaterialInstance": frozenset({"materialinstance", "matinstance", "matinst"}),
+    "MaterialFunction": frozenset({"materialfunction", "matfunc"}),
+    "Blueprint": frozenset({"blueprint", "bp"}),
+    "AnimBlueprint": frozenset({"animblueprint", "animbp"}),
+    "WidgetBlueprint": frozenset({"widgetblueprint", "widget"}),
+    "SoundCue": frozenset({"soundcue", "cue"}),
+    "SoundWave": frozenset({"soundwave", "wave"}),
+    "AnimSequence": frozenset({"animsequence", "animseq"}),
+    "AnimMontage": frozenset({"animmontage", "montage"}),
+    "ParticleSystem": frozenset({"particlesystem", "particle"}),
+    "NiagaraSystem": frozenset({"niagarasystem", "niagara"}),
+    "DataTable": frozenset({"datatable"}),
+    "DataAsset": frozenset({"dataasset"}),
+}
+
+
+def detect_redundant_type_in_name(
+    asset_records: List[AssetRecord],
+) -> List[Issue]:
+    """NM018: flag names that redundantly include the asset type word.
+
+    The type prefix already identifies the asset class — repeating
+    the type in the body is noise.
+    Examples: SM_StaticMeshRock → SM_Rock, T_TextureWall → T_Wall,
+              M_MaterialGround → M_Ground.
+
+    Requires asset_type from AssetRegistry for accurate detection.
+    Skips assets with Unknown type.
+    """
+    issues: List[Issue] = []
+
+    for record in asset_records:
+        asset_path = record.get("asset_path", "")
+        asset_type = record.get("asset_type", "Unknown") or "Unknown"
+        asset_name = Path(asset_path).stem
+
+        if asset_type == "Unknown":
+            continue
+
+        if not _has_valid_prefix(asset_name):
+            continue
+
+        redundant_words = _REDUNDANT_TYPE_WORDS.get(asset_type)
+        if not redundant_words:
+            continue
+
+        body = _PREFIX_STRIP_PATTERN.sub("", asset_name)
+        if not body:
+            continue
+
+        body_lower = body.lower()
+
+        # Check if the body starts with a redundant type word
+        matched_word = None
+        for word in redundant_words:
+            if body_lower.startswith(word):
+                # Ensure it's a word boundary — next char should be
+                # uppercase, underscore, digit, or end of string
+                rest = body[len(word) :]
+                if not rest or rest[0].isupper() or rest[0] == "_" or rest[0].isdigit():
+                    matched_word = word
+                    break
+
+        if not matched_word:
+            continue
+
+        # Build suggested name: prefix + body without the redundant word
+        prefix_match = _PREFIX_STRIP_PATTERN.match(asset_name)
+        original_prefix = prefix_match.group(0) if prefix_match else ""
+        cleaned_body = body[len(matched_word) :]
+        # Strip leading underscore if present after removal
+        cleaned_body = cleaned_body.lstrip("_")
+        if cleaned_body:
+            suggested_name = original_prefix + cleaned_body
+        else:
+            suggested_name = asset_name  # Can't suggest empty body
+
+        issues.append(
+            _build_issue(
+                rule_id="NM018",
+                asset_path=asset_path,
+                current_name=asset_name,
+                suggested_name=suggested_name,
+                asset_type=asset_type,
+                message=(
+                    f"'{asset_name}' repeats the type word "
+                    f"'{matched_word}' after the prefix — the "
+                    f"prefix already identifies the type. "
+                    f"Rename to '{suggested_name}'."
+                ),
+            )
+        )
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # Entry point — called by api/routes/assets.py
 # ---------------------------------------------------------------------------
 
 
 def run_all_naming_rules(asset_records: List[AssetRecord]) -> List[Issue]:
-    """Run NM001–NM015 against a list of asset record dicts.
+    """Run NM001–NM018 against a list of asset record dicts.
 
     Each record must have: asset_path (str), asset_type (str).
     Returns a merged list of all naming issues found.
@@ -1388,6 +1628,9 @@ def run_all_naming_rules(asset_records: List[AssetRecord]) -> List[Issue]:
     all_issues += detect_trailing_underscore(asset_records)
     all_issues += detect_generic_name(asset_records)
     all_issues += detect_version_suffix(asset_records)
+    all_issues += detect_wrong_prefix_for_type(asset_records)
+    all_issues += detect_name_too_short(asset_records)
+    all_issues += detect_redundant_type_in_name(asset_records)
 
     return all_issues
 

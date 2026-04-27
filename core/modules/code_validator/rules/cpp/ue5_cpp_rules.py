@@ -4,11 +4,11 @@
 # and exposes run_all_cpp_rules() as the single entry point.
 #
 # Rule modules:
-#   cpp/cpp_performance.py       — CP001-CP017  (16 rules)
+#   cpp/cpp_performance.py       — CP001-CP018  (17 rules)
 #   cpp/cpp_best_practices.py    — CB001-CB035  (34 rules)
-#   cpp/cpp_security.py          — CS001-CS015  (13 rules)
-#   cpp/cpp_maintainability.py   — CM001-CM008  (8 rules)
-# Total: 71 rules
+#   cpp/cpp_security.py          — CS001-CS017  (15 rules)
+#   cpp/cpp_maintainability.py   — CM001-CM009  (9 rules)
+# Total: 75 rules
 #
 # Shared helpers live in _cpp_helpers.py
 
@@ -56,6 +56,7 @@ from code_validator.rules.cpp.cpp_best_practices import (  # noqa: E402
 
 # ── Maintainability (CM) ──────────────────────────────
 from code_validator.rules.cpp.cpp_maintainability import (  # noqa: E402
+    detect_commented_out_code,
     detect_debug_message,
     detect_deep_nesting,
     detect_duplicate_include,
@@ -81,6 +82,7 @@ from code_validator.rules.cpp.cpp_performance import (  # noqa: E402
     detect_log_error_in_tick,
     detect_new_object_in_loop,
     detect_sleep_on_game_thread,
+    detect_spawn_actor_in_tick,
     detect_string_ops_in_tick,
     detect_tarray_copy_in_loop,
     detect_tick_enabled_in_constructor,
@@ -90,6 +92,7 @@ from code_validator.rules.cpp.cpp_performance import (  # noqa: E402
 from code_validator.rules.cpp.cpp_security import (  # noqa: E402
     detect_array_no_bounds_check,
     detect_cast_no_check,
+    detect_client_rpc_modifies_replicated,
     detect_division_no_zero_check,
     detect_game_instance_no_check,
     detect_getowner_no_check,
@@ -99,6 +102,7 @@ from code_validator.rules.cpp.cpp_security import (  # noqa: E402
     detect_overlap_actor_no_check,
     detect_player_controller_no_check,
     detect_player_state_no_check,
+    detect_server_rpc_no_validate,
     detect_spawnactor_no_check,
     detect_weak_ptr_no_check,
 )
@@ -114,10 +118,10 @@ def run_all_cpp_rules(
     Runs all deterministic C++ rules against the given
     file content and returns a merged list of issues.
 
-    Performance (CP):      CP001-CP017  (16 rules)
+    Performance (CP):      CP001-CP018  (17 rules)
     Best Practices (CB):   CB001-CB035  (34 rules)
-    Security (CS):         CS001-CS015  (13 rules)
-    Maintainability (CM):  CM001-CM008  (8 rules)
+    Security (CS):         CS001-CS017  (15 rules)
+    Maintainability (CM):  CM001-CM009  (9 rules)
     """
     issues: List[Issue] = []
 
@@ -138,6 +142,7 @@ def run_all_cpp_rules(
     issues += detect_ensure_in_tick(content, file_path)
     issues += detect_garbage_collect_call(content, file_path)
     issues += detect_empty_tick_override(content, file_path)
+    issues += detect_spawn_actor_in_tick(content, file_path)
 
     # Best Practices
     issues += detect_infinite_loop(content, file_path)
@@ -189,6 +194,8 @@ def run_all_cpp_rules(
     issues += detect_player_controller_no_check(content, file_path)
     issues += detect_game_instance_no_check(content, file_path)
     issues += detect_player_state_no_check(content, file_path)
+    issues += detect_server_rpc_no_validate(content, file_path)
+    issues += detect_client_rpc_modifies_replicated(content, file_path)
 
     # Maintainability
     issues += detect_debug_message(content, file_path)
@@ -199,6 +206,7 @@ def run_all_cpp_rules(
     issues += detect_deep_nesting(content, file_path)
     issues += detect_duplicate_include(content, file_path)
     issues += detect_empty_destructor(content, file_path)
+    issues += detect_commented_out_code(content, file_path)
 
     # Inject context window (2 lines before + issue line + 2 after)
     # so the plugin can show a before/after diff without re-reading.
