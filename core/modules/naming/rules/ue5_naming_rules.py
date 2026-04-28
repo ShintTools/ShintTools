@@ -743,7 +743,15 @@ def detect_duplicate_names(asset_records: List[AssetRecord]) -> List[Issue]:
     All copies are flagged — not just the second occurrence.
     Detection is case-insensitive.
     """
-    name_to_paths: Dict[str, List[str]] = defaultdict(list)
+    # Cython compiles the explicit `Dict[str, List[str]]` annotation into a
+    # strict isinstance(dict) check that REJECTS subclasses, so assigning a
+    # `defaultdict(list)` to it raises:
+    #   TypeError: Expected dict, got collections.defaultdict
+    # at the very first line that touches the variable. Drop the annotation
+    # — the local is only used inside this function, the .append/.items
+    # calls below don't need a type hint to keep working, and pure-Python
+    # callers see the same defaultdict semantics.
+    name_to_paths = defaultdict(list)
     for record in asset_records:
         asset_path = record.get("asset_path", "")
         asset_name = Path(asset_path).stem
