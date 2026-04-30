@@ -1,0 +1,11 @@
+{
+    // Extensiones recomendadas para el proyecto.
+    // VS Code muestra un aviso para instalarlas cuando abres el proyecto.
+    "recommendations": [
+        "ms-python.python",
+        "ms-python.black-formatter",
+        "ms-python.isort",
+        "ms-python.flake8",
+        "editorconfig.editorconfig"
+    ]
+}

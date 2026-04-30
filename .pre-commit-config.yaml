@@ -3,10 +3,12 @@ repos:
     rev: v4.6.0
     hooks:
       - id: fix-byte-order-marker
-        # Removes BOM from files (prevents encoding issues)
       - id: fix-encoding-pragma
         args: ["--remove"]
-        # Removes unnecessary encoding pragmas
+      - id: check-added-large-files
+        args: ["--maxkb=500"]
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
 
   - repo: local
     hooks:
@@ -15,32 +17,27 @@ repos:
         entry: python -c "import sys; [open(f,'wb').write(open(f,'rb').read().replace(b'\\x00',b'')) for f in sys.argv[1:] if b'\\x00' in open(f,'rb').read()]"
         language: system
         types: [python]
-        # Removes null bytes injected by NTFS/Windows mount issues
 
   - repo: https://github.com/pycqa/flake8
     rev: 7.0.0
     hooks:
       - id: flake8
-        args: ["--max-line-length=88", "--extend-ignore=E203,W503"]
-        # Style linter: enforces PEP8 rules and catches unused imports
+        args: ["--max-line-length=88", "--extend-ignore=W503"]
 
   - repo: https://github.com/psf/black
     rev: 24.4.2
     hooks:
       - id: black
         args: ["--line-length=88"]
-        # Code formatter: rewrites layout without changing logic
 
   - repo: https://github.com/pycqa/isort
     rev: 5.13.2
     hooks:
       - id: isort
         args: ["--profile=black"]
-        # Import sorter: organises imports in a consistent order
 
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.10.0
     hooks:
       - id: mypy
-        args: ["--ignore-missing-imports","--explicit-package-bases"]
-        # Type checker: verifies type annotations are used correctly
+        args: ["--ignore-missing-imports", "--explicit-package-bases"]
