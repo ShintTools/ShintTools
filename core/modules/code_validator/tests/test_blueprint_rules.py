@@ -26,7 +26,7 @@ class TestFindObjectInTick:
         fixture = load_fixture("cpp_find_object_bad.json")
         issues = detect_find_object_in_tick(fixture["content"], fixture["file_path"])
         assert len(issues) == 1
-        assert issues[0]["rule_id"] == "find_object_in_tick"
+        assert issues[0]["rule_id"] == "CP001"
         assert issues[0]["severity"] == "error"
 
     def test_no_false_positive_find_object(self):
@@ -44,7 +44,7 @@ class TestGetComponentInTick:
         fixture = load_fixture("cpp_get_component_bad.json")
         issues = detect_get_component_in_tick(fixture["content"], fixture["file_path"])
         assert len(issues) == 1
-        assert issues[0]["rule_id"] == "get_component_in_tick"
+        assert issues[0]["rule_id"] == "CP002"
         assert issues[0]["severity"] == "error"
 
     def test_no_false_positive_get_component(self):
@@ -62,7 +62,7 @@ class TestInfiniteLoop:
         fixture = load_fixture("cpp_infinite_loop_bad.json")
         issues = detect_infinite_loop(fixture["content"], fixture["file_path"])
         assert len(issues) == 1
-        assert issues[0]["rule_id"] == "infinite_loop_no_exit"
+        assert issues[0]["rule_id"] == "CB001"
         assert issues[0]["severity"] == "error"
 
     def test_no_false_positive_infinite_loop(self):
@@ -80,7 +80,7 @@ class TestRuntimeLoad:
         fixture = load_fixture("cpp_runtime_load_bad.json")
         issues = detect_runtime_load(fixture["content"], fixture["file_path"])
         assert len(issues) == 1
-        assert issues[0]["rule_id"] == "runtime_asset_load"
+        assert issues[0]["rule_id"] == "CB002"
         assert issues[0]["severity"] == "warning"
 
     def test_no_false_positive_runtime_load(self):

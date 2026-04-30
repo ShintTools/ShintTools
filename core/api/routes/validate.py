@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from api.database import analysis_results, resolve_tier
+from api.database import analysis_results, get_latest_score, persist_score, resolve_tier
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
@@ -26,6 +26,10 @@ from code_validator.rules.blueprint_rules import (  # noqa: E402
 )
 from code_validator.rules.cpp.ue5_cpp_rules import run_all_cpp_rules  # noqa: E402
 from code_validator.tiers import filter_issues_by_tier  # noqa: E402
+from metrics.score_calculator import (  # noqa: E402
+    compute_score,
+    recalculate_after_fixes,
+)
 
 router = APIRouter()
 
@@ -50,7 +54,8 @@ class ValidateCodeRequest(BaseModel):
     file_path: str = Field(..., description="Relative path of the source file")
     content: str = Field(default="", description="Full text content of the source file")
     engine: str = Field(
-        default="unreal", description="Target engine: 'unreal' | 'unity'"
+        default="unreal",
+        description="Target engine: 'unreal' | 'unity'",
     )
     api_key: str = Field(default="", description="License API key")
 
@@ -79,7 +84,8 @@ class ValidateBlueprintsRequest(BaseModel):
     """Request for Blueprint validation from UE5 plugin export."""
 
     project_id: str = Field(
-        default="", description="Project identifier from the plugin"
+        default="",
+        description="Project identifier from the plugin",
     )
     api_key: str = Field(default="", description="API key from the plugin")
     project_name: str = Field(default="", description="Project name")
@@ -88,7 +94,8 @@ class ValidateBlueprintsRequest(BaseModel):
         description="Blueprint file dicts exported by the plugin",
     )
     engine: str = Field(
-        default="unreal", description="Target engine: 'unreal' | 'unity'"
+        default="unreal",
+        description="Target engine: 'unreal' | 'unity'",
     )
 
 
@@ -104,6 +111,10 @@ class FixIssueEntry(BaseModel):
 class ApplyFixesRequest(BaseModel):
     """Request to apply auto-fixes using Tree-sitter."""
 
+    project_id: str = Field(
+        default="",
+        description="Project identifier for score update",
+    )
     api_key: str = Field(default="", description="License API key")
     issues: list[FixIssueEntry] = Field(default_factory=list)
 
@@ -111,6 +122,51 @@ class ApplyFixesRequest(BaseModel):
 # ── Shared helpers ────────────────────────────────────
 
 _CPP_EXTENSIONS = {".cpp", ".h", ".hpp", ".cc"}
+
+# Default severity per rule prefix — used when the fix endpoint
+# needs to know the severity but only has the rule_id.
+_RULE_PREFIX_SEVERITY: dict[str, str] = {
+    "CP": "warning",
+    "CB": "warning",
+    "CS": "warning",
+    "CM": "warning",
+    "BPB": "warning",
+    "BPP": "warning",
+    "BPM": "info",
+    "BPS": "error",
+    "NM": "warning",
+}
+
+# Override for specific rules that have a different severity
+_RULE_SEVERITY_OVERRIDES: dict[str, str] = {
+    "CP001": "error",
+    "CP005": "error",
+    "CP006": "error",
+    "CP012": "error",
+    "CP016": "error",
+    "CP018": "error",
+    "CS008": "error",
+    "CS012": "error",
+    "CS013": "error",
+    "CS015": "error",
+    "CS016": "error",
+    "CS017": "error",
+    "CM001": "error",
+    "CM003": "info",
+    "CM007": "info",
+    "CM008": "info",
+    "CM009": "info",
+}
+
+
+def _get_severity_for_rule(rule_id: str) -> str:
+    """Best-effort severity lookup from a rule_id."""
+    if rule_id in _RULE_SEVERITY_OVERRIDES:
+        return _RULE_SEVERITY_OVERRIDES[rule_id]
+    for prefix, severity in _RULE_PREFIX_SEVERITY.items():
+        if rule_id.startswith(prefix):
+            return severity
+    return "warning"
 
 
 def _build_summary(
@@ -142,7 +198,6 @@ def _analyse_file(
 
     if engine == "unreal" and file_ext in _CPP_EXTENSIONS:
         issues = run_all_cpp_rules(content, file_path)
-        # Add is_auto_fixable and normalize file_path for plugin contract
         for issue in issues:
             rule_id = issue.get("rule_id", "")
             issue["is_auto_fixable"] = rule_id in RULE_TO_PATTERN
@@ -164,7 +219,8 @@ async def _persist_result(
 ) -> None:
     """
     Save result to MongoDB for the dashboard.
-    Best-effort — never blocks the response if MongoDB is unavailable.
+    Best-effort — never blocks the response if MongoDB is
+    unavailable.
     """
     try:
         doc = {
@@ -196,7 +252,7 @@ async def validate_assets(payload: ValidateAssetsRequest):
             "warnings": 0,
         },
         "issues": [],
-        "message": "Mock response — use /assets/scan for real analysis",
+        "message": ("Mock response — use /assets/scan for real analysis"),
     }
 
 
@@ -205,7 +261,8 @@ async def validate_code(payload: ValidateCodeRequest):
     """
     Analyses a single source file for code smells.
     Runs deterministic C++ rules for .cpp and .h files.
-    Each issue includes is_auto_fixable based on Tree-sitter patterns.
+    Each issue includes is_auto_fixable based on Tree-sitter
+    patterns.
     """
     issues = _analyse_file(
         payload.file_path,
@@ -244,17 +301,36 @@ async def validate_project(payload: ValidateProjectRequest):
     tier = await resolve_tier(payload.api_key)
     all_issues = filter_issues_by_tier(all_issues, tier)
 
+    files_scanned = len(payload.files)
+
     summary = _build_summary(
         all_issues,
-        files_scanned=len(payload.files),
+        files_scanned=files_scanned,
     )
     await _persist_result("code_validator_project", summary, all_issues)
 
-    return {"summary": summary, "issues": all_issues, "tier": tier}
+    # Compute and persist Quality Score automatically
+    score_doc = compute_score(
+        issues=all_issues,
+        files_scanned=files_scanned,
+        project_id=payload.project_id,
+        scan_type="full",
+        tier=tier,
+    )
+    await persist_score(score_doc)
+
+    return {
+        "summary": summary,
+        "issues": all_issues,
+        "tier": tier,
+        "quality_score": score_doc["overall_score"],
+    }
 
 
 @router.post("/validate/blueprints")
-async def validate_blueprints(payload: ValidateBlueprintsRequest):
+async def validate_blueprints(
+    payload: ValidateBlueprintsRequest,
+):
     """
     Validate Blueprint assets from the full UE5 plugin export.
     Receives the complete JSON exported by the plugin
@@ -264,7 +340,7 @@ async def validate_blueprints(payload: ValidateBlueprintsRequest):
     plugin_export = {"files": payload.files}
     all_issues = run_all_blueprint_rules_from_export(plugin_export)
 
-    # Add is_auto_fixable and normalize file_path for plugin contract
+    # Add is_auto_fixable and normalize file_path
     for issue in all_issues:
         rule_id = issue.get("rule_id", "")
         issue["is_auto_fixable"] = rule_id in RULE_TO_PATTERN
@@ -282,7 +358,22 @@ async def validate_blueprints(payload: ValidateBlueprintsRequest):
     )
     await _persist_result("code_validator_blueprints", summary, all_issues)
 
-    return {"summary": summary, "issues": all_issues, "tier": tier}
+    # Compute and persist Quality Score automatically
+    score_doc = compute_score(
+        issues=all_issues,
+        files_scanned=blueprints_scanned,
+        project_id=payload.project_id,
+        scan_type="full",
+        tier=tier,
+    )
+    await persist_score(score_doc)
+
+    return {
+        "summary": summary,
+        "issues": all_issues,
+        "tier": tier,
+        "quality_score": score_doc["overall_score"],
+    }
 
 
 @router.post("/validate/fix")
@@ -295,40 +386,9 @@ async def apply_fixes(payload: ApplyFixesRequest):
     and generates safe fixes.
 
     Returns:
-        - fixes: List of fix results with original and fixed code
+        - fixes: List of fix results with original and fixed
+          code
         - summary: Count of successful and failed fixes
-
-    Example request:
-    {
-        "issues": [
-            {
-                "rule_id": "CP001",
-                "file_path": "Source/MyGame/MyActor.cpp",
-                "line": 45,
-                "content": "void AMyActor::Tick(...) { ... full file content ... }"
-            }
-        ]
-    }
-
-    Example response:
-    {
-        "fixes": [
-            {
-                "rule_id": "CP001",
-                "file_path": "Source/MyGame/MyActor.cpp",
-                "success": true,
-                "original_code": "AActor* Target = FindObjectOfType<AActor>();",
-                "fixed_code": "// [SHINTTOOLS] Moved to BeginPlay...",
-                "additions": "// Add to .h: UPROPERTY() AActor* CachedTarget;",
-                "changes": ["Line 46: Target -> CachedTarget"]
-            }
-        ],
-        "summary": {
-            "total": 1,
-            "successful": 1,
-            "failed": 0
-        }
-    }
     """
     fixes: list[dict] = []
     successful = 0
@@ -367,7 +427,7 @@ async def apply_fixes(payload: ApplyFixesRequest):
                     "rule_id": rule_id,
                     "file_path": file_path,
                     "success": False,
-                    "error": f"No Tree-sitter pattern for rule {rule_id}",
+                    "error": (f"No Tree-sitter pattern for " f"rule {rule_id}"),
                 }
             )
             failed += 1
@@ -388,7 +448,7 @@ async def apply_fixes(payload: ApplyFixesRequest):
                         "rule_id": rule_id,
                         "file_path": file_path,
                         "success": False,
-                        "error": "No changes made - pattern not found in code",
+                        "error": ("No changes made - pattern " "not found in code"),
                     }
                 )
                 failed += 1
@@ -423,6 +483,31 @@ async def apply_fixes(payload: ApplyFixesRequest):
         {"successful": successful, "failed": failed},
         fixes,
     )
+
+    # Recalculate Quality Score after successful fixes
+    if successful > 0 and payload.project_id:
+        prev_score = await get_latest_score(payload.project_id)
+        if prev_score:
+            fixed_issues = [
+                {
+                    "rule_id": f["rule_id"],
+                    "severity": _get_severity_for_rule(f["rule_id"]),
+                }
+                for f in fixes
+                if f.get("success")
+            ]
+            new_score = recalculate_after_fixes(prev_score, fixed_issues)
+            await persist_score(new_score)
+
+            return {
+                "fixes": fixes,
+                "summary": {
+                    "total": len(payload.issues),
+                    "successful": successful,
+                    "failed": failed,
+                },
+                "quality_score": new_score["overall_score"],
+            }
 
     return {
         "fixes": fixes,

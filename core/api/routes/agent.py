@@ -17,8 +17,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from api.database import resolve_tier
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
@@ -36,7 +34,14 @@ class _PlanIssue(BaseModel):
 
     rule_id: str = Field(..., description="Rule identifier, e.g. 'CS001'")
     severity: str = Field(..., description="error | warning | info")
-    category: str = Field(default="", description="security | performance | best_practices | maintainability | naming | …")
+    category: str = Field(
+        default="",
+        description=(
+            "security | performance |"
+            " best_practices | maintainability"
+            " | naming | …"
+        ),
+    )
     file_path: str = Field(default="")
     line: int = Field(default=0, ge=0)
     message: str = Field(default="")
@@ -45,7 +50,9 @@ class _PlanIssue(BaseModel):
 
 
 class AgentPlanRequest(BaseModel):
-    api_key: str = Field(default="", description="License API key — gates the endpoint to Indie+.")
+    api_key: str = Field(
+        default="", description="License API key — gates the endpoint to Indie+."
+    )
     issues: list[_PlanIssue] = Field(default_factory=list)
     # Soft cap so the planner doesn't blow up on pathological scans; the
     # plugin should already trim to what fits in the user's UI.
@@ -83,20 +90,20 @@ class AgentPlanResponse(BaseModel):
 # Lower score = higher priority (sorted ascending).
 
 _PREFIX_BASE_SCORE: dict[str, int] = {
-    "CS":  0,    # C++ Security                — always first
-    "BPP": 5,    # BP performance              — visible perf hits
-    "CP":  10,   # C++ performance
-    "BPB": 20,   # BP best practices           — naming, structure
-    "CB":  25,   # C++ best practices
-    "BPM": 35,   # BP maintainability
-    "CM":  40,   # C++ maintainability
-    "NM":  60,   # Asset naming                — cosmetic, low risk
+    "CS": 0,  # C++ Security                — always first
+    "BPP": 5,  # BP performance              — visible perf hits
+    "CP": 10,  # C++ performance
+    "BPB": 20,  # BP best practices           — naming, structure
+    "CB": 25,  # C++ best practices
+    "BPM": 35,  # BP maintainability
+    "CM": 40,  # C++ maintainability
+    "NM": 60,  # Asset naming                — cosmetic, low risk
 }
 
 _SEVERITY_OFFSET: dict[str, int] = {
-    "error":   0,
+    "error": 0,
     "warning": 50,
-    "info":    100,
+    "info": 100,
 }
 
 
@@ -123,20 +130,77 @@ def _priority_label(score: int) -> str:
 # explanation that knows the surrounding code context.
 _RATIONALE: dict[str, str] = {
     # Security
-    "CS001": "GetWorld() puede devolver nullptr durante level transitions; sin guarda, este acceso provoca crash en runtime.",
-    "CS002": "SpawnActor sin validar el resultado: cualquier fallo de spawn (presupuesto, location bloqueada) deja el puntero a nullptr y acceder a sus campos crashea.",
-    "CS003": "Cast<T>() devuelve nullptr cuando el tipo no coincide; sin null-check, una asignación o llamada subsecuente revienta.",
-    "CS004": "División por cero produce NaN en floats y crash en ints; el guard explícito evita comportamiento indefinido.",
-    "CS005": "Acceso a array sin verificar IsValidIndex — out-of-bounds en TArray es un crash directo.",
+    "CS001": (
+        "GetWorld() puede devolver nullptr durante"
+        " level transitions; sin guarda, este"
+        " acceso provoca crash en runtime."
+    ),
+    "CS002": (
+        "SpawnActor sin validar el resultado:"
+        " cualquier fallo de spawn (presupuesto,"
+        " location bloqueada) deja el puntero a"
+        " nullptr y acceder a sus campos crashea."
+    ),
+    "CS003": (
+        "Cast<T>() devuelve nullptr cuando el tipo"
+        " no coincide; sin null-check, una"
+        " asignación o llamada subsecuente"
+        " revienta."
+    ),
+    "CS004": (
+        "División por cero produce NaN en floats"
+        " y crash en ints; el guard explícito"
+        " evita comportamiento indefinido."
+    ),
+    "CS005": (
+        "Acceso a array sin verificar"
+        " IsValidIndex — out-of-bounds en TArray"
+        " es un crash directo."
+    ),
     # Performance
-    "CP001": "FindObject en Tick recorre la GC root cada frame (potencialmente miles de UObjects) — coste lineal sobre el tamaño del world.",
-    "CP002": "GetComponent en Tick es O(n) sobre los componentes del actor; cachéalo en BeginPlay.",
-    "CP003": "Tick muy largo bloquea el game thread; refactoriza el cuerpo en sub-funciones llamadas por estado o usa Timer manager.",
-    "CP004": "UE_LOG dentro de Tick spamea la consola y serializa strings cada frame — costoso incluso si el output está silenciado.",
-    "CP005": "Sleep en game thread congela el render y el input; usa async tasks o LatentActions.",
-    "CP006": "GetAllActorsOfClass itera cada actor del world; en Tick o se cachea o se cambia a una lista pre-poblada.",
-    "CP007": "Activar Tick desde el constructor altera el orden de inicialización; muévelo a BeginPlay.",
-    "CP016": "Forzar GC manual interrumpe el frame; deja al engine programar GC salvo en transiciones de nivel concretas.",
+    "CP001": (
+        "FindObject en Tick recorre la GC root"
+        " cada frame (potencialmente miles de"
+        " UObjects) — coste lineal sobre el"
+        " tamaño del world."
+    ),
+    "CP002": (
+        "GetComponent en Tick es O(n) sobre los"
+        " componentes del actor; cachéalo en"
+        " BeginPlay."
+    ),
+    "CP003": (
+        "Tick muy largo bloquea el game thread;"
+        " refactoriza el cuerpo en sub-funciones"
+        " llamadas por estado o usa Timer"
+        " manager."
+    ),
+    "CP004": (
+        "UE_LOG dentro de Tick spamea la consola"
+        " y serializa strings cada frame —"
+        " costoso incluso si el output está"
+        " silenciado."
+    ),
+    "CP005": (
+        "Sleep en game thread congela el render"
+        " y el input; usa async tasks o"
+        " LatentActions."
+    ),
+    "CP006": (
+        "GetAllActorsOfClass itera cada actor del"
+        " world; en Tick o se cachea o se cambia"
+        " a una lista pre-poblada."
+    ),
+    "CP007": (
+        "Activar Tick desde el constructor altera"
+        " el orden de inicialización; muévelo a"
+        " BeginPlay."
+    ),
+    "CP016": (
+        "Forzar GC manual interrumpe el frame;"
+        " deja al engine programar GC salvo en"
+        " transiciones de nivel concretas."
+    ),
 }
 
 
