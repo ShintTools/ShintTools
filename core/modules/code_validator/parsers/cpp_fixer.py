@@ -308,13 +308,10 @@ class CppFixer:
             # One-liner `return WeakPtr.Get();` → turn into ternary
             # to preserve the inline-body shape used in UE getters.
             get_expr = f"{wp_var}.Get()"
-            return_pattern = re.compile(
-                rf"return\s+{re.escape(get_expr)}\s*;"
-            )
+            return_pattern = re.compile(rf"return\s+{re.escape(get_expr)}\s*;")
             if return_pattern.search(stripped):
                 new_line = return_pattern.sub(
-                    f"return {wp_var}.IsValid() "
-                    f"? {get_expr} : nullptr;",
+                    f"return {wp_var}.IsValid() " f"? {get_expr} : nullptr;",
                     original,
                 )
                 lines[idx] = new_line
