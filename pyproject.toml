@@ -1,0 +1,28 @@
+# pyproject.toml
+# Configuración centralizada de todas las herramientas de calidad de código.
+# Así black, isort, flake8 y mypy usan las mismas reglas
+# sin importar si se ejecutan desde VS Code, terminal, o pre-commit.
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.mypy]
+ignore_missing_imports = true
+explicit_package_bases = true
+
+[tool.flake8]
+max-line-length = 88
+# W503: line break before binary operator (black lo hace así, es válido)
+extend-ignore = ["W503"]
+exclude = [
+    "__pycache__",
+    ".git",
+    "*.pyc",
+    "venv",
+    ".venv",
+]
