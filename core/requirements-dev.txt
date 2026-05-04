@@ -1,0 +1,17 @@
+# core/requirements-dev.txt
+#
+# DEV-ONLY dependencies for the ShintTools team's internal R&D.
+# These NEVER ship to studios. The production image (built from
+# requirements.txt) must remain free of third-party telemetry so the
+# 100% offline / on-prem guarantee holds.
+#
+# Install with:
+#     pip install -r requirements.txt -r requirements-dev.txt
+#
+# When experimenting with a new candidate model, use huggingface_hub
+# locally to download it, then upload the .gguf to ShintTools'
+# GitHub Releases and update DEFAULT_MODEL_URL / DEFAULT_MODEL_SHA256
+# in modules/agent/model_downloader.py. The studio-facing downloader
+# only ever talks to GitHub Releases — never to Hugging Face.
+
+huggingface-hub==0.24.6
