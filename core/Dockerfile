@@ -1,6 +1,6 @@
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
-WORKDIR /app
+WORKDIR /app/core
 
 # gcc is required by Cython to compile .py -> .so
 RUN apt-get update && \
@@ -51,9 +51,15 @@ files = [ \
     apt-get purge -y gcc build-essential && \
     apt-get autoremove -y
 
+# Sprint C — ensure models directory exists (for LLM agent)
+RUN mkdir -p /app/core/models
+
+# Make entrypoint executable
+RUN chmod +x entrypoint.sh
+
 EXPOSE 18200
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:18200/health || exit 1
 
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "18200"]
+ENTRYPOINT ["bash", "entrypoint.sh"]

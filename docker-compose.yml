@@ -1,0 +1,48 @@
+services:
+  mongodb:
+    image: mongo:6.0
+    container_name: shinttools-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: shinttools
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: mongosh --eval 'db.adminCommand("ping")'
+      interval: 5s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+  core:
+    build:
+      context: core/
+      dockerfile: Dockerfile
+    container_name: shinttools-core
+    ports:
+      - "18200:18200"
+    environment:
+      MONGODB_URL: "mongodb://mongodb:27017/shinttools"
+      # Sprint C — LLM agent model configuration
+      SHINTTOOLS_MODELS_DIR: "/app/core/models"
+      SHINTTOOLS_MODEL_FILE: "deepseek-coder-1.3b-instruct.Q4_K_M.gguf"
+      SHINTTOOLS_MODEL_URL: "https://github.com/Genesishg1509/ShintTools-Models/releases/download/v1.0-models/deepseek-coder-1.3b-instruct.Q4_K_M.gguf"
+      SHINTTOOLS_MODEL_SHA256: "04cebb6fafa40ae628cf6bfeb76032ec792852f54020c559ad0a56b9f2839118"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: curl -f http://localhost:18200/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    volumes:
+      # Mount models from host so GGUF persists across container restarts
+      - ./models:/app/core/models
+    stdin_open: true
+    tty: true
+
+volumes:
+  mongodb_data:
