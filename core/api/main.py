@@ -77,9 +77,46 @@ async def lifespan(app: FastAPI):
     else:
         print("WARNING: MongoDB not available")
 
-    # TODO Sprint 4: Load NLP models at startup
+    # Sprint C: Load LLM agent model at startup
+    try:
+        from modules.agent.llm_backend import is_loaded, load_model
+        from modules.agent.model_downloader import download_model
+
+        if not is_loaded():
+            print("LLM model not loaded. Checking for GGUF file...")
+            try:
+                model_path = download_model()
+                print(f"Model ready at: {model_path}")
+            except FileNotFoundError as e:
+                print(
+                    f"WARNING: LLM model unavailable (offline?). "
+                    f"Agent endpoints will report 'not available'. "
+                    f"Error: {e}"
+                )
+            except Exception as e:
+                print(
+                    f"WARNING: Failed to prepare LLM model: {e}. "
+                    f"Agent endpoints will report 'not available'."
+                )
+            else:
+                try:
+                    load_model()
+                    print("✓ LLM model loaded successfully")
+                except Exception as e:
+                    print(f"WARNING: Failed to load LLM model: {e}")
+    except ImportError:
+        print("INFO: Agent module not available (develop branch only)")
+
     yield
-    # TODO Sprint 4: NLP resources cleanup
+
+    # Cleanup: unload LLM model on shutdown
+    try:
+        from modules.agent.llm_backend import unload_model
+
+        unload_model()
+        print("LLM model unloaded")
+    except Exception:
+        pass
 
 
 app = FastAPI(
