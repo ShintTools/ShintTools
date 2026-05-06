@@ -7,10 +7,10 @@ from typing import List, Optional, Tuple
 
 try:
     from code_validator.parsers.cpp_parser import CppParser
-    from code_validator.parsers.fix_patterns import PATTERNS, RULE_TO_PATTERN
+    from code_validator.parsers.fix_patterns import RULE_TO_PATTERN
 except ModuleNotFoundError:
     from cpp_parser import CppParser  # type: ignore[no-redef]
-    from fix_patterns import PATTERNS, RULE_TO_PATTERN  # type: ignore[no-redef]
+    from fix_patterns import RULE_TO_PATTERN  # type: ignore[no-redef]
 
 
 class CppFixer:
@@ -167,13 +167,11 @@ class CppFixer:
     ) -> Tuple[str, str, List[str]]:
         """Wrap in null-check using UE5 idiomatic patterns.
 
-        Three strategies:
-        - EXTRACT_CALLABLE: GetWorld(), GetOwner() — assign to local
-          var with inline if-assignment.
-        - EXTRACT_CAST: Cast<Type>(Arg) — extract result into a
-          typed local var, then guard with IsValid().
-        - WRAP: other expressions (SpawnActor, ->, OtherActor, …)
-          — variable already exists, wrap line in IsValid(Var).
+        Handles two cases:
+        1. Direct dereference: GetWorld()->Method()
+           → if (Type* Var = GetWorld()) { Var->Method(); }
+        2. Assignment: Type Var = GetWorld();
+           → if (Type* Var = GetWorld()) { ... }
         """
         lines = code.split("\n")
         idx = line_number - 1
@@ -183,36 +181,46 @@ class CppFixer:
         original = lines[idx]
         indent = " " * (len(original) - len(original.lstrip()))
 
-        # --- EXTRACT_CALLABLE: GetWorld(), GetOwner(), etc. ---
-        EXTRACT_EXPRESSIONS = {
-            "GetWorld()",
-            "GetOwner()",
-            "GetGameInstance()",
+        # --- CALLABLE EXPRESSIONS: GetWorld(), GetOwner(), etc. ---
+        CALLABLE_EXPRESSIONS = {
+            "GetWorld()": ("UWorld*", "World"),
+            "GetOwner()": ("AActor*", "Owner"),
+            "GetGameInstance()": ("UGameInstance*", "GameInstance"),
         }
 
-        if expression in EXTRACT_EXPRESSIONS:
-            null_check_cfg: dict = PATTERNS["null_check"]  # type: ignore[assignment]
-            expressions_map: dict = null_check_cfg["expressions"]
-            config = expressions_map.get(expression, ("auto", "Ptr"))
-            var_type, var_name = config
-            inner = re.sub(
-                re.escape(f"{expression}->"),
-                f"{var_name}->",
-                original.strip(),
-            )
-            guard_line = f"{indent}if ({var_type} {var_name} = {expression})"
-            new_lines = [
-                guard_line,
-                f"{indent}{{",
-                f"{indent}    {inner}",
-                f"{indent}}}",
-            ]
-            lines[idx : idx + 1] = new_lines
-            return (
-                "\n".join(lines),
-                "",
-                [f"Line {line_number}: Added null-check " f"for {expression}"],
-            )
+        if expression in CALLABLE_EXPRESSIONS:
+            var_type, var_name = CALLABLE_EXPRESSIONS[expression]
+            stripped = original.strip()
+
+            # ONLY auto-fix CASE 1: Line has GetWorld()->Method()
+            # This safely replaces GetWorld()-> with Var-> and wraps in if
+            if f"{expression}->" in stripped:
+                inner = stripped.replace(f"{expression}->", f"{var_name}->")
+                guard_line = f"{indent}if ({var_type} {var_name} = {expression})"
+                new_lines = [
+                    guard_line,
+                    f"{indent}{{",
+                    f"{indent}    {inner}",
+                    f"{indent}}}",
+                ]
+                lines[idx : idx + 1] = new_lines
+                return (
+                    "\n".join(lines),
+                    "",
+                    [f"Line {line_number}: Added null-check for {expression}"],
+                )
+            # CASE 2 & 3: Assignment-only or bare call
+            # These require multi-line wrapping, cannot auto-fix safely
+            else:
+                wrap_template = f"if ({var_type} {var_name} = {expression})"
+                return (
+                    code,
+                    "",
+                    [
+                        f"Line {line_number}: Cannot auto-fix {expression}. "
+                        f"Wrap code block in: {wrap_template} {{ ... }}"
+                    ],
+                )
 
         # --- EXTRACT_PARAMETERIZED: GetPlayerController(0),
         #     GetPlayerState<T>() — calls with args or templates ---
