@@ -1,6 +1,9 @@
+import logging
 import os
 
 from motor.motor_asyncio import AsyncIOMotorClient
+
+logger = logging.getLogger("shinttools.db")
 
 # MongoDB connection URL — reads from environment variable or to localhost
 MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27017")
@@ -55,6 +58,10 @@ async def resolve_tier(api_key: str) -> str:
     inactive, or MongoDB is unreachable.
     """
     if not api_key:
+        logger.warning(
+            "resolve_tier: api_key is EMPTY — defaulting to 'free'. "
+            "Set 'api_key' in shinttools.config.json and restart the core."
+        )
         return _DEFAULT_TIER
 
     try:
@@ -63,9 +70,23 @@ async def resolve_tier(api_key: str) -> str:
             {"tier": 1},
         )
         if doc and doc.get("tier"):
-            return doc["tier"]
-    except Exception:
-        pass
+            tier = doc["tier"]
+            logger.info("resolve_tier: key=...%s → tier='%s'", api_key[-6:], tier)
+            return tier
+        else:
+            logger.warning(
+                "resolve_tier: api_key='...%s' not found in 'licenses' collection "
+                "(or 'active' is false). Defaulting to 'free'. "
+                "Run: python core/scripts/seed_license.py --key <your-key> to create it.",
+                api_key[-6:],
+            )
+    except Exception as exc:
+        logger.error(
+            "resolve_tier: MongoDB query FAILED (%s). Defaulting to 'free'. "
+            "Is MongoDB running? Check MONGO_URL env var (current: %s).",
+            exc,
+            os.getenv("MONGO_URL", "mongodb://localhost:27017"),
+        )
 
     return _DEFAULT_TIER
 
