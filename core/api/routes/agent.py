@@ -48,6 +48,9 @@ class _PlanIssue(BaseModel):
     line: int = Field(default=0, ge=0)
     message: str = Field(default="")
     fix_suggestion: str = Field(default="")
+    snippet: str = Field(
+        default="", description="Code snippet context from the issue location."
+    )
     is_auto_fixable: bool = Field(default=False)
 
 
