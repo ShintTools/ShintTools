@@ -77,7 +77,8 @@ async def resolve_tier(api_key: str) -> str:
             logger.warning(
                 "resolve_tier: api_key='...%s' not found in 'licenses' collection "
                 "(or 'active' is false). Defaulting to 'free'. "
-                "Run: python core/scripts/seed_license.py --key <your-key> to create it.",
+                "Run: python core/scripts/seed_license.py "
+                "--key <your-key> to create it.",
                 api_key[-6:],
             )
     except Exception as exc:
