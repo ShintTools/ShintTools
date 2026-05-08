@@ -1,26 +1,23 @@
 # core/api/routes/agent.py
 #
-# Agent layer (Sprint: AI-assisted fix planning + live LLM code review).
+# Agent layer — AI-assisted fix planning and per-issue LLM explanations.
 #
 # Endpoints:
-#   POST /agent/plan   — given a validation report, return a prioritized
-#                        fix plan with per-step rationale.
-#   POST /agent/review — SSE stream of live agent reasoning over source code.
+#   POST /agent/plan    — given a validation report, return a prioritized
+#                         fix plan with per-step rationale (rule-based,
+#                         deterministic — no LLM).
+#   POST /agent/explain — single-issue customer-facing explanation. The
+#                         deterministic rules already detected the issue
+#                         and enriched it with rule_name + rule_explanation;
+#                         the LLM only writes the human-readable text.
 #
-# Slice A (plan): deterministic rule-based prioritizer.
-# Slice C (review): full orchestrator pipeline with local LLM + tool calling.
-#
-# Tier gating: the agent is an Indie-tier feature. Calls from a free key
-# (or a missing key) return 403.
+# Tier gating: both endpoints are Indie-tier features. Calls from a free
+# key (or a missing key) return 403.
 
 from __future__ import annotations
 
-import json
-from typing import AsyncGenerator
-
 from api.database import resolve_tier
 from fastapi import APIRouter, HTTPException, status
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/agent", tags=["agent"])
@@ -35,6 +32,22 @@ class _PlanIssue(BaseModel):
     JSON the plugin already has cached client-side."""
 
     rule_id: str = Field(..., description="Rule identifier, e.g. 'CS001'")
+    rule_name: str = Field(
+        default="",
+        description=(
+            "Humanized title for the rule (e.g. 'GetWorld without"
+            " null-check'). The LLM and the plugin use this in"
+            " customer-facing copy; rule_id is internal only."
+        ),
+    )
+    rule_explanation: str = Field(
+        default="",
+        description=(
+            "Authoritative explanation extracted from the detector's"
+            " docstring (first paragraph). The LLM grounds its"
+            " answers in this text instead of guessing UE5 semantics."
+        ),
+    )
     severity: str = Field(..., description="error | warning | info")
     category: str = Field(
         default="",
@@ -82,65 +95,34 @@ class AgentPlanResponse(BaseModel):
     summary: str = Field(default="", description="Human-readable bucket counts.")
 
 
-# ── Review (SSE stream) models ─────────────────────────────────────────────
+# ── Explain (single-issue direct LLM call) models ──────────────────────────
 
 
-class AgentReviewRequest(BaseModel):
+class AgentExplainRequest(BaseModel):
+    """Single-issue explanation request. Plugin sends ONE issue (already
+    enriched by the orchestrators with rule_name + rule_explanation) and
+    gets a short customer-facing explanation back. No tools, no
+    orchestrator loop — the deterministic rules already detected the
+    issue, the LLM only writes the explanation."""
+
     api_key: str = Field(
         default="", description="License API key — gates the endpoint to Indie+."
     )
-    file_path: str = Field(..., description="Absolute path of the file being reviewed.")
-    file_content: str = Field(..., description="Full UTF-8 source text.")
-    issues: list[_PlanIssue] = Field(
-        default_factory=list, description="Issues from /validate/* to contextualize."
-    )
-    max_iterations: int = Field(
-        default=8, ge=1, le=50, description="Max LLM turns before halt."
+    issue: _PlanIssue = Field(
+        ..., description="The issue to explain. Must include rule_name."
     )
 
 
-class AgentReviewSSEEvent(BaseModel):
-    kind: str = Field(
-        ...,
-        description=("'thinking' | 'tool_call' | 'tool_result' | 'done'."),
+class AgentExplainResponse(BaseModel):
+    success: bool = True
+    explanation: str = Field(default="")
+    generation_seconds: float = Field(
+        default=0.0, description="Wall-clock time spent in the LLM call."
     )
-    payload: str = Field(
-        ...,
-        description=("Event body: raw text for thinking/done, JSON for tools."),
-    )
-    tool_name: str = Field(
-        default="",
-        description="Name when kind is 'tool_call' or 'tool_result'.",
-    )
-
-
-# ── Diagnostics (backend-only health check) ─────────────────────────────────
-
-
-class AgentDiagnosticsResponse(BaseModel):
-    status: str = Field(
-        ...,
-        description="'ok' | 'degraded' | 'error'.",
-    )
-    llm_loaded: bool = Field(..., description="Is the LLM model in memory and ready?")
-    llm_model_path: str = Field(default="", description="Path to GGUF if available.")
-    orchestrator_ok: bool = Field(
-        default=False,
-        description="Did the agent orchestrator run successfully?",
-    )
-    test_ran: bool = Field(default=False, description="Did we execute a test case?")
-    elapsed_seconds: float = Field(
-        default=0.0, description="Total time to run the test."
-    )
-    iterations_used: int = Field(
-        default=0, description="How many LLM turns before completion?"
-    )
-    final_answer: str = Field(
-        default="",
-        description="Agent's conclusion from the test code (truncated).",
-    )
+    tier: str = Field(default="indie")
     error_message: str = Field(
-        default="", description="Error details if status is error."
+        default="",
+        description="Populated only when success=false (LLM unavailable etc).",
     )
 
 
@@ -331,233 +313,69 @@ async def plan(payload: AgentPlanRequest) -> AgentPlanResponse:
     )
 
 
-# ── Review endpoint ────────────────────────────────────────────────────────
+# ── Explain endpoint (direct LLM, no agent orchestrator) ───────────────────
 
 
-async def _agent_review_sse_stream(
-    payload: AgentReviewRequest,
-) -> AsyncGenerator[str, None]:
-    """Run the agent and emit SSE events as it executes.
+@router.post("/explain", response_model=AgentExplainResponse)
+async def explain(payload: AgentExplainRequest) -> AgentExplainResponse:
+    """Generate a short customer-facing explanation for a single issue.
 
-    Event format for Plugin consumption (matches FShintAgentReviewEvent):
-      data: {"kind": "thinking" | "tool_call" | "tool_result" | "done",
-             "payload": "...", "tool_name": "..."}
+    This endpoint bypasses the agent orchestrator entirely: there are no
+    tools, no JSON protocol, no parser. The deterministic rules have
+    already detected the issue and enriched it with rule_name and
+    rule_explanation; the LLM's only job is to turn that into 2-4
+    grounded sentences the developer can act on.
 
-    Events are emitted in order: thinking tokens, tool_call/tool_result pairs,
-    final done event.
+    Tier-gated to Indie+. Returns success=false with an explanation of
+    why if the LLM is not loaded, instead of raising — this lets the
+    plugin show the deterministic message+fix_suggestion as a fallback
+    without crashing the UX.
     """
-    from modules.agent import AgentOrchestrator, default_tool_registry
-    from modules.agent.llm_backend import generate, is_loaded
+    import time
 
-    # Validate LLM is loaded.
-    if not is_loaded():
-        event = {
-            "kind": "done",
-            "payload": "LLM model not loaded — agent is not available.",
-            "tool_name": "",
-        }
-        yield f"data: {json.dumps(event)}\n\n"
-        return
-
-    # Build initial context for the agent (file path + issues for the orchestrator).
-    initial_context = {
-        "file_path": payload.file_path,
-        "file_content": payload.file_content,
-        "issue_count": len(payload.issues),
-        "issues": [i.model_dump(mode="json") for i in payload.issues],
-    }
-
-    # Create orchestrator with real LLM backend.
-    orchestrator = AgentOrchestrator(
-        tool_registry=default_tool_registry,
-        llm_generate_function=generate,
-        max_iterations=payload.max_iterations,
-    )
-
-    # Run the agent (synchronous, blocking).
-    user_request = f"Revisa el archivo {payload.file_path}"
-    result = orchestrator.run(
-        user_request=user_request,
-        initial_context=initial_context,
-    )
-
-    # Emit events from the execution trace.
-    for step in result.steps:
-        action = step.parsed_action
-
-        if action.kind.value == "tool_call" and step.tool_execution_result:
-            # Emit tool call event.
-            tool_call_payload = {
-                "tool": action.tool_name or "",
-                "arguments": action.tool_arguments or {},
-            }
-            event = {
-                "kind": "tool_call",
-                "payload": json.dumps(tool_call_payload),
-                "tool_name": action.tool_name or "",
-            }
-            yield f"data: {json.dumps(event)}\n\n"
-
-            # Emit tool result event (success or error).
-            exec_result = step.tool_execution_result
-            if exec_result.success:
-                tool_result_payload = {"data": exec_result.data}
-            else:
-                tool_result_payload = {"error": exec_result.error_message or ""}
-            result_event = {
-                "kind": "tool_result",
-                "payload": json.dumps(tool_result_payload),
-                "tool_name": action.tool_name or "",
-            }
-            yield f"data: {json.dumps(result_event)}\n\n"
-        elif action.kind.value == "finish" and action.final_answer:
-            # Final answer event.
-            event = {
-                "kind": "done",
-                "payload": action.final_answer,
-                "tool_name": "",
-            }
-            yield f"data: {json.dumps(event)}\n\n"
-
-
-@router.post("/review")
-async def review(payload: AgentReviewRequest) -> StreamingResponse:
-    """Stream live LLM-powered code review with tool calling.
-
-    Agent reasoning over source code, calling tools to analyze, extract excerpts,
-    and apply fixes. Returns SSE events matching FShintAgentReviewEvent.
-
-    Tier-gated to Indie+. Requires the model to be loaded on startup.
-    """
     tier = await resolve_tier(payload.api_key)
     if tier == "free":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Agent Review is an Indie-tier feature.",
+            detail="AI explanations are an Indie-tier feature.",
         )
 
-    return StreamingResponse(
-        _agent_review_sse_stream(payload),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",  # Disable proxy buffering so events stream live.
-        },
-    )
+    from modules.agent.explainer import explain_issue
+    from modules.agent.llm_backend import is_loaded
 
+    if not is_loaded():
+        return AgentExplainResponse(
+            success=False,
+            explanation="",
+            generation_seconds=0.0,
+            tier=tier,
+            error_message="LLM model not loaded — agent is not available.",
+        )
 
-# ── Diagnostics endpoint ───────────────────────────────────────────────────
+    # Pydantic strips unknown fields by default. We pass the issue as a
+    # plain dict to the explainer so any extra fields the orchestrator
+    # added (context_before, snippet, asset_path, graph) survive.
+    issue_payload_dict = payload.issue.model_dump(mode="json")
 
+    started_at = time.perf_counter()
+    try:
+        generated_text = explain_issue(issue_payload_dict)
+    except Exception as unexpected_error:
+        return AgentExplainResponse(
+            success=False,
+            explanation="",
+            generation_seconds=round(time.perf_counter() - started_at, 2),
+            tier=tier,
+            error_message=(
+                f"LLM generation failed: "
+                f"{type(unexpected_error).__name__}: {unexpected_error}"
+            ),
+        )
 
-@router.get("/diagnostics", response_model=AgentDiagnosticsResponse)
-async def diagnostics() -> AgentDiagnosticsResponse:
-    """Backend-only diagnostics: quick health check of the LLM agent.
-
-    No API key required (internal tool). Measures agent responsiveness by
-    running a minimal test case: analyze a simple C++ snippet with a known
-    issue, measure round-trip time and iteration count.
-
-    Status codes:
-      - 'ok': model loaded, orchestrator ran, agent finished
-      - 'degraded': model unavailable but API responsive
-      - 'error': exception or fatal failure
-    """
-    import time
-
-    response = AgentDiagnosticsResponse(
-        status="degraded",
-        llm_loaded=False,
-        llm_model_path="",
-        orchestrator_ok=False,
-        test_ran=False,
-        elapsed_seconds=0.0,
-        iterations_used=0,
-        final_answer="",
+    return AgentExplainResponse(
+        success=True,
+        explanation=generated_text,
+        generation_seconds=round(time.perf_counter() - started_at, 2),
+        tier=tier,
         error_message="",
     )
-
-    try:
-        from pathlib import Path
-
-        from modules.agent.llm_backend import is_loaded
-
-        # Check if model exists and is loadable.
-        response.llm_loaded = is_loaded()
-        try:
-            # Try to find model path (matches llm_backend._resolved_model_path logic)
-            import os
-
-            models_dir = Path(
-                os.environ.get(
-                    "SHINTTOOLS_MODELS_DIR",
-                    Path(__file__).resolve().parent.parent.parent / "models",
-                )
-            )
-            model_file = os.environ.get(
-                "SHINTTOOLS_MODEL_FILE",
-                "deepseek-coder-1.3b-instruct.Q4_K_M.gguf",
-            )
-            model_path = models_dir / model_file
-            if model_path.exists():
-                response.llm_model_path = str(model_path)
-        except Exception:
-            pass
-
-        if not response.llm_loaded:
-            response.status = "degraded"
-            response.error_message = "LLM model not loaded"
-            return response
-
-        # Test the orchestrator with simple C++ code.
-        from modules.agent import AgentOrchestrator, default_tool_registry
-        from modules.agent.llm_backend import generate
-
-        test_code = """void AMyActor::BeginPlay()
-{
-    Super::BeginPlay();
-    UWorld* World = GetWorld();
-    AActor* Result = World->SpawnActor<AActor>();
-    Result->SetActorLocation(FVector(0, 0, 0));
-}"""
-
-        orchestrator = AgentOrchestrator(
-            tool_registry=default_tool_registry,
-            llm_generate_function=generate,
-            max_iterations=5,
-        )
-
-        start = time.time()
-        result = orchestrator.run(
-            user_request="Revisa este codigo C++ de Unreal Engine",
-            initial_context={
-                "file_path": "MyActor.cpp",
-                "file_content": test_code,
-                "issue_count": 0,
-                "issues": [],
-            },
-        )
-        elapsed = time.time() - start
-
-        response.test_ran = True
-        response.elapsed_seconds = round(elapsed, 2)
-        response.iterations_used = len(result.steps)
-        response.orchestrator_ok = True
-
-        # Capture final answer (truncate to 200 chars for readability).
-        if result.steps:
-            last_step = result.steps[-1]
-            if last_step.parsed_action.final_answer:
-                response.final_answer = last_step.parsed_action.final_answer[:200]
-
-        # Status: ok if agent finished normally.
-        if result.halt_reason.value == "finished_normally":
-            response.status = "ok"
-        else:
-            response.status = "degraded"
-            response.error_message = f"Halt reason: {result.halt_reason.value}"
-
-    except Exception as e:
-        response.status = "error"
-        response.error_message = str(e)
-
-    return response

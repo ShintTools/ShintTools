@@ -19,12 +19,12 @@ from pydantic import BaseModel, Field
 # Add modules path to import code_validator rules
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "modules"))
 
-from code_validator.parsers.cpp_fixer import CppFixer  # noqa: E402
-from code_validator.parsers.fix_patterns import RULE_TO_PATTERN  # noqa: E402
-from code_validator.rules.blueprint_rules import (  # noqa: E402
+from code_validator.parsers.fixers.cpp_fixer import CppFixer  # noqa: E402
+from code_validator.parsers.fixers.fix_patterns import RULE_TO_PATTERN  # noqa: E402
+from code_validator.rules.blueprint.blueprint_orchestrator import (  # noqa: E402
     run_all_blueprint_rules_from_export,
 )
-from code_validator.rules.cpp.ue5_cpp_rules import run_all_cpp_rules  # noqa: E402
+from code_validator.rules.cpp.cpp_orchestrator import run_all_cpp_rules  # noqa: E402
 from code_validator.tiers import filter_issues_by_tier  # noqa: E402
 from metrics.score_calculator import (  # noqa: E402
     compute_score,

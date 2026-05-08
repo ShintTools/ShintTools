@@ -37,7 +37,7 @@ sys.path.insert(0, _CORE)
 sys.path.insert(0, os.path.join(_CORE, "modules"))
 sys.path.insert(
     0,
-    os.path.join(_CORE, "modules", "code_validator", "parsers"),
+    os.path.join(_CORE, "modules", "code_validator", "parsers", "fixers"),
 )
 
 from code_validator.rules.cpp.cpp_maintainability import (  # noqa: E402

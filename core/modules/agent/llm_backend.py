@@ -87,10 +87,35 @@ def unload_model() -> None:
     _llama = None
 
 
+# Default stop sequences. The agent protocol asks for a single JSON
+# object per turn; small models (1.3B-class) routinely keep generating
+# past the closing brace, hallucinating "# Developer response", code
+# fences, or follow-on prose. These stops cut generation as soon as
+# any of those patterns START, leaving the JSON intact.
+#
+# Why these specific patterns:
+#   "\n\n"    — A blank line. Pretty-printed JSON has single newlines
+#               but never blank lines, so this only fires AFTER the
+#               action JSON ends and the model tries to elaborate.
+#               This catches the "# Developer response" / "# Final
+#               answer" pattern observed in the first smoke run, since
+#               those headings always come after a blank line.
+#   "\n```"   — Markdown code fence opening — common follow-up where
+#               the model tries to "show the fixed code" after the JSON.
+#
+# Earlier we also tried "\n# " (markdown heading right after a single
+# newline), but that was too aggressive: the model often produces a
+# leading `\n` before its first JSON token, and `\n# ` matched on the
+# very first heading-like fragment, killing the response at zero
+# tokens. The blank-line variant ("\n\n") catches the realistic noise
+# pattern without ever firing inside a valid JSON action.
+_DEFAULT_STOPS: list[str] = ["\n\n#", "\n```"]
+
+
 def generate(
     prompt: str,
     *,
-    max_tokens: int = 512,
+    max_tokens: int = 1024,
     temperature: float = 0.2,
     stop: list[str] | None = None,
 ) -> str:
@@ -98,14 +123,19 @@ def generate(
 
     Returns the generated text (no metadata). Streaming is added in
     Fase 4 when the SSE endpoint is wired up.
+
+    `stop` defaults to a set of patterns chosen to keep a 1.3B model on
+    the agent protocol (single JSON object per turn). Pass an explicit
+    list (including `[]`) to override.
     """
     if _llama is None:
         raise RuntimeError("Model not loaded — call load_model() first.")
 
+    effective_stop = stop if stop is not None else _DEFAULT_STOPS
     out = _llama(
         prompt,
         max_tokens=max_tokens,
         temperature=temperature,
-        stop=stop or [],
+        stop=effective_stop,
     )
     return out["choices"][0]["text"]

@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Dict
 
 try:
-    from code_validator.parsers.cpp_fixer import CppFixer
-    from code_validator.parsers.fix_patterns import RULE_TO_PATTERN
+    from code_validator.parsers.fixers.cpp_fixer import CppFixer
+    from code_validator.parsers.fixers.fix_patterns import RULE_TO_PATTERN
 except ModuleNotFoundError:
     RULE_TO_PATTERN = {}
     CppFixer = None  # type: ignore[assignment,misc]
