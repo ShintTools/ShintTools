@@ -1,57 +1,38 @@
 # core/modules/agent/__init__.py
 #
-# Sprint C — Local LLM agent for ShintTools.
+# Local LLM explainer for ShintTools.
 #
-# Three-layer architecture, built one Fase at a time:
-#   Fase 1  llm_backend                 local inference via llama-cpp-python
-#   Fase 2  tool_registry / tool_…      existing rules wrapped as agent tools
-#   Fase 3  prompt_builder / parser /   the agent loop (LLM <-> tools)
-#           orchestrator
-#   Fase 4  (pending)                   FastAPI SSE endpoint
-#   Fase 5  (pending)                   Docker integration
+# The deterministic rules under code_validator/ and naming/ already
+# detect issues and (for C++) apply Tree-sitter fixes. This package's
+# only role is to take a single enriched issue and turn it into a
+# short, customer-facing explanation via a local GGUF model — no
+# tools, no JSON protocol, no orchestrator loop.
 #
-# This package's __init__ re-exports the small public surface that other
-# modules (api/routes/agent.py in Fase 4, the FastAPI lifespan, tests)
-# need. Everything not re-exported here is internal — feel free to
-# refactor without crossing module boundaries.
+# Public surface re-exported here for callers (api/routes/agent.py,
+# scripts/smoke_llm_explainer.py, future tests):
 #
-# IMPORTANT: importing this package eagerly imports tool_implementations,
-# which has the side-effect of registering each concrete tool on
-# default_tool_registry. This means production code can simply do
+#     from modules.agent import explain_issue, build_explainer_prompt
+#     from modules.agent import generate, is_loaded, load_model
 #
-#     from modules.agent import default_tool_registry, AgentOrchestrator
-#
-# and trust that all built-in tools are already available.
+# Earlier sprints prototyped a tool-calling agent (orchestrator, tool
+# registry, action parser, multi-domain prompt builder). That layer
+# was removed when we confirmed a 1.3B-class model cannot reliably
+# follow a JSON tool-calling protocol AND there was nothing for the
+# agent to investigate — the rules had already done the detection.
+# If we ever need an agentic flow again (multi-file analysis, fix
+# orchestration), build it from scratch with the right model size
+# and contract for that specific task.
 
-# Side-effect import: populates default_tool_registry. Keep last so the
-# names above are bound first (avoids subtle circular-import surprises
-# if a future tool wants to import from this package).
-from . import tool_implementations  # noqa: F401
-from .action_parser import AgentActionKind, ParsedAction
-from .orchestrator import AgentHaltReason, AgentOrchestrator, AgentRunResult, AgentStep
-from .tool_registry import (
-    ToolDefinition,
-    ToolExecutionResult,
-    ToolHandler,
-    ToolRegistry,
-    default_tool_registry,
-    register_tool,
-)
+from .explainer import build_explainer_prompt, explain_issue
+from .llm_backend import generate, is_loaded, load_model, unload_model
 
 __all__ = [
-    # Action / parser layer
-    "AgentActionKind",
-    "ParsedAction",
-    # Orchestrator layer
-    "AgentHaltReason",
-    "AgentOrchestrator",
-    "AgentRunResult",
-    "AgentStep",
-    # Tool registry
-    "ToolDefinition",
-    "ToolExecutionResult",
-    "ToolHandler",
-    "ToolRegistry",
-    "default_tool_registry",
-    "register_tool",
+    # Direct explainer (production path for /agent/explain)
+    "build_explainer_prompt",
+    "explain_issue",
+    # Local model lifecycle
+    "generate",
+    "is_loaded",
+    "load_model",
+    "unload_model",
 ]

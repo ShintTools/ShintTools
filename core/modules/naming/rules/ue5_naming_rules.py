@@ -482,7 +482,7 @@ def _build_issue(
     rule_id: str,
     asset_path: str,
     current_name: str,
-    suggested_name: str,
+    fix_suggestion: str,
     asset_type: str,
     message: str,
 ) -> Issue:
@@ -490,7 +490,7 @@ def _build_issue(
     return {
         "asset_path": asset_path,
         "current_name": current_name,
-        "suggested_name": suggested_name,
+        "fix_suggestion": fix_suggestion,
         "severity": _NM_SEVERITY,
         "rule_id": rule_id,
         "category": _resolve_category(asset_type, asset_path),
@@ -560,6 +560,12 @@ for _fr in _FOLDER_RULES:
 def detect_missing_prefix(asset_records: List[AssetRecord]) -> List[Issue]:
     """NM001: flag assets that lack a valid UE5 type prefix.
 
+    UE5 conventions require every asset to start with a short prefix
+    identifying its class. Without a prefix, assets are hard to find
+    by type in the Content Browser and risk colliding with other
+    types when referenced by name in code. Add the prefix that
+    matches the asset's type.
+
     Uses asset_type from AssetRegistry when available, otherwise
     infers from folder name. Assets in unrecognised folders are
     flagged with type 'Unknown'.
@@ -593,7 +599,7 @@ def detect_missing_prefix(asset_records: List[AssetRecord]) -> List[Issue]:
                     rule_id="NM001",
                     asset_path=asset_path,
                     current_name=asset_name,
-                    suggested_name=asset_name,
+                    fix_suggestion=asset_name,
                     asset_type=resolved_type,
                     message=("Asset name has no recognised UE5 naming prefix."),
                 )
@@ -605,7 +611,7 @@ def detect_missing_prefix(asset_records: List[AssetRecord]) -> List[Issue]:
                 rule_id="NM001",
                 asset_path=asset_path,
                 current_name=asset_name,
-                suggested_name=_suggest_prefixed_name(asset_name, required_prefix),
+                fix_suggestion=_suggest_prefixed_name(asset_name, required_prefix),
                 asset_type=resolved_type,
                 message=(
                     f"Missing prefix '{required_prefix}' " f"for {resolved_type}."
@@ -635,13 +641,13 @@ def detect_spaces_in_name(asset_records: List[AssetRecord]) -> List[Issue]:
         if " " not in asset_name:
             continue
 
-        suggested_name = asset_name.replace(" ", "_")
+        fix_suggestion = asset_name.replace(" ", "_")
         issues.append(
             _build_issue(
                 rule_id="NM002",
                 asset_path=asset_path,
                 current_name=asset_name,
-                suggested_name=suggested_name,
+                fix_suggestion=fix_suggestion,
                 asset_type="Unknown",
                 message=(
                     "Asset name contains spaces. "
@@ -672,14 +678,14 @@ def detect_special_chars(asset_records: List[AssetRecord]) -> List[Issue]:
         if not illegal_chars:
             continue
 
-        suggested_name = _ILLEGAL_CHAR_PATTERN.sub("_", asset_name)
+        fix_suggestion = _ILLEGAL_CHAR_PATTERN.sub("_", asset_name)
         unique_illegal = ", ".join(sorted(set(illegal_chars)))
         issues.append(
             _build_issue(
                 rule_id="NM003",
                 asset_path=asset_path,
                 current_name=asset_name,
-                suggested_name=suggested_name,
+                fix_suggestion=fix_suggestion,
                 asset_type="Unknown",
                 message=(
                     "Asset name contains illegal characters: " f"{unique_illegal}."
@@ -713,13 +719,13 @@ def detect_lowercase_names(asset_records: List[AssetRecord]) -> List[Issue]:
         if not first_char.isalpha() or first_char.isupper():
             continue
 
-        suggested_name = first_char.upper() + asset_name[1:]
+        fix_suggestion = first_char.upper() + asset_name[1:]
         issues.append(
             _build_issue(
                 rule_id="NM004",
                 asset_path=asset_path,
                 current_name=asset_name,
-                suggested_name=suggested_name,
+                fix_suggestion=fix_suggestion,
                 asset_type="Unknown",
                 message=(
                     "Asset name starts with lowercase. "
@@ -774,7 +780,7 @@ def detect_duplicate_names(asset_records: List[AssetRecord]) -> List[Issue]:
                     rule_id="NM005",
                     asset_path=duplicate_path,
                     current_name=original_name,
-                    suggested_name=original_name,
+                    fix_suggestion=original_name,
                     asset_type="Unknown",
                     message=(
                         f"Duplicate asset name '{original_name}' "
@@ -855,13 +861,13 @@ def detect_missing_tex_suffix(
         if has_valid_suffix:
             continue
 
-        suggested_name = asset_name + "_D"
+        fix_suggestion = asset_name + "_D"
         issues.append(
             _build_issue(
                 rule_id="NM006",
                 asset_path=asset_path,
                 current_name=asset_name,
-                suggested_name=suggested_name,
+                fix_suggestion=fix_suggestion,
                 asset_type="Texture2D",
                 message=(
                     f"Texture '{asset_name}' has no channel suffix. "
@@ -929,18 +935,18 @@ def detect_non_pascal_case(
         # Re-attach the original prefix
         prefix_match = _PREFIX_STRIP_PATTERN.match(asset_name)
         original_prefix = prefix_match.group(0) if prefix_match else ""
-        suggested_name = original_prefix + pascal_body
+        fix_suggestion = original_prefix + pascal_body
 
         issues.append(
             _build_issue(
                 rule_id="NM007",
                 asset_path=asset_path,
                 current_name=asset_name,
-                suggested_name=suggested_name,
+                fix_suggestion=fix_suggestion,
                 asset_type="Unknown",
                 message=(
                     f"'{asset_name}' is not PascalCase after the "
-                    f"prefix — rename to '{suggested_name}'."
+                    f"prefix — rename to '{fix_suggestion}'."
                 ),
             )
         )
@@ -977,13 +983,13 @@ def detect_name_too_long(
         if len(asset_name) <= _MAX_ASSET_NAME_LENGTH:
             continue
 
-        suggested_name = asset_name[:_MAX_ASSET_NAME_LENGTH]
+        fix_suggestion = asset_name[:_MAX_ASSET_NAME_LENGTH]
         issues.append(
             _build_issue(
                 rule_id="NM008",
                 asset_path=asset_path,
                 current_name=asset_name,
-                suggested_name=suggested_name,
+                fix_suggestion=fix_suggestion,
                 asset_type="Unknown",
                 message=(
                     f"Asset name is {len(asset_name)} characters "
@@ -1005,6 +1011,12 @@ def detect_wrong_folder(
     asset_records: List[AssetRecord],
 ) -> List[Issue]:
     """NM009: flag assets whose type does not match their folder.
+
+    A StaticMesh in /Textures/ or a Blueprint in /Materials/ confuses
+    team members browsing the Content Browser and breaks any tooling
+    that resolves assets by folder convention. Move the asset to its
+    expected folder, or rename the folder if it intentionally holds
+    mixed types.
 
     Uses the real asset_type from UE5 AssetRegistry (sent by the plugin).
     Skips assets with Unknown type — requires real type to be useful.
@@ -1046,7 +1058,7 @@ def detect_wrong_folder(
                 rule_id="NM009",
                 asset_path=asset_path,
                 current_name=asset_name,
-                suggested_name=asset_name,
+                fix_suggestion=asset_name,
                 asset_type=asset_type,
                 message=(
                     f"'{asset_name}' is a {asset_type} but is "
@@ -1080,13 +1092,13 @@ def detect_double_prefix(asset_records: List[AssetRecord]) -> List[Issue]:
             continue
 
         duplicated_prefix = prefix_match.group(1)
-        suggested_name = asset_name[len(duplicated_prefix) :]
+        fix_suggestion = asset_name[len(duplicated_prefix) :]
         issues.append(
             _build_issue(
                 rule_id="NM010",
                 asset_path=asset_path,
                 current_name=asset_name,
-                suggested_name=suggested_name,
+                fix_suggestion=fix_suggestion,
                 asset_type="Unknown",
                 message=(
                     f"Duplicated prefix '{duplicated_prefix}' "
@@ -1115,13 +1127,13 @@ def detect_number_start(asset_records: List[AssetRecord]) -> List[Issue]:
         if not asset_name or not asset_name[0].isdigit():
             continue
 
-        suggested_name = "A_" + asset_name
+        fix_suggestion = "A_" + asset_name
         issues.append(
             _build_issue(
                 rule_id="NM011",
                 asset_path=asset_path,
                 current_name=asset_name,
-                suggested_name=suggested_name,
+                fix_suggestion=fix_suggestion,
                 asset_type="Unknown",
                 message=(
                     f"'{asset_name}' starts with a number — "
@@ -1153,13 +1165,13 @@ def detect_consecutive_underscores(
         if not consecutive_underscore_pattern.search(asset_name):
             continue
 
-        suggested_name = consecutive_underscore_pattern.sub("_", asset_name)
+        fix_suggestion = consecutive_underscore_pattern.sub("_", asset_name)
         issues.append(
             _build_issue(
                 rule_id="NM012",
                 asset_path=asset_path,
                 current_name=asset_name,
-                suggested_name=suggested_name,
+                fix_suggestion=fix_suggestion,
                 asset_type="Unknown",
                 message=(
                     f"'{asset_name}' contains consecutive "
@@ -1190,13 +1202,13 @@ def detect_trailing_underscore(
         if not asset_name.endswith("_"):
             continue
 
-        suggested_name = asset_name.rstrip("_")
+        fix_suggestion = asset_name.rstrip("_")
         issues.append(
             _build_issue(
                 rule_id="NM013",
                 asset_path=asset_path,
                 current_name=asset_name,
-                suggested_name=suggested_name,
+                fix_suggestion=fix_suggestion,
                 asset_type="Unknown",
                 message=(
                     f"'{asset_name}' ends with an underscore "
@@ -1257,6 +1269,12 @@ _ONLY_DIGITS_AFTER_PREFIX: re.Pattern = re.compile(r"^[A-Z]+_\d+$")
 
 def detect_generic_name(asset_records: List[AssetRecord]) -> List[Issue]:
     """NM014: flag assets with generic or placeholder names.
+
+    Generic names like 'Test', 'New', 'Untitled', or 'Asset1' don't
+    describe what the asset actually is, making them impossible to
+    find by search and a maintenance burden as the project grows.
+    Rename to something descriptive of the asset's purpose.
+
     Uses folder inference to give context-aware messages.
     Only flags names that are obviously non-descriptive.
     """
@@ -1276,7 +1294,7 @@ def detect_generic_name(asset_records: List[AssetRecord]) -> List[Issue]:
                     rule_id="NM014",
                     asset_path=asset_path,
                     current_name=asset_name,
-                    suggested_name=asset_name,
+                    fix_suggestion=asset_name,
                     asset_type=asset_type,
                     message=(
                         f"'{asset_name}' uses only digits after "
@@ -1303,7 +1321,7 @@ def detect_generic_name(asset_records: List[AssetRecord]) -> List[Issue]:
                 rule_id="NM014",
                 asset_path=asset_path,
                 current_name=asset_name,
-                suggested_name=asset_name,
+                fix_suggestion=asset_name,
                 asset_type=asset_type,
                 message=(
                     f"'{asset_name}' is a generic placeholder "
@@ -1365,13 +1383,13 @@ def detect_version_suffix(asset_records: List[AssetRecord]) -> List[Issue]:
         if not matched_suffix:
             continue
 
-        suggested_name = asset_name[: -len(matched_suffix)]
+        fix_suggestion = asset_name[: -len(matched_suffix)]
         issues.append(
             _build_issue(
                 rule_id="NM015",
                 asset_path=asset_path,
                 current_name=asset_name,
-                suggested_name=suggested_name,
+                fix_suggestion=fix_suggestion,
                 asset_type="Unknown",
                 message=(
                     f"'{asset_name}' uses a version/status "
@@ -1427,18 +1445,18 @@ def detect_wrong_prefix_for_type(
             continue
 
         # Asset has a valid prefix but it's wrong for its type
-        suggested_name = _suggest_prefixed_name(asset_name, expected_prefix)
+        fix_suggestion = _suggest_prefixed_name(asset_name, expected_prefix)
         issues.append(
             _build_issue(
                 rule_id="NM016",
                 asset_path=asset_path,
                 current_name=asset_name,
-                suggested_name=suggested_name,
+                fix_suggestion=fix_suggestion,
                 asset_type=asset_type,
                 message=(
                     f"'{asset_name}' has prefix for a different "
                     f"type — expected '{expected_prefix}' for "
-                    f"{asset_type}. Rename to '{suggested_name}'."
+                    f"{asset_type}. Rename to '{fix_suggestion}'."
                 ),
             )
         )
@@ -1486,7 +1504,7 @@ def detect_name_too_short(
                 rule_id="NM017",
                 asset_path=asset_path,
                 current_name=asset_name,
-                suggested_name=asset_name,
+                fix_suggestion=asset_name,
                 asset_type="Unknown",
                 message=(
                     f"'{asset_name}' has only {len(body)} "
@@ -1584,22 +1602,22 @@ def detect_redundant_type_in_name(
         # Strip leading underscore if present after removal
         cleaned_body = cleaned_body.lstrip("_")
         if cleaned_body:
-            suggested_name = original_prefix + cleaned_body
+            fix_suggestion = original_prefix + cleaned_body
         else:
-            suggested_name = asset_name  # Can't suggest empty body
+            fix_suggestion = asset_name  # Can't suggest empty body
 
         issues.append(
             _build_issue(
                 rule_id="NM018",
                 asset_path=asset_path,
                 current_name=asset_name,
-                suggested_name=suggested_name,
+                fix_suggestion=fix_suggestion,
                 asset_type=asset_type,
                 message=(
                     f"'{asset_name}' repeats the type word "
                     f"'{matched_word}' after the prefix — the "
                     f"prefix already identifies the type. "
-                    f"Rename to '{suggested_name}'."
+                    f"Rename to '{fix_suggestion}'."
                 ),
             )
         )
