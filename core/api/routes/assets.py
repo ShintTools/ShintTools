@@ -47,7 +47,7 @@ class AssetScanRequest(BaseModel):
 class AssetIssueEntry(BaseModel):
     asset_path: str = ""
     current_name: str = ""
-    suggested_name: str = ""
+    fix_suggestion: str = ""
     reason: str = ""
     asset_type: str = ""
 
@@ -142,7 +142,7 @@ async def fix_assets(payload: AssetFixRequest):
 
     renamed = 0
     for issue in payload.issues:
-        if apply_asset_rename(issue.asset_path, issue.suggested_name):
+        if apply_asset_rename(issue.asset_path, issue.fix_suggestion):
             renamed += 1
 
     return {"assets_renamed": renamed}

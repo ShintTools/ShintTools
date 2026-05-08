@@ -11,6 +11,9 @@ venv/
 core/models/*
 !core/models/.gitkeep
 
+# Claude Code workspace (memoria local + settings personales)
+.claude/
+
 # Pytest
 .pytest_cache/
 htmlcov/

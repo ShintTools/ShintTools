@@ -1,11 +1,13 @@
 import json
 from pathlib import Path
 
-from code_validator.rules.cpp.ue5_cpp_rules import (
-    detect_find_object_in_tick,
-    detect_get_component_in_tick,
+from code_validator.rules.cpp.cpp_best_practices import (
     detect_infinite_loop,
     detect_runtime_load,
+)
+from code_validator.rules.cpp.cpp_performance import (
+    detect_find_object_in_tick,
+    detect_get_component_in_tick,
 )
 
 # Path to fixtures folder

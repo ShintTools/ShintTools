@@ -2,3 +2,7 @@
 #
 # C++ rule modules organized by category.
 # Each module exports its detector functions for use by the runner.
+
+from code_validator.rules.cpp.cpp_orchestrator import run_all_cpp_rules
+
+__all__ = ["run_all_cpp_rules"]
