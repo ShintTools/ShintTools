@@ -106,13 +106,24 @@ async def scan_assets(payload: AssetScanRequest):
     issues = run_all_naming_rules(asset_records)
     scan_time = round(time.perf_counter() - t0, 4)
 
+    is_free = tier == "free"
+    capped = asset_limit is not None and total_before_cap > asset_limit
     summary = {
         "total_assets": total_before_cap,
         "assets_scanned": len(asset_records),
-        "assets_capped": asset_limit is not None and total_before_cap > asset_limit,
+        "assets_capped": capped,  # legacy field, kept for older plugin builds
         "invalid_assets": len(issues),
         "scan_time_seconds": scan_time,
         "tier": tier,
+        # ── Canonical cap-metadata (consumed by UE5 + Unity plugins).
+        # `limit_applied` reflects the tier policy (Free always caps,
+        # even if the project happens to have ≤ 500 assets), so the
+        # plugin can render an "X of Y assets — upgrade for full scan"
+        # banner without trusting client-side heuristics.
+        "limit_applied": is_free,
+        "limit_kind": "assets",
+        "limit_value": asset_limit if asset_limit is not None else total_before_cap,
+        "total_available": total_before_cap,
     }
 
     # Persist to MongoDB
