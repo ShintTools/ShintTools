@@ -25,7 +25,16 @@ from code_validator.rules.blueprint.blueprint_orchestrator import (  # noqa: E40
     run_all_blueprint_rules_from_export,
 )
 from code_validator.rules.cpp.cpp_orchestrator import run_all_cpp_rules  # noqa: E402
-from code_validator.tiers import filter_issues_by_tier  # noqa: E402
+from code_validator.rules._rule_metadata import RULE_NAMES  # noqa: E402
+from code_validator.tiers import FREE_RULES, filter_issues_by_tier  # noqa: E402
+
+# Total code-validator rules available (C++ + Blueprint), excluding
+# asset-naming (NM*) which lives in /assets/scan. Computed once at
+# import so the summary can advertise "X of Y rules" without a per-
+# request recount.
+_TOTAL_CODE_RULES: int = sum(
+    1 for rid in RULE_NAMES if not rid.startswith("NM")
+)
 from metrics.score_calculator import (  # noqa: E402
     compute_score,
     recalculate_after_fixes,
@@ -172,16 +181,31 @@ def _get_severity_for_rule(rule_id: str) -> str:
 def _build_summary(
     issues: list[dict],
     files_scanned: int = 1,
+    tier: str = "free",
 ) -> dict:
-    """Build a standard summary dict from a list of issues."""
+    """Build a standard summary dict from a list of issues.
+
+    Includes cap-metadata fields so the plugin can render an
+    "X of Y rules — upgrade for full coverage" banner without
+    trusting any client-side heuristic. `limit_applied` is part
+    of the signed payload (Phase A), so the plugin cannot lie
+    about whether the cap was applied.
+    """
     errors = sum(1 for i in issues if i.get("severity") == "error")
     warnings = sum(1 for i in issues if i.get("severity") == "warning")
+    is_free = tier == "free"
     return {
         "total": len(issues),
         "issues": len(issues),
         "errors": errors,
         "warnings": warnings,
         "files_scanned": files_scanned,
+        "tier": tier,
+        # ── Free-tier cap metadata (consumed by UE5 + Unity plugins)
+        "limit_applied": is_free,
+        "limit_kind": "rules",
+        "limit_value": len(FREE_RULES) if is_free else _TOTAL_CODE_RULES,
+        "total_available": _TOTAL_CODE_RULES,
     }
 
 
@@ -274,7 +298,7 @@ async def validate_code(payload: ValidateCodeRequest):
     tier = await resolve_tier(payload.api_key)
     issues = filter_issues_by_tier(issues, tier)
 
-    summary = _build_summary(issues, files_scanned=1)
+    summary = _build_summary(issues, files_scanned=1, tier=tier)
     await _persist_result("code_validator", summary, issues)
 
     return {"summary": summary, "issues": issues, "tier": tier}
@@ -306,6 +330,7 @@ async def validate_project(payload: ValidateProjectRequest):
     summary = _build_summary(
         all_issues,
         files_scanned=files_scanned,
+        tier=tier,
     )
     await _persist_result("code_validator_project", summary, all_issues)
 
@@ -355,6 +380,7 @@ async def validate_blueprints(
     summary = _build_summary(
         all_issues,
         files_scanned=blueprints_scanned,
+        tier=tier,
     )
     await _persist_result("code_validator_blueprints", summary, all_issues)
 
