@@ -3,21 +3,32 @@
 # Agent layer — AI-assisted fix planning and per-issue LLM explanations.
 #
 # Endpoints:
-#   POST /agent/plan    — given a validation report, return a prioritized
-#                         fix plan with per-step rationale (rule-based,
-#                         deterministic — no LLM).
-#   POST /agent/explain — single-issue customer-facing explanation. The
-#                         deterministic rules already detected the issue
-#                         and enriched it with rule_name + rule_explanation;
-#                         the LLM only writes the human-readable text.
+#   POST /agent/plan            — given a validation report, return a
+#                                 prioritized fix plan with per-step
+#                                 rationale (rule-based, deterministic
+#                                 — no LLM).
+#   POST /agent/explain         — single-issue customer-facing
+#                                 explanation. Synchronous: client
+#                                 waits for the full text. Cached by
+#                                 sha1(model_id, prompt) in MongoDB.
+#   POST /agent/explain/stream  — same input as /agent/explain but
+#                                 returns the explanation as a stream
+#                                 of Server-Sent Events so the plugin
+#                                 can show tokens as they arrive
+#                                 instead of waiting 20-40 s on a
+#                                 cold cache miss.
 #
-# Tier gating: both endpoints are Indie-tier features. Calls from a free
-# key (or a missing key) return 403.
+# Tier gating: all explain endpoints are Indie-tier features. Calls
+# from a free key (or a missing key) return 403.
 
 from __future__ import annotations
 
+import json
+from typing import AsyncIterator
+
 from api.database import resolve_tier
 from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/agent", tags=["agent"])
@@ -117,7 +128,20 @@ class AgentExplainResponse(BaseModel):
     success: bool = True
     explanation: str = Field(default="")
     generation_seconds: float = Field(
-        default=0.0, description="Wall-clock time spent in the LLM call."
+        default=0.0,
+        description=(
+            "Wall-clock time spent in the LLM call. 0.0 on a cache hit"
+            " — the explanation was served from MongoDB without"
+            " invoking the model."
+        ),
+    )
+    cached: bool = Field(
+        default=False,
+        description=(
+            "True when the response was served from the MongoDB"
+            " explanation cache. The plugin can use this to skip its"
+            " 'generating…' spinner animation on cache hits."
+        ),
     )
     tier: str = Field(default="indie")
     error_message: str = Field(
@@ -326,12 +350,27 @@ async def explain(payload: AgentExplainRequest) -> AgentExplainResponse:
     rule_explanation; the LLM's only job is to turn that into 2-4
     grounded sentences the developer can act on.
 
+    Result is cached in MongoDB by sha1(model_id + prompt) so a
+    repeated query for the same issue returns instantly. The cache key
+    automatically invalidates whenever the prompt template, the rule's
+    docstring, OR the model file changes — there is no manual flush.
+
     Tier-gated to Indie+. Returns success=false with an explanation of
     why if the LLM is not loaded, instead of raising — this lets the
     plugin show the deterministic message+fix_suggestion as a fallback
     without crashing the UX.
     """
     import time
+    from datetime import datetime, timezone
+
+    from api.database import get_cached_explanation, save_cached_explanation
+    from modules.agent.explainer import (
+        DEFAULT_MODEL_ID,
+        build_explainer_prompt,
+        compute_cache_key,
+        explain_issue,
+    )
+    from modules.agent.llm_backend import is_loaded
 
     tier = await resolve_tier(payload.api_key)
     if tier == "free":
@@ -340,22 +379,38 @@ async def explain(payload: AgentExplainRequest) -> AgentExplainResponse:
             detail="AI explanations are an Indie-tier feature.",
         )
 
-    from modules.agent.explainer import explain_issue
-    from modules.agent.llm_backend import is_loaded
+    # Pydantic strips unknown fields by default. We pass the issue as a
+    # plain dict to the explainer so any extra fields the orchestrator
+    # added (context_before, snippet, asset_path, graph) survive.
+    issue_payload_dict = payload.issue.model_dump(mode="json")
+
+    # Build the prompt OUTSIDE the LLM call so we can hash it for the
+    # cache. The prompt builder is pure and cheap (no I/O).
+    rendered_prompt = build_explainer_prompt(issue_payload_dict)
+    cache_key = compute_cache_key(rendered_prompt)
+
+    # Cache lookup is best-effort: any DB hiccup falls through to a
+    # fresh LLM call. We never raise on cache failures.
+    cached_doc = await get_cached_explanation(cache_key)
+    if cached_doc and cached_doc.get("explanation"):
+        return AgentExplainResponse(
+            success=True,
+            explanation=cached_doc["explanation"],
+            generation_seconds=0.0,
+            cached=True,
+            tier=tier,
+            error_message="",
+        )
 
     if not is_loaded():
         return AgentExplainResponse(
             success=False,
             explanation="",
             generation_seconds=0.0,
+            cached=False,
             tier=tier,
             error_message="LLM model not loaded — agent is not available.",
         )
-
-    # Pydantic strips unknown fields by default. We pass the issue as a
-    # plain dict to the explainer so any extra fields the orchestrator
-    # added (context_before, snippet, asset_path, graph) survive.
-    issue_payload_dict = payload.issue.model_dump(mode="json")
 
     started_at = time.perf_counter()
     try:
@@ -365,6 +420,7 @@ async def explain(payload: AgentExplainRequest) -> AgentExplainResponse:
             success=False,
             explanation="",
             generation_seconds=round(time.perf_counter() - started_at, 2),
+            cached=False,
             tier=tier,
             error_message=(
                 f"LLM generation failed: "
@@ -372,10 +428,195 @@ async def explain(payload: AgentExplainRequest) -> AgentExplainResponse:
             ),
         )
 
+    generation_seconds = round(time.perf_counter() - started_at, 2)
+
+    # Persist the new explanation for next time. Best-effort — a write
+    # failure does not affect the response we already produced.
+    await save_cached_explanation(
+        cache_key,
+        {
+            "rule_id": payload.issue.rule_id,
+            "rule_name": payload.issue.rule_name,
+            "explanation": generated_text,
+            "model_id": DEFAULT_MODEL_ID,
+            "generation_seconds": generation_seconds,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
     return AgentExplainResponse(
         success=True,
         explanation=generated_text,
-        generation_seconds=round(time.perf_counter() - started_at, 2),
+        generation_seconds=generation_seconds,
+        cached=False,
         tier=tier,
         error_message="",
+    )
+
+
+# ── Explain (streaming SSE) ────────────────────────────────────────────────
+
+
+async def _explain_stream_events(
+    payload: AgentExplainRequest, tier: str
+) -> AsyncIterator[str]:
+    """Produce the Server-Sent Events body for /agent/explain/stream.
+
+    Event shapes (one per `data:` line, JSON-encoded):
+
+        {"chunk": "<text fragment>"}
+            One slice of the model's output. Multiple of these per
+            stream; the plugin appends them to its display.
+
+        {"error": "<message>"}
+            Fatal condition (LLM not loaded, generation crashed).
+            Always followed by a done event with full_text="".
+
+        {"done": true,
+         "full_text": "<concatenated chunks>",
+         "cached": <bool>,
+         "generation_seconds": <float>}
+            Final event marking the end of the stream. The plugin
+            stops its spinner / typing indicator when this arrives.
+
+    On a cache hit we emit one big chunk with the cached text and an
+    immediate done event with cached=true and generation_seconds=0.0
+    — no LLM call.
+    """
+    import time
+    from datetime import datetime, timezone
+
+    from api.database import get_cached_explanation, save_cached_explanation
+    from modules.agent.explainer import (
+        DEFAULT_MODEL_ID,
+        build_explainer_prompt,
+        compute_cache_key,
+        explain_issue_stream,
+    )
+    from modules.agent.llm_backend import is_loaded
+
+    issue_payload_dict = payload.issue.model_dump(mode="json")
+    rendered_prompt = build_explainer_prompt(issue_payload_dict)
+    cache_key = compute_cache_key(rendered_prompt)
+
+    # Cache hit: one chunk + done, no model touch.
+    cached_doc = await get_cached_explanation(cache_key)
+    if cached_doc and cached_doc.get("explanation"):
+        cached_text = cached_doc["explanation"]
+        yield "data: " + json.dumps({"chunk": cached_text}) + "\n\n"
+        yield (
+            "data: "
+            + json.dumps(
+                {
+                    "done": True,
+                    "full_text": cached_text,
+                    "cached": True,
+                    "generation_seconds": 0.0,
+                }
+            )
+            + "\n\n"
+        )
+        return
+
+    if not is_loaded():
+        yield "data: " + json.dumps(
+            {"error": "LLM model not loaded — agent is not available."}
+        ) + "\n\n"
+        yield "data: " + json.dumps(
+            {
+                "done": True,
+                "full_text": "",
+                "cached": False,
+                "generation_seconds": 0.0,
+            }
+        ) + "\n\n"
+        return
+
+    # Cache miss + model ready → stream the generation, accumulating
+    # text so we can persist it once the stream ends.
+    started_at = time.perf_counter()
+    accumulated_parts: list[str] = []
+    stream_failed: Exception | None = None
+    try:
+        for chunk in explain_issue_stream(issue_payload_dict):
+            accumulated_parts.append(chunk)
+            yield "data: " + json.dumps({"chunk": chunk}) + "\n\n"
+    except Exception as unexpected_error:
+        stream_failed = unexpected_error
+        yield "data: " + json.dumps(
+            {
+                "error": (
+                    f"LLM generation failed: "
+                    f"{type(unexpected_error).__name__}: {unexpected_error}"
+                )
+            }
+        ) + "\n\n"
+
+    generation_seconds = round(time.perf_counter() - started_at, 2)
+    accumulated_text = "".join(accumulated_parts).strip()
+
+    # Persist the new explanation IF the stream completed cleanly and
+    # we actually produced text. Best-effort — a write failure does
+    # not affect what we already sent down the wire.
+    if stream_failed is None and accumulated_text:
+        await save_cached_explanation(
+            cache_key,
+            {
+                "rule_id": payload.issue.rule_id,
+                "rule_name": payload.issue.rule_name,
+                "explanation": accumulated_text,
+                "model_id": DEFAULT_MODEL_ID,
+                "generation_seconds": generation_seconds,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+    yield (
+        "data: "
+        + json.dumps(
+            {
+                "done": True,
+                "full_text": accumulated_text,
+                "cached": False,
+                "generation_seconds": generation_seconds,
+            }
+        )
+        + "\n\n"
+    )
+
+
+@router.post("/explain/stream")
+async def explain_stream(payload: AgentExplainRequest) -> StreamingResponse:
+    """Stream a customer-facing explanation token-by-token via SSE.
+
+    Same input contract as POST /agent/explain. The response is a
+    text/event-stream of `data: {json}\\n\\n` events; see
+    `_explain_stream_events` for the schema.
+
+    On a cache hit the stream closes within milliseconds (one chunk
+    event + one done event). On a miss the model produces tokens at
+    ~10-15 tok/s on CPU, so the plugin sees content within ~3-5 s of
+    the request — far better UX than waiting 20-40 s for the
+    synchronous /agent/explain to return the full text.
+
+    Tier-gated to Indie+. The free tier gets a 403 before the stream
+    is even opened, so the plugin never sees a half-open SSE on a
+    license-gated endpoint.
+    """
+    tier = await resolve_tier(payload.api_key)
+    if tier == "free":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="AI explanations are an Indie-tier feature.",
+        )
+
+    return StreamingResponse(
+        _explain_stream_events(payload, tier),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            # Disable proxy buffering so events arrive promptly at the
+            # plugin instead of being held back until the body fills.
+            "X-Accel-Buffering": "no",
+        },
     )

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 # Default model: DeepSeek Coder 1.3B Q4_K_M (~800 MB).
 # Small enough to run on a developer laptop without a GPU.
@@ -121,8 +121,7 @@ def generate(
 ) -> str:
     """Run a synchronous completion against the loaded model.
 
-    Returns the generated text (no metadata). Streaming is added in
-    Fase 4 when the SSE endpoint is wired up.
+    Returns the full generated text once the model has finished.
 
     `stop` defaults to a set of patterns chosen to keep a 1.3B model on
     the agent protocol (single JSON object per turn). Pass an explicit
@@ -139,3 +138,52 @@ def generate(
         stop=effective_stop,
     )
     return out["choices"][0]["text"]
+
+
+def generate_stream(
+    prompt: str,
+    *,
+    max_tokens: int = 1024,
+    temperature: float = 0.2,
+    stop: list[str] | None = None,
+) -> Iterator[str]:
+    """Stream a completion token-by-token, yielding text chunks.
+
+    Used by the /agent/explain/stream SSE endpoint so the plugin can
+    show the explanation as it is being generated rather than waiting
+    20-40 s for the full text. Each yielded chunk is the raw text the
+    model just produced — the caller is responsible for joining the
+    pieces back together if it wants the full string.
+
+    Stops the iterator when the model emits any of the configured stop
+    sequences, when max_tokens is hit, or when the model decides it is
+    done. Empty chunks (which llama-cpp can emit while warming up the
+    KV cache) are skipped so the SSE stream stays meaningful.
+
+    Same `stop` semantics as `generate`: pass an explicit list
+    (including `[]`) to override the conservative defaults.
+    """
+    if _llama is None:
+        raise RuntimeError("Model not loaded — call load_model() first.")
+
+    effective_stop = stop if stop is not None else _DEFAULT_STOPS
+    # llama-cpp-python returns an iterator of chunk dicts shaped like
+    #   {"choices": [{"text": "...", ...}], ...}
+    # when stream=True. We unwrap and yield the text only — anything
+    # downstream that needs metadata can wrap this iterator.
+    stream = _llama(
+        prompt,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        stop=effective_stop,
+        stream=True,
+    )
+    for chunk in stream:
+        try:
+            piece = chunk["choices"][0]["text"]
+        except (KeyError, IndexError, TypeError):
+            # Defensive: an unexpected chunk shape should not crash
+            # the whole stream — skip and keep going.
+            continue
+        if piece:
+            yield piece

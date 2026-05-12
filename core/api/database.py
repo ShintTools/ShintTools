@@ -13,6 +13,7 @@ DB_NAME = "shinttools"
 COLLECTION_ANALYSIS = "analysis_results"
 COLLECTION_LICENSES = "licenses"
 COLLECTION_SCORES = "project_scores"
+COLLECTION_EXPLANATION_CACHE = "explanation_cache"
 
 # Create the async MongoDB client
 client = AsyncIOMotorClient(MONGO_URL)  # type: ignore[var-annotated]
@@ -24,6 +25,7 @@ database = client[DB_NAME]
 analysis_results = database[COLLECTION_ANALYSIS]
 licenses = database[COLLECTION_LICENSES]
 project_scores = database[COLLECTION_SCORES]
+explanation_cache = database[COLLECTION_EXPLANATION_CACHE]
 
 # Default tier when no license is found
 _DEFAULT_TIER = "free"
@@ -135,3 +137,79 @@ async def get_score_history(
         return docs
     except Exception:
         return []
+
+
+# ── Explanation cache ─────────────────────────────────────────────────────
+#
+# Per-issue LLM explanations are deterministic for a given (prompt,
+# model) pair, so we cache them by hash. The same rule_id + same code
+# snippet + same model + same prompt template -> same explanation,
+# and most projects hit the same N rules dozens of times across files,
+# so the first call pays the 20-40 s LLM bill and every repeat call
+# returns in single-digit milliseconds from MongoDB.
+#
+# Cache key (`_id`) is computed by the caller as
+# ``sha1(model_id || prompt_text)``. Putting both into the hash means
+# any change to the prompt template, to the rule_explanation
+# docstring, or to the model file automatically invalidates the
+# affected entries — no manual cache flush ever needed.
+#
+# Schema::
+#
+#     {
+#         "_id":                "<sha1 cache key>",
+#         "rule_id":            "CS001",
+#         "rule_name":          "GetWorld without null-check",
+#         "explanation":        "Your BeginPlay ...",
+#         "model_id":           "deepseek-coder-1.3b-instruct.Q4_K_M",
+#         "generation_seconds": 18.4,
+#         "created_at":         "<ISO timestamp>",
+#     }
+
+
+async def get_cached_explanation(cache_key: str) -> dict | None:
+    """Return the cached explanation document for the given key, or
+    None on miss / DB error.
+
+    Best-effort by design: any MongoDB hiccup degrades into a fresh
+    LLM call rather than failing the request, so the cache is purely
+    a perf optimisation and never a correctness boundary.
+    """
+    if not cache_key:
+        return None
+    try:
+        doc = await explanation_cache.find_one({"_id": cache_key})
+        return doc
+    except Exception as exc:
+        logger.warning(
+            "get_cached_explanation: lookup FAILED (%s) — falling "
+            "through to fresh LLM call.",
+            exc,
+        )
+        return None
+
+
+async def save_cached_explanation(cache_key: str, payload: dict) -> None:
+    """Persist an explanation result to the cache. Best-effort:
+    silently ignores DB errors so the response we already produced
+    is never blocked by a write failure.
+
+    Uses ``replace_one(upsert=True)`` so a re-generation under the
+    same key just overwrites the old entry — useful when an operator
+    manually re-runs an explanation to refresh a stale or low-quality
+    response.
+    """
+    if not cache_key:
+        return
+    try:
+        await explanation_cache.replace_one(
+            {"_id": cache_key},
+            {"_id": cache_key, **payload},
+            upsert=True,
+        )
+    except Exception as exc:
+        logger.warning(
+            "save_cached_explanation: insert FAILED (%s) — request "
+            "succeeds but the result is not cached for next time.",
+            exc,
+        )
