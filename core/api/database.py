@@ -14,8 +14,18 @@ COLLECTION_ANALYSIS = "analysis_results"
 COLLECTION_LICENSES = "licenses"
 COLLECTION_SCORES = "project_scores"
 
-# Create the async MongoDB client
-client = AsyncIOMotorClient(MONGO_URL)  # type: ignore[var-annotated]
+# Create the async MongoDB client.
+#
+# Timeouts kept low (2s) so an unreachable Mongo fails fast and the request
+# can fall back to the Free tier instead of hanging the editor for 30s
+# (the pymongo default). The penalty is paid once per process; subsequent
+# requests reuse the same client and its cached topology.
+client = AsyncIOMotorClient(  # type: ignore[var-annotated]
+    MONGO_URL,
+    serverSelectionTimeoutMS=2000,
+    connectTimeoutMS=2000,
+    socketTimeoutMS=2000,
+)
 
 # Reference to the shinttools database
 database = client[DB_NAME]
