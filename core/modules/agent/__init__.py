@@ -31,6 +31,9 @@ from .explainer import (
     explain_issue_stream,
 )
 from .llm_backend import generate, generate_stream, is_loaded, load_model, unload_model
+from .prefab_explanations import get_stats as prefab_stats
+from .prefab_explanations import is_loaded as prefab_is_loaded
+from .prefab_explanations import lookup_prefab
 
 __all__ = [
     # Direct explainer (production path for /agent/explain)
@@ -45,4 +48,8 @@ __all__ = [
     "is_loaded",
     "load_model",
     "unload_model",
+    # Prefab cache (resolved before MongoDB cache / live LLM)
+    "lookup_prefab",
+    "prefab_is_loaded",
+    "prefab_stats",
 ]

@@ -1,5 +1,6 @@
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 
 from motor.motor_asyncio import AsyncIOMotorClient
 
@@ -167,19 +168,33 @@ async def get_score_history(
 #     }
 
 
-async def get_cached_explanation(cache_key: str) -> dict | None:
+# Cache entries older than this are treated as misses on read so a
+# refreshed prompt template or improved model eventually replaces
+# stale text in production. 90 days lines up with our LLM-iteration
+# cadence — older than that and the answer is almost certainly worse
+# than what the current model would produce.
+EXPLANATION_CACHE_MAX_AGE_DAYS = 90
+
+
+async def get_cached_explanation(
+    cache_key: str,
+    max_age_days: int = EXPLANATION_CACHE_MAX_AGE_DAYS,
+) -> dict | None:
     """Return the cached explanation document for the given key, or
-    None on miss / DB error.
+    None on miss / DB error / TTL expiry.
 
     Best-effort by design: any MongoDB hiccup degrades into a fresh
     LLM call rather than failing the request, so the cache is purely
     a perf optimisation and never a correctness boundary.
+
+    Entries older than *max_age_days* are treated as misses. Pass
+    ``max_age_days=0`` to disable the TTL check (rarely useful — only
+    for admin tooling that wants to see every stored entry).
     """
     if not cache_key:
         return None
     try:
         doc = await explanation_cache.find_one({"_id": cache_key})
-        return doc
     except Exception as exc:
         logger.warning(
             "get_cached_explanation: lookup FAILED (%s) — falling "
@@ -187,6 +202,36 @@ async def get_cached_explanation(cache_key: str) -> dict | None:
             exc,
         )
         return None
+
+    if not doc:
+        return None
+
+    if max_age_days > 0:
+        created_at_raw = doc.get("created_at")
+        if created_at_raw:
+            try:
+                # `created_at` is stored as an ISO-8601 string by
+                # save_cached_explanation. We never wrote a tz-naive
+                # value, but be defensive in case an older entry was.
+                created_at = datetime.fromisoformat(created_at_raw)
+                if created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=timezone.utc)
+                age_cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+                if created_at < age_cutoff:
+                    logger.info(
+                        "get_cached_explanation: entry _id=%s is older "
+                        "than %d days — treating as miss so a fresh "
+                        "explanation is generated.",
+                        cache_key[:12],
+                        max_age_days,
+                    )
+                    return None
+            except (ValueError, TypeError):
+                # Malformed created_at — keep the entry rather than
+                # discarding it; better stale text than no text.
+                pass
+
+    return doc
 
 
 async def save_cached_explanation(cache_key: str, payload: dict) -> None:

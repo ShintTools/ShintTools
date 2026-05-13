@@ -10,6 +10,8 @@ venv/
 # Modelos NLP (no subir al repo, son muy pesados)
 core/models/*
 !core/models/.gitkeep
+models/
+*.gguf
 
 # Claude Code workspace (memoria local + settings personales)
 .claude/
