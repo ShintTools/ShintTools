@@ -14,6 +14,16 @@ cache → live LLM).
 This file is the source of truth for prefab content. The JSON it
 produces is an artefact; do NOT edit it by hand — change the entries
 here and re-run.
+
+Auto-fix gotcha when re-authoring explanations:
+  Rules that appear in core/modules/code_validator/parsers/fixers/
+  fix_patterns.py are NOT all auto-fixable. The pattern action
+  `mark_for_review` means "show as needing review" — there is no
+  real fixer. Today those rules are CB010, CB014, CB015, CM004,
+  CM005, CM006. Their explanations MUST end with a manual-fix
+  closer (e.g. "There is no Auto-Fix — ... manually"), never with
+  "ShintTools' Auto-Fix can rewrite this for you". Get this wrong
+  and the plugin promises an Auto-Fix button that does nothing.
 """
 
 from __future__ import annotations
@@ -1600,8 +1610,9 @@ PREFAB_EXAMPLES: dict[str, list[dict]] = {
                 "without a name make the code harder to maintain — a "
                 "future reader has no idea why 95 matters. Extract it "
                 "to a `constexpr` named constant like `kEliteScore`. "
-                "ShintTools' Auto-Fix can rewrite this for you when you "
-                "accept it."
+                "There is no Auto-Fix — picking a good constant name "
+                "needs human judgement; extract the literal into a "
+                "`constexpr` constant manually."
             ),
         },
         {
@@ -1612,8 +1623,9 @@ PREFAB_EXAMPLES: dict[str, list[dict]] = {
                 "those numbers expresses some design intent that the "
                 "code hides. Name the multipliers with `constexpr` "
                 "constants so the meaning travels with the code. "
-                "ShintTools' Auto-Fix can rewrite this for you when you "
-                "accept it."
+                "There is no Auto-Fix — picking good constant names "
+                "needs human judgement; extract each literal into a "
+                "`constexpr` constant manually."
             ),
         },
     ],
@@ -1708,8 +1720,9 @@ PREFAB_EXAMPLES: dict[str, list[dict]] = {
                 "you and break for everyone else (and on CI, and on "
                 "macOS/Linux). Use `FPaths::ProjectDir()` or "
                 "`FPaths::GameDir()` and join the relative subpath. "
-                "ShintTools' Auto-Fix can rewrite this for you when you "
-                "accept it."
+                "There is no Auto-Fix — pick the right `FPaths::...` "
+                "helper or config entry for your case and replace the "
+                "path manually."
             ),
         },
         {
@@ -1725,8 +1738,9 @@ PREFAB_EXAMPLES: dict[str, list[dict]] = {
                 "machine — the **Hardcoded path** pattern. The "
                 "asset won't be there for any other build target. "
                 "Compose the path through `FPaths::ProjectContentDir()` "
-                "or a `UDataTable` reference. ShintTools' Auto-Fix can "
-                "rewrite this for you when you accept it."
+                "or a `UDataTable` reference. There is no Auto-Fix — "
+                "replace the absolute path with the `FPaths::...` "
+                "helper or data asset that fits your case manually."
             ),
         },
     ],
@@ -1738,8 +1752,9 @@ PREFAB_EXAMPLES: dict[str, list[dict]] = {
                 "isn't obvious — the **auto with non-obvious type** "
                 "pattern. Readers shouldn't have to chase the return "
                 "type to understand the line. Use an explicit type "
-                "(e.g. `FProcessedThing X = ...`). ShintTools' "
-                "Auto-Fix can rewrite this for you when you accept it."
+                "(e.g. `FProcessedThing X = ...`). There is no "
+                "Auto-Fix — the fixer can't infer the deduced type "
+                "without a full Clang AST; spell it out manually."
             ),
         },
         {
@@ -1749,8 +1764,9 @@ PREFAB_EXAMPLES: dict[str, list[dict]] = {
                 "kind of object `Result` is — the **auto with "
                 "non-obvious type** pattern. `auto` is fine for "
                 "iterators and template plumbing, but here it hurts "
-                "readability. Spell out the type instead. ShintTools' "
-                "Auto-Fix can rewrite this for you when you accept it."
+                "readability. Spell out the type instead. There is no "
+                "Auto-Fix — the fixer can't infer the deduced type "
+                "without a full Clang AST; replace `auto` manually."
             ),
         },
     ],
@@ -2460,8 +2476,9 @@ PREFAB_EXAMPLES: dict[str, list[dict]] = {
                 "long** pattern. Large files are hard to navigate and "
                 "usually mean a class has too many responsibilities. "
                 "Split it into focused files (one per class, or "
-                "feature group). ShintTools' Auto-Fix can rewrite "
-                "this for you when you accept it."
+                "feature group). There is no Auto-Fix — deciding "
+                "which classes belong in which file needs human "
+                "judgement; split the file manually."
             ),
         },
         {
@@ -2474,8 +2491,9 @@ PREFAB_EXAMPLES: dict[str, list[dict]] = {
                 "in one file — the **File too long** pattern. At "
                 "this size newcomers can't tell where input ends and "
                 "save-game begins. Split into smaller, focused "
-                "files per concern. ShintTools' Auto-Fix can "
-                "rewrite this for you when you accept it."
+                "files per concern. There is no Auto-Fix — deciding "
+                "what belongs together needs human judgement; split "
+                "the file manually."
             ),
         },
     ],
@@ -2491,8 +2509,9 @@ PREFAB_EXAMPLES: dict[str, list[dict]] = {
                 "function parameters** pattern. Long parameter lists "
                 "are hard to call correctly and test. Group related "
                 "arguments into a dedicated struct "
-                "(`FSpawnRequest`). ShintTools' Auto-Fix can "
-                "rewrite this for you when you accept it."
+                "(`FSpawnRequest`). There is no Auto-Fix — designing "
+                "the struct's fields and name needs human judgement; "
+                "refactor manually."
             ),
         },
         {
@@ -2505,9 +2524,9 @@ PREFAB_EXAMPLES: dict[str, list[dict]] = {
                 "site — the **Too many function parameters** "
                 "pattern. Epic's Coding Standard asks devs to avoid "
                 "overly-long parameter lists. Bundle related "
-                "parameters into a single struct. ShintTools' "
-                "Auto-Fix can rewrite this for you when you accept "
-                "it."
+                "parameters into a single struct. There is no Auto-Fix "
+                "— designing the struct's grouping and field names "
+                "needs human judgement; refactor manually."
             ),
         },
     ],
@@ -2534,9 +2553,9 @@ PREFAB_EXAMPLES: dict[str, list[dict]] = {
                 "nested code** pattern. Deep nesting makes the "
                 "control flow nearly impossible to follow and is a "
                 "loud refactor signal. Flatten using early returns "
-                "or extract inner blocks into named helpers. "
-                "ShintTools' Auto-Fix can rewrite this for you when "
-                "you accept it."
+                "or extract inner blocks into named helpers. There is "
+                "no Auto-Fix — naming the helpers needs human "
+                "judgement; flatten the nesting manually."
             ),
         },
         {
@@ -2561,9 +2580,9 @@ PREFAB_EXAMPLES: dict[str, list[dict]] = {
                 "flow — the **Deeply nested code** pattern. Anything "
                 "past four levels usually means the function is "
                 "doing too much. Use early continues, or factor the "
-                "inner loop into its own helper. ShintTools' "
-                "Auto-Fix can rewrite this for you when you accept "
-                "it."
+                "inner loop into its own helper. There is no Auto-Fix "
+                "— picking the helper's name needs human judgement; "
+                "refactor the nesting manually."
             ),
         },
     ],
