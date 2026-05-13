@@ -21,9 +21,36 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+import hashlib
+import os
+from typing import Any, Iterator, Mapping
 
 from .llm_backend import generate as _llm_generate
+from .llm_backend import generate_stream as _llm_generate_stream
+
+# Identifier of the LLM weights currently loaded. Goes into the cache
+# key so that swapping the GGUF (e.g. upgrading to a different
+# quantisation, or a different model entirely) automatically
+# invalidates every cached explanation produced by the old weights.
+DEFAULT_MODEL_ID = os.environ.get(
+    "SHINTTOOLS_MODEL_FILE", "deepseek-coder-1.3b-instruct.Q4_K_M.gguf"
+)
+
+
+def compute_cache_key(prompt: str, model_id: str = DEFAULT_MODEL_ID) -> str:
+    """Hash (model_id, prompt) to a stable cache key.
+
+    Including both means a prompt-template change, a docstring update,
+    OR a model file change all invalidate cached entries automatically
+    — there is no separate "cache version" we have to remember to
+    bump.
+    """
+    digest = hashlib.sha1()
+    digest.update(model_id.encode("utf-8"))
+    digest.update(b"\x00")
+    digest.update(prompt.encode("utf-8"))
+    return digest.hexdigest()
+
 
 # ── Snippet helpers ────────────────────────────────────────────────────────
 
@@ -250,3 +277,31 @@ def explain_issue(
         stop=_EXPLAINER_STOPS,
     )
     return raw_completion.strip()
+
+
+def explain_issue_stream(
+    issue_dict: Mapping[str, Any],
+    *,
+    max_tokens: int = 220,
+    temperature: float = 0.2,
+) -> Iterator[str]:
+    """Stream a customer-facing explanation token-by-token.
+
+    Same inputs and stop semantics as ``explain_issue``, but yields
+    text chunks as they come off the model instead of waiting for the
+    full response. Used by the /agent/explain/stream SSE endpoint so
+    the plugin can show the explanation flowing into the UI rather
+    than spinning for 20-40 s with nothing on screen.
+
+    The caller is responsible for concatenating the chunks if it
+    needs the full text (e.g. to write to the MongoDB cache once the
+    stream has finished).
+    """
+    rendered_prompt = build_explainer_prompt(issue_dict)
+    for chunk in _llm_generate_stream(
+        rendered_prompt,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        stop=_EXPLAINER_STOPS,
+    ):
+        yield chunk

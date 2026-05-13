@@ -1,5 +1,6 @@
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 
 from motor.motor_asyncio import AsyncIOMotorClient
 
@@ -13,6 +14,7 @@ DB_NAME = "shinttools"
 COLLECTION_ANALYSIS = "analysis_results"
 COLLECTION_LICENSES = "licenses"
 COLLECTION_SCORES = "project_scores"
+COLLECTION_EXPLANATION_CACHE = "explanation_cache"
 
 # Create the async MongoDB client.
 #
@@ -34,6 +36,7 @@ database = client[DB_NAME]
 analysis_results = database[COLLECTION_ANALYSIS]
 licenses = database[COLLECTION_LICENSES]
 project_scores = database[COLLECTION_SCORES]
+explanation_cache = database[COLLECTION_EXPLANATION_CACHE]
 
 # Default tier when no license is found
 _DEFAULT_TIER = "free"
@@ -145,3 +148,123 @@ async def get_score_history(
         return docs
     except Exception:
         return []
+
+
+# ── Explanation cache ─────────────────────────────────────────────────────
+#
+# Per-issue LLM explanations are deterministic for a given (prompt,
+# model) pair, so we cache them by hash. The same rule_id + same code
+# snippet + same model + same prompt template -> same explanation,
+# and most projects hit the same N rules dozens of times across files,
+# so the first call pays the 20-40 s LLM bill and every repeat call
+# returns in single-digit milliseconds from MongoDB.
+#
+# Cache key (`_id`) is computed by the caller as
+# ``sha1(model_id || prompt_text)``. Putting both into the hash means
+# any change to the prompt template, to the rule_explanation
+# docstring, or to the model file automatically invalidates the
+# affected entries — no manual cache flush ever needed.
+#
+# Schema::
+#
+#     {
+#         "_id":                "<sha1 cache key>",
+#         "rule_id":            "CS001",
+#         "rule_name":          "GetWorld without null-check",
+#         "explanation":        "Your BeginPlay ...",
+#         "model_id":           "deepseek-coder-1.3b-instruct.Q4_K_M",
+#         "generation_seconds": 18.4,
+#         "created_at":         "<ISO timestamp>",
+#     }
+
+
+# Cache entries older than this are treated as misses on read so a
+# refreshed prompt template or improved model eventually replaces
+# stale text in production. 90 days lines up with our LLM-iteration
+# cadence — older than that and the answer is almost certainly worse
+# than what the current model would produce.
+EXPLANATION_CACHE_MAX_AGE_DAYS = 90
+
+
+async def get_cached_explanation(
+    cache_key: str,
+    max_age_days: int = EXPLANATION_CACHE_MAX_AGE_DAYS,
+) -> dict | None:
+    """Return the cached explanation document for the given key, or
+    None on miss / DB error / TTL expiry.
+
+    Best-effort by design: any MongoDB hiccup degrades into a fresh
+    LLM call rather than failing the request, so the cache is purely
+    a perf optimisation and never a correctness boundary.
+
+    Entries older than *max_age_days* are treated as misses. Pass
+    ``max_age_days=0`` to disable the TTL check (rarely useful — only
+    for admin tooling that wants to see every stored entry).
+    """
+    if not cache_key:
+        return None
+    try:
+        doc = await explanation_cache.find_one({"_id": cache_key})
+    except Exception as exc:
+        logger.warning(
+            "get_cached_explanation: lookup FAILED (%s) — falling "
+            "through to fresh LLM call.",
+            exc,
+        )
+        return None
+
+    if not doc:
+        return None
+
+    if max_age_days > 0:
+        created_at_raw = doc.get("created_at")
+        if created_at_raw:
+            try:
+                # `created_at` is stored as an ISO-8601 string by
+                # save_cached_explanation. We never wrote a tz-naive
+                # value, but be defensive in case an older entry was.
+                created_at = datetime.fromisoformat(created_at_raw)
+                if created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=timezone.utc)
+                age_cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+                if created_at < age_cutoff:
+                    logger.info(
+                        "get_cached_explanation: entry _id=%s is older "
+                        "than %d days — treating as miss so a fresh "
+                        "explanation is generated.",
+                        cache_key[:12],
+                        max_age_days,
+                    )
+                    return None
+            except (ValueError, TypeError):
+                # Malformed created_at — keep the entry rather than
+                # discarding it; better stale text than no text.
+                pass
+
+    return doc
+
+
+async def save_cached_explanation(cache_key: str, payload: dict) -> None:
+    """Persist an explanation result to the cache. Best-effort:
+    silently ignores DB errors so the response we already produced
+    is never blocked by a write failure.
+
+    Uses ``replace_one(upsert=True)`` so a re-generation under the
+    same key just overwrites the old entry — useful when an operator
+    manually re-runs an explanation to refresh a stale or low-quality
+    response.
+    """
+    if not cache_key:
+        return
+    try:
+        await explanation_cache.replace_one(
+            {"_id": cache_key},
+            {"_id": cache_key, **payload},
+            upsert=True,
+        )
+    except Exception as exc:
+        logger.warning(
+            "save_cached_explanation: insert FAILED (%s) — request "
+            "succeeds but the result is not cached for next time.",
+            exc,
+        )
