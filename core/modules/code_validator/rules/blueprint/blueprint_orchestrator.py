@@ -5,12 +5,12 @@
 # as the single entry points.
 #
 # Rule modules:
-#   blueprint_rules.py — all 21 Blueprint rules
+#   blueprint_rules.py — all 24 Blueprint rules
 #
-# Total: 21 rules
-#   Best Practices (BPB): BPB001-BPB007  (7 rules)
-#   Performance (BPP):    BPP001-BPP005  (5 rules)
-#   Maintainability (BPM): BPM001-BPM007 (7 rules)
+# Total: 26 rules
+#   Best Practices (BPB): BPB001-BPB009  (8 rules)
+#   Performance (BPP):    BPP001-BPP010  (8 rules)
+#   Maintainability (BPM): BPM001-BPM008 (8 rules)
 #   Security (BPS):       BPS001, BPS003 (2 rules)
 
 from typing import Dict, List
@@ -28,9 +28,12 @@ from code_validator.rules.blueprint.blueprint_rules import (
     detect_delay_in_tick,
     detect_disconnected_nodes,
     detect_excessive_casts,
+    detect_excessive_variables,
+    detect_function_naming_convention,
     detect_function_no_tooltip,
     detect_generic_variable_name,
     detect_get_all_actors_in_tick,
+    detect_get_owner_no_check,
     detect_heavy_event_tick,
     detect_high_complexity_function,
     detect_large_blueprint,
@@ -40,7 +43,9 @@ from code_validator.rules.blueprint.blueprint_rules import (
     detect_missing_bp_prefix,
     detect_missing_end_play_super,
     detect_no_functions_large_graph,
+    detect_print_string_in_bp,
     detect_tick_enabled,
+    detect_timer_not_cleared,
     detect_unused_variables,
     detect_variable_no_category,
 )
@@ -58,9 +63,9 @@ def run_all_blueprint_rules(
     Runs all deterministic Blueprint rules against a single
     blueprint dict and returns a merged list of issues.
 
-    Best Practices (BPB): BPB001-BPB007
-    Performance (BPP):    BPP001-BPP005
-    Maintainability (BPM): BPM001-BPM007
+    Best Practices (BPB): BPB001-BPB009
+    Performance (BPP):    BPP001-BPP010
+    Maintainability (BPM): BPM001-BPM008
     Security (BPS):       BPS001, BPS003
     """
     issues: List[Issue] = []
@@ -73,6 +78,7 @@ def run_all_blueprint_rules(
     issues += detect_missing_end_play_super(blueprint)
     issues += detect_function_no_tooltip(blueprint)
     issues += detect_variable_no_category(blueprint)
+    issues += detect_function_naming_convention(blueprint)
 
     # Performance
     issues += detect_tick_enabled(blueprint)
@@ -80,6 +86,9 @@ def run_all_blueprint_rules(
     issues += detect_heavy_event_tick(blueprint)
     issues += detect_delay_in_tick(blueprint)
     issues += detect_get_all_actors_in_tick(blueprint)
+    issues += detect_print_string_in_bp(blueprint)
+    issues += detect_timer_not_cleared(blueprint)
+    issues += detect_get_owner_no_check(blueprint)
 
     # Maintainability
     issues += detect_unused_variables(blueprint)
@@ -89,6 +98,7 @@ def run_all_blueprint_rules(
     issues += detect_large_graph(blueprint)
     issues += detect_blueprint_no_functions(blueprint)
     issues += detect_abandoned_blueprint(blueprint)
+    issues += detect_excessive_variables(blueprint)
 
     # Security
     issues += detect_missing_authority_check(blueprint)
