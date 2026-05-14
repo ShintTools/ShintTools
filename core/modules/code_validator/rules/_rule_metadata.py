@@ -123,11 +123,6 @@ RULE_NAMES: Dict[str, str] = {
     "BPP003": "Heavy logic in Event Tick",
     "BPP004": "Delay node in Event Tick",
     "BPP005": "GetAllActorsOfClass in Tick (Blueprint)",
-    "BPP006": "PrintString left in Blueprint",
-    "BPP007": "Timer not cleared in EndPlay",
-    "BPP010": "GetOwner used without validity check",
-    # ── Blueprint Best Practices (BPB) cont. ─────────────
-    "BPB009": "Function name not verb-noun",
     # ── Blueprint Maintainability (BPM) ───────────────────
     "BPM001": "Unused Blueprint variables",
     "BPM002": "Disconnected Blueprint nodes",
@@ -136,7 +131,6 @@ RULE_NAMES: Dict[str, str] = {
     "BPM005": "Graph with too many nodes",
     "BPM006": "Blueprint without functions",
     "BPM007": "Abandoned Blueprint",
-    "BPM008": "Too many variables in Blueprint",
     # ── Blueprint Security (BPS) ──────────────────────────
     "BPS001": "Missing authority check before action",
     "BPS003": "ExecuteConsoleCommand in shipping code",
@@ -159,6 +153,24 @@ RULE_NAMES: Dict[str, str] = {
     "NM016": "Asset has wrong prefix for its type",
     "NM017": "Asset name too short",
     "NM018": "Asset name redundantly repeats type",
+    # ── C# / Unity (engine=unity) — first implementation batch ─────────────
+    # Full taxonomy reserves 96 IDs: CSP001-CSP016, CSB001-CSB034,
+    # CSS001-CSS013, CSM001-CSM008, UN001-UN025. Only the entries below
+    # have detectors today; subsequent batches will fill in the rest.
+    "UN001":  "GameObject.Find in Update",
+    "UN002":  "GetComponent in Update",
+    "UN003":  "FindObjectOfType in Update",
+    "UN004":  "Debug.Log in Update",
+    "UN005":  "SendMessage / BroadcastMessage usage",
+    "UN006":  "Public field on MonoBehaviour",
+    "UN007":  "Empty Update method",
+    "CSB001": "Empty catch block",
+    "CSB002": "TODO / FIXME comment",
+    "CSS001": "SQL command built by string concatenation",
+    "CSS002": "Hard-coded secret in source",
+    "CSM001": "Method exceeds 50 lines",
+    "CSM002": "File exceeds 500 lines",
+    "CSM003": "Class exposes too many public members",
 }
 
 
@@ -270,8 +282,6 @@ def _build_rule_id_to_function() -> Dict[str, Callable[..., Any]]:
         detect_delay_in_tick,
         detect_disconnected_nodes,
         detect_excessive_casts,
-        detect_excessive_variables,
-        detect_function_naming_convention,
         detect_function_no_tooltip,
         detect_generic_variable_name,
     )
@@ -279,7 +289,6 @@ def _build_rule_id_to_function() -> Dict[str, Callable[..., Any]]:
         detect_get_all_actors_in_tick as bp_detect_get_all_actors_in_tick,
     )
     from code_validator.rules.blueprint.blueprint_rules import (
-        detect_get_owner_no_check,
         detect_heavy_event_tick,
         detect_high_complexity_function,
         detect_large_blueprint,
@@ -289,9 +298,7 @@ def _build_rule_id_to_function() -> Dict[str, Callable[..., Any]]:
         detect_missing_bp_prefix,
         detect_missing_end_play_super,
         detect_no_functions_large_graph,
-        detect_print_string_in_bp,
         detect_tick_enabled,
-        detect_timer_not_cleared,
         detect_unused_variables,
         detect_variable_no_category,
     )
@@ -499,11 +506,6 @@ def _build_rule_id_to_function() -> Dict[str, Callable[..., Any]]:
         "BPP003": detect_heavy_event_tick,
         "BPP004": detect_delay_in_tick,
         "BPP005": bp_detect_get_all_actors_in_tick,
-        "BPP006": detect_print_string_in_bp,
-        "BPP007": detect_timer_not_cleared,
-        "BPP010": detect_get_owner_no_check,
-        # Blueprint Best Practices (cont.)
-        "BPB009": detect_function_naming_convention,
         # Blueprint Maintainability
         "BPM001": detect_unused_variables,
         "BPM002": detect_disconnected_nodes,
@@ -512,7 +514,6 @@ def _build_rule_id_to_function() -> Dict[str, Callable[..., Any]]:
         "BPM005": detect_large_graph,
         "BPM006": detect_blueprint_no_functions,
         "BPM007": detect_abandoned_blueprint,
-        "BPM008": detect_excessive_variables,
         # Blueprint Security
         "BPS001": detect_missing_authority_check,
         "BPS003": detect_console_command_usage,

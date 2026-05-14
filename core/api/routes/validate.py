@@ -25,6 +25,7 @@ from code_validator.rules.blueprint.blueprint_orchestrator import (  # noqa: E40
     run_all_blueprint_rules_from_export,
 )
 from code_validator.rules.cpp.cpp_orchestrator import run_all_cpp_rules  # noqa: E402
+from code_validator.rules.csharp.csharp_orchestrator import run_all_csharp_rules  # noqa: E402
 from code_validator.rules._rule_metadata import RULE_NAMES  # noqa: E402
 from code_validator.tiers import FREE_RULES, filter_issues_by_tier  # noqa: E402
 
@@ -216,19 +217,26 @@ def _analyse_file(
 ) -> list[dict]:
     """
     Run rules against a single source file.
-    Currently supports C++ files for Unreal Engine.
+
+    Engine routing:
+      - `engine="unreal"` + .cpp/.h   → run_all_cpp_rules    (full taxonomy)
+      - `engine="unity"`  + .cs       → run_all_csharp_rules (partial — see
+                                        rules/csharp/ for implemented set)
+      - anything else                  → no detectors, empty list
     """
     file_ext = Path(file_path).suffix.lower()
+    issues: list[dict] = []
 
     if engine == "unreal" and file_ext in _CPP_EXTENSIONS:
         issues = run_all_cpp_rules(content, file_path)
-        for issue in issues:
-            rule_id = issue.get("rule_id", "")
-            issue["is_auto_fixable"] = rule_id in RULE_TO_PATTERN
-            issue["file_path"] = file_path
-        return issues
+    elif engine == "unity" and file_ext == ".cs":
+        issues = run_all_csharp_rules(content, file_path)
 
-    return []
+    for issue in issues:
+        rule_id = issue.get("rule_id", "")
+        issue["is_auto_fixable"] = rule_id in RULE_TO_PATTERN
+        issue["file_path"] = file_path
+    return issues
 
 
 def _is_auto_fixable(rule_id: str) -> bool:

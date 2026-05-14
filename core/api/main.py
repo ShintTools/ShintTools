@@ -1,5 +1,6 @@
 # core/api/main.py
 
+import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -77,35 +78,45 @@ async def lifespan(app: FastAPI):
     else:
         print("WARNING: MongoDB not available")
 
-    # Sprint C: Load LLM agent model at startup
-    try:
-        from modules.agent.llm_backend import is_loaded, load_model
-        from modules.agent.model_downloader import download_model
+    # Sprint C: Load LLM agent model at startup. Gated by
+    # SHINTTOOLS_AGENT_ENABLED (default off): the LLM agent is an
+    # Indie-tier feature, so we don't pull the ~3 GB model for free users
+    # — the launcher only flips this env var to "1" when the signed-in
+    # account resolves to a paying tier.
+    if os.getenv("SHINTTOOLS_AGENT_ENABLED") != "1":
+        print(
+            "LLM agent disabled (SHINTTOOLS_AGENT_ENABLED!=1). "
+            "Skipping model load. Agent endpoints will report 'not available'."
+        )
+    else:
+        try:
+            from modules.agent.llm_backend import is_loaded, load_model
+            from modules.agent.model_downloader import download_model
 
-        if not is_loaded():
-            print("LLM model not loaded. Checking for GGUF file...")
-            try:
-                model_path = download_model()
-                print(f"Model ready at: {model_path}")
-            except FileNotFoundError as e:
-                print(
-                    f"WARNING: LLM model unavailable (offline?). "
-                    f"Agent endpoints will report 'not available'. "
-                    f"Error: {e}"
-                )
-            except Exception as e:
-                print(
-                    f"WARNING: Failed to prepare LLM model: {e}. "
-                    f"Agent endpoints will report 'not available'."
-                )
-            else:
+            if not is_loaded():
+                print("LLM model not loaded. Checking for GGUF file...")
                 try:
-                    load_model()
-                    print("✓ LLM model loaded successfully")
+                    model_path = download_model()
+                    print(f"Model ready at: {model_path}")
+                except FileNotFoundError as e:
+                    print(
+                        f"WARNING: LLM model unavailable (offline?). "
+                        f"Agent endpoints will report 'not available'. "
+                        f"Error: {e}"
+                    )
                 except Exception as e:
-                    print(f"WARNING: Failed to load LLM model: {e}")
-    except ImportError:
-        print("INFO: Agent module not available (develop branch only)")
+                    print(
+                        f"WARNING: Failed to prepare LLM model: {e}. "
+                        f"Agent endpoints will report 'not available'."
+                    )
+                else:
+                    try:
+                        load_model()
+                        print("✓ LLM model loaded successfully")
+                    except Exception as e:
+                        print(f"WARNING: Failed to load LLM model: {e}")
+        except ImportError:
+            print("INFO: Agent module not available (develop branch only)")
 
     yield
 
