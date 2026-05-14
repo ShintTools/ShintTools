@@ -1012,6 +1012,393 @@ def detect_console_command_usage(
     return issues
 
 
+# ── PERFORMANCE (BPP) cont. ───────────────────────────
+
+
+# BPP006: PrintString node left in Blueprint
+def detect_print_string_in_bp(
+    blueprint: dict,
+) -> List[Issue]:
+    """BPP006: flag Blueprints that contain PrintString or PrintText nodes.
+    These are debug nodes — in shipping builds they produce log spam,
+    add overhead, and in multiplayer they replicate the message to all
+    clients. Remove them before shipping or replace with proper logging.
+    """
+    issues: List[Issue] = []
+    bp_path = blueprint.get("path", "")
+    bp_name = blueprint.get("name", "")
+    graphs = blueprint.get("graphs", [])
+
+    _PRINT_TYPES: frozenset = frozenset(
+        {
+            "PrintString",
+            "K2Node_PrintString",
+            "PrintText",
+            "K2Node_PrintText",
+        }
+    )
+
+    for graph in graphs:
+        graph_name = graph.get("name", "Unknown")
+        nodes = graph.get("nodes", [])
+
+        print_count = sum(
+            node.get("count", 0) for node in nodes if node.get("type") in _PRINT_TYPES
+        )
+
+        if print_count > 0:
+            issues.append(
+                {
+                    "asset_path": bp_path,
+                    "graph": graph_name,
+                    "severity": "warning",
+                    "rule_id": "BPP006",
+                    "category": "Performance",
+                    "message": (
+                        f"PrintString/PrintText found in '{bp_name}' "
+                        f"graph '{graph_name}' ({print_count} instance(s)) "
+                        "— debug print nodes cause log spam and replicate "
+                        "to all clients in multiplayer. Remove before shipping."
+                    ),
+                    "fix_suggestion": (
+                        "Remove PrintString nodes or replace with "
+                        "UE_LOG for server-side logging that does "
+                        "not replicate."
+                    ),
+                    "is_auto_fixable": False,
+                }
+            )
+    return issues
+
+
+# ── PERFORMANCE (BPP) cont. ───────────────────────────
+
+
+# BPP007: SetTimer without ClearTimer in EndPlay
+def detect_timer_not_cleared(
+    blueprint: dict,
+) -> List[Issue]:
+    """BPP007: flag Blueprints that call SetTimer in BeginPlay but have
+    no ClearTimer in EndPlay. Timer handles that outlive the actor prevent
+    garbage collection, fire callbacks on destroyed objects, and cause
+    crashes in multiplayer when the owning actor is removed mid-session.
+    Always pair SetTimer with ClearTimer or ClearAndInvalidateTimerHandle
+    in EndPlay.
+    """
+    issues: List[Issue] = []
+    bp_path = blueprint.get("path", "")
+    bp_name = blueprint.get("name", "")
+    graphs = blueprint.get("graphs", [])
+
+    _SET_TIMER_TYPES: frozenset = frozenset(
+        {
+            "SetTimer",
+            "K2Node_SetTimer",
+            "SetTimerByEvent",
+            "K2Node_SetTimerByEvent",
+            "SetTimerByFunctionName",
+            "K2Node_SetTimerByFunctionName",
+        }
+    )
+    _CLEAR_TIMER_TYPES: frozenset = frozenset(
+        {
+            "ClearTimer",
+            "K2Node_ClearTimer",
+            "ClearAndInvalidateTimerHandle",
+            "K2Node_ClearAndInvalidateTimerHandle",
+            "PauseTimer",
+        }
+    )
+
+    graphs_by_name: dict = {}
+    for graph in graphs:
+        graphs_by_name[graph.get("name", "").lower()] = graph
+
+    begin_graph = graphs_by_name.get("eventbeginplay") or graphs_by_name.get(
+        "beginplay"
+    )
+    end_graph = graphs_by_name.get("eventendplay") or graphs_by_name.get("endplay")
+
+    if not begin_graph:
+        return issues
+
+    timer_count = sum(
+        node.get("count", 0)
+        for node in begin_graph.get("nodes", [])
+        if node.get("type") in _SET_TIMER_TYPES
+    )
+
+    if timer_count == 0:
+        return issues
+
+    clear_count = 0
+    if end_graph:
+        clear_count = sum(
+            node.get("count", 0)
+            for node in end_graph.get("nodes", [])
+            if node.get("type") in _CLEAR_TIMER_TYPES
+        )
+
+    if clear_count == 0:
+        issues.append(
+            {
+                "asset_path": bp_path,
+                "graph": "EventBeginPlay",
+                "severity": "warning",
+                "rule_id": "BPP007",
+                "category": "Performance",
+                "message": (
+                    f"'{bp_name}' starts {timer_count} timer(s) in BeginPlay "
+                    "but does not clear them in EndPlay — timer handles that "
+                    "outlive the actor fire on destroyed objects and block "
+                    "garbage collection. Add ClearAndInvalidateTimerHandle "
+                    "in EventEndPlay."
+                ),
+                "fix_suggestion": (
+                    "Add ClearAndInvalidateTimerHandle for each timer "
+                    "handle in EventEndPlay."
+                ),
+                "is_auto_fixable": False,
+            }
+        )
+    return issues
+
+
+# ── MAINTAINABILITY (BPM) cont. ───────────────────────
+
+
+# BPM008: Blueprint with too many variables
+def detect_excessive_variables(
+    blueprint: dict,
+) -> List[Issue]:
+    """BPM008: flag Blueprints that declare more variables than the
+    configured threshold. A large number of variables is a strong signal
+    of a god-class — a Blueprint that has grown beyond a single
+    responsibility. Split logic into Actor Components or child Blueprints
+    to improve maintainability and reuse.
+    """
+    issues: List[Issue] = []
+    bp_path = blueprint.get("path", "")
+    bp_name = blueprint.get("name", "")
+    variables = blueprint.get("variables", [])
+
+    # Configurable: flag when a Blueprint has more variables than this.
+    _MAX_VARIABLES: int = 20
+
+    var_count = len(variables)
+    if var_count > _MAX_VARIABLES:
+        issues.append(
+            {
+                "asset_path": bp_path,
+                "graph": "Variables",
+                "severity": "warning",
+                "rule_id": "BPM008",
+                "category": "Maintainability",
+                "message": (
+                    f"'{bp_name}' has {var_count} variables "
+                    f"(max: {_MAX_VARIABLES}) — consider splitting "
+                    "logic into Actor Components or child Blueprints "
+                    "to reduce responsibility and improve reuse."
+                ),
+                "fix_suggestion": (
+                    "Move related variables and logic into an "
+                    "Actor Component Blueprint."
+                ),
+                "is_auto_fixable": False,
+            }
+        )
+    return issues
+
+
+# ── PERFORMANCE (BPP) cont. ───────────────────────────
+
+
+# BPP010: GetOwner / GetInstigator without validity check
+def detect_get_owner_no_check(
+    blueprint: dict,
+) -> List[Issue]:
+    """BPP010: flag Blueprints that call GetOwner, GetInstigator, or
+    GetOwningPawn without a following IsValid or IsValidLowLevel node
+    in the same graph. These functions return nullptr when the actor
+    has no owner, is unpossessed, or has been destroyed. Dereferencing
+    the result without a validity check causes crashes at runtime,
+    especially in multiplayer sessions where ownership changes frequently.
+    """
+    issues: List[Issue] = []
+    bp_path = blueprint.get("path", "")
+    bp_name = blueprint.get("name", "")
+    graphs = blueprint.get("graphs", [])
+
+    _GET_OWNER_TYPES: frozenset = frozenset(
+        {
+            "GetOwner",
+            "K2Node_GetOwner",
+            "GetInstigator",
+            "K2Node_GetInstigator",
+            "GetOwningPawn",
+            "K2Node_GetOwningPawn",
+            "GetOwnerRole",
+        }
+    )
+    _VALIDITY_TYPES: frozenset = frozenset(
+        {
+            "IsValid",
+            "K2Node_IsValid",
+            "IsValidLowLevel",
+            "IsStillValid",
+        }
+    )
+
+    for graph in graphs:
+        graph_name = graph.get("name", "Unknown")
+        nodes = graph.get("nodes", [])
+        node_types = {node.get("type", "") for node in nodes}
+
+        has_get_owner = bool(node_types & _GET_OWNER_TYPES)
+        has_validity_check = bool(node_types & _VALIDITY_TYPES)
+
+        if has_get_owner and not has_validity_check:
+            found = sorted(node_types & _GET_OWNER_TYPES)
+            issues.append(
+                {
+                    "asset_path": bp_path,
+                    "graph": graph_name,
+                    "severity": "error",
+                    "rule_id": "BPP010",
+                    "category": "Performance",
+                    "message": (
+                        f"'{bp_name}' calls {', '.join(found)} in "
+                        f"'{graph_name}' without an IsValid check — "
+                        "GetOwner returns nullptr when the actor has "
+                        "no owner or is unpossessed. Always validate "
+                        "the result before use to prevent crashes."
+                    ),
+                    "fix_suggestion": (
+                        "Connect the return value of GetOwner to an "
+                        "IsValid node and branch on the result before "
+                        "accessing any properties."
+                    ),
+                    "is_auto_fixable": False,
+                }
+            )
+    return issues
+
+
+# ── BEST PRACTICES (BPB) cont. ────────────────────────
+
+
+# BPB009: Public function name does not follow verb-noun convention
+def detect_function_naming_convention(
+    blueprint: dict,
+) -> List[Issue]:
+    """BPB009: flag public Blueprint functions whose names do not start
+    with a recognised action verb. UE5 convention expects function names
+    to be verb-noun pairs (GetHealth, SetSpeed, CalculateDamage, IsAlive).
+    Functions with noun-only or unclear names make the API harder to read
+    and are often confused with variables. Pure getter/setter functions
+    should start with Get/Set; boolean queries with Is/Has/Can/Should;
+    actions with a strong verb.
+    """
+    issues: List[Issue] = []
+    bp_path = blueprint.get("path", "")
+    bp_name = blueprint.get("name", "")
+    functions = blueprint.get("functions", [])
+
+    # Common UE5-style action verb prefixes expected on public functions.
+    _VERB_PREFIXES: tuple = (
+        "Get",
+        "Set",
+        "Is",
+        "Has",
+        "Can",
+        "Should",
+        "Will",
+        "Calculate",
+        "Compute",
+        "Damage",
+        "Apply",
+        "Reset",
+        "Update",
+        "Handle",
+        "On",
+        "Check",
+        "Find",
+        "Load",
+        "Spawn",
+        "Destroy",
+        "Init",
+        "Setup",
+        "Start",
+        "Stop",
+        "Enable",
+        "Disable",
+        "Toggle",
+        "Add",
+        "Remove",
+        "Create",
+        "Build",
+        "Register",
+        "Unregister",
+        "Notify",
+        "Execute",
+        "Validate",
+        "Process",
+        "Play",
+        "Pause",
+        "Request",
+        "Fire",
+        "Trigger",
+        "Activate",
+        "Deactivate",
+    )
+
+    for func in functions:
+        func_name = func.get("name", "")
+        is_public = func.get("is_public", False)
+
+        if not func_name or not is_public:
+            continue
+
+        # Skip UE5 built-in overrides — these are valid without verb prefix.
+        _BUILTIN_OVERRIDES: frozenset = frozenset(
+            {
+                "BeginPlay",
+                "EndPlay",
+                "Tick",
+                "ReceiveBeginPlay",
+                "ReceiveEndPlay",
+                "ReceiveTick",
+                "ConstructionScript",
+                "UserConstructionScript",
+            }
+        )
+        if func_name in _BUILTIN_OVERRIDES:
+            continue
+
+        if not any(func_name.startswith(prefix) for prefix in _VERB_PREFIXES):
+            issues.append(
+                {
+                    "asset_path": bp_path,
+                    "graph": func_name,
+                    "severity": "warning",
+                    "rule_id": "BPB009",
+                    "category": "Best Practices",
+                    "message": (
+                        f"Public function '{func_name}' in '{bp_name}' "
+                        "does not start with an action verb — UE5 "
+                        "convention expects verb-noun names such as "
+                        "GetHealth, SetSpeed, CalculateDamage, IsAlive."
+                    ),
+                    "fix_suggestion": (
+                        f"Rename '{func_name}' to follow verb-noun "
+                        "convention (e.g. Get/Set/Is/Has/Calculate + noun)."
+                    ),
+                    "is_auto_fixable": False,
+                }
+            )
+    return issues
+
+
 # ── RUNNER ────────────────────────────────────────────
 
 
@@ -1044,6 +1431,12 @@ def run_all_blueprint_rules(
     issues += detect_heavy_event_tick(blueprint)
     issues += detect_delay_in_tick(blueprint)
     issues += detect_get_all_actors_in_tick(blueprint)
+    issues += detect_print_string_in_bp(blueprint)
+    issues += detect_timer_not_cleared(blueprint)
+    issues += detect_get_owner_no_check(blueprint)
+
+    # Best Practices (cont.)
+    issues += detect_function_naming_convention(blueprint)
 
     # Maintainability
     issues += detect_unused_variables(blueprint)
@@ -1053,6 +1446,7 @@ def run_all_blueprint_rules(
     issues += detect_large_graph(blueprint)
     issues += detect_blueprint_no_functions(blueprint)
     issues += detect_abandoned_blueprint(blueprint)
+    issues += detect_excessive_variables(blueprint)
 
     # Security
     issues += detect_missing_authority_check(blueprint)
