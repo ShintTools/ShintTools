@@ -152,10 +152,19 @@ RULE_TO_PATTERN = {
     # ==========================================================
     # Security (CS) — real auto-fix patterns
     # ==========================================================
-    "CS001": ("null_check", "GetWorld()"),
+    # CS001/CS006/CS013/CS014/CS015 were previously auto-fixed via the
+    # null_check pattern, but the single-line wrap generates invalid C++
+    # in real-world contexts: `return GetWorld()->X;` becomes a function
+    # that falls off the end without a return, lines inside lambdas /
+    # ternaries / multi-statement initialisers get half-rewrapped, etc.
+    # Downgraded to mark_for_review so the developer applies the wrap
+    # with the surrounding context in mind. (CS002 SpawnActor, CS003
+    # Cast<>, CS007 OtherActor and CS008 WeakPtr keep auto-fix because
+    # the patterns are structurally simpler.)
+    "CS001": ("mark_for_review", "GetWorld() needs null-check — wrap callsite in `if (UWorld* World = GetWorld()) { ... }`"),
     "CS002": ("null_check", "SpawnActor"),
     "CS003": ("null_check", "Cast<"),
-    "CS006": ("null_check", "GetOwner()"),
+    "CS006": ("mark_for_review", "GetOwner() needs null-check — wrap callsite in `if (AActor* Owner = GetOwner()) { ... }`"),
     "CS007": ("null_check", "OtherActor"),
     "CS008": ("null_check", "WeakPtr"),
     "CS011": ("replace_text", ("http://", "https://")),
@@ -163,9 +172,9 @@ RULE_TO_PATTERN = {
     "CS004": ("add_zero_check", None),  # Division -> ternary zero check
     "CS005": ("add_bounds_check", None),  # Array[] -> IsValidIndex() guard
     "CS012": ("comment_line", None),  # Hardcoded secret -> comment out
-    "CS013": ("null_check", "GetPlayerController()"),
-    "CS014": ("null_check", "GetGameInstance()"),
-    "CS015": ("null_check", "GetPlayerState()"),
+    "CS013": ("mark_for_review", "GetPlayerController() needs null-check — wrap callsite in `if (APlayerController* PC = GetPlayerController(0)) { ... }`"),
+    "CS014": ("mark_for_review", "GetGameInstance() needs null-check — wrap callsite in `if (UGameInstance* GI = GetGameInstance()) { ... }`"),
+    "CS015": ("mark_for_review", "GetPlayerState() needs null-check — wrap callsite in `if (auto* PS = GetPlayerState<APlayerState>()) { ... }`"),
     # ==========================================================
     # Maintainability (CM) — real auto-fix patterns
     # ==========================================================
