@@ -1,8 +1,8 @@
 # core/modules/code_validator/rules/csharp/csharp_rules.py
 #
-# C# / Unity rule detectors — first implementation batch (14 of 96
-# reserved IDs). Each detector takes the file content + path and returns
-# a list of issue dicts, identical in shape to the cpp rules so downstream
+# C# / Unity rule detectors — 27 of 96 reserved IDs (batches 1 + 2).
+# Each detector takes the file content + path and returns a list of
+# issue dicts, identical in shape to the cpp rules so downstream
 # (filter_issues_by_tier, _analyse_file, Quality Score, dashboard
 # persistence) stays engine-agnostic.
 #
@@ -387,5 +387,401 @@ def detect_csm003_class_god_object(content: str, file_path: str) -> List[Issue]:
                 rule_id="CSM003", category="Maintainability", severity="warning",
                 message=f"Class '{cls.group(1)}' exposes {public_members} public members — likely a God Object.",
                 fix_suggestion="Extract cohesive subsets into focused collaborator classes.",
+            ))
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Batch 2 — 13 additional detectors
+# ─────────────────────────────────────────────────────────────────────────
+
+
+# ── Unity-specific (UN*) — batch 2 ─────────────────────────────────────
+
+
+def detect_un008_camera_main_in_update(content: str, file_path: str) -> List[Issue]:
+    """UN008: Camera.main inside Update.
+
+    Camera.main is `GameObject.FindGameObjectWithTag("MainCamera")` under
+    the hood — full scene tag scan every frame.
+    """
+    body = _update_body(content)
+    if not body:
+        return []
+    region = content[body[0]:body[1]]
+    m = re.search(r"\bCamera\.main\b", region)
+    if not m:
+        return []
+    line = _line_number(content, body[0] + m.start())
+    return [_emit(
+        file_path, line, content,
+        rule_id="UN008", category="Performance", severity="error",
+        message="Camera.main inside Update — does a full FindGameObjectWithTag scan every frame.",
+        fix_suggestion="Cache the camera reference in Awake/Start (private Camera _mainCam = Camera.main).",
+    )]
+
+
+def detect_un012_tag_string_compare(content: str, file_path: str) -> List[Issue]:
+    """UN012: `obj.tag == "X"` — boxes a string each call. Use CompareTag.
+
+    Unity's GameObject.tag getter allocates a new managed string every
+    access; equality with a literal allocates again. CompareTag avoids
+    both allocations and is recommended by Unity's own profiler docs.
+    """
+    out: List[Issue] = []
+    pattern = re.compile(r"\.\s*tag\s*(?:==|!=)\s*\"[^\"]+\"")
+    for m in pattern.finditer(content):
+        line = _line_number(content, m.start())
+        out.append(_emit(
+            file_path, line, content,
+            rule_id="UN012", category="Performance", severity="warning",
+            message="String comparison with .tag allocates per access — use CompareTag instead.",
+            fix_suggestion="Replace `obj.tag == \"X\"` with `obj.CompareTag(\"X\")`.",
+        ))
+    return out
+
+
+# ── Performance (CSP*) — batch 2 ──────────────────────────────────────
+
+
+_LINQ_OPERATORS = (
+    r"Where|Select|SelectMany|ToList|ToArray|ToDictionary|First|FirstOrDefault|"
+    r"Single|SingleOrDefault|Any|All|Count|GroupBy|OrderBy|OrderByDescending|"
+    r"ThenBy|Aggregate|Distinct|Reverse|Take|Skip|Zip"
+)
+
+
+def detect_csp001_linq_in_update(content: str, file_path: str) -> List[Issue]:
+    """CSP001: LINQ chain inside Update — allocates enumerator+lambda each frame."""
+    body = _update_body(content)
+    if not body:
+        return []
+    region = content[body[0]:body[1]]
+    m = re.search(rf"\.(?:{_LINQ_OPERATORS})\s*\(", region)
+    if not m:
+        return []
+    line = _line_number(content, body[0] + m.start())
+    return [_emit(
+        file_path, line, content,
+        rule_id="CSP001", category="Performance", severity="warning",
+        message="LINQ operator used inside Update — allocates enumerators/closures every frame.",
+        fix_suggestion="Replace with a manual loop, or hoist the query result outside the per-frame path.",
+    )]
+
+
+def detect_csp002_string_concat_in_loop(content: str, file_path: str) -> List[Issue]:
+    """CSP002: `str += …` inside for/while/foreach body — O(n²) allocations.
+
+    Heuristic: a `<var> +=` line that contains either a string literal
+    or `.ToString(` on the RHS, located inside a brace-balanced loop body.
+    Captures the most damaging case (per-iteration string build); leaves
+    the small fraction of false positives to a future Tree-sitter pass.
+    """
+    out: List[Issue] = []
+    loop_re = re.compile(r"\b(?:for|foreach|while)\s*\(")
+    for loop in loop_re.finditer(content):
+        brace_open = content.find("{", loop.end())
+        if brace_open < 0 or brace_open - loop.end() > 200:
+            continue
+        depth = 0
+        end = brace_open
+        for i in range(brace_open, len(content)):
+            c = content[i]
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        body_region = content[brace_open + 1:end]
+        for line_m in re.finditer(
+            r"^[^\n]*\b\w+\s*\+=\s*[^\n;]*(?:\"[^\"]*\"|\.ToString\s*\()[^\n;]*;",
+            body_region, re.MULTILINE,
+        ):
+            line_offset = brace_open + 1 + line_m.start()
+            line = _line_number(content, line_offset)
+            out.append(_emit(
+                file_path, line, content,
+                rule_id="CSP002", category="Performance", severity="warning",
+                message="String concatenation with += inside a loop — O(n²) allocations.",
+                fix_suggestion="Build the result with `StringBuilder.Append` and call `.ToString()` once after the loop.",
+            ))
+    return out
+
+
+def detect_csp004_instantiate_in_update(content: str, file_path: str) -> List[Issue]:
+    """CSP004: Instantiate inside Update — per-frame GameObject allocation."""
+    body = _update_body(content)
+    if not body:
+        return []
+    region = content[body[0]:body[1]]
+    m = re.search(r"\bInstantiate\s*\(", region)
+    if not m:
+        return []
+    line = _line_number(content, body[0] + m.start())
+    return [_emit(
+        file_path, line, content,
+        rule_id="CSP004", category="Performance", severity="error",
+        message="Instantiate inside Update allocates a GameObject every frame — use object pooling.",
+        fix_suggestion="Pre-spawn instances at Start and pull from a Queue/Stack pool; Destroy → SetActive(false).",
+    )]
+
+
+def detect_csp006_new_waitforseconds(content: str, file_path: str) -> List[Issue]:
+    """CSP006: `yield return new WaitForSeconds(x)` — allocates each yield.
+
+    Caching the WaitForSeconds in a private field reuses one instance
+    across coroutine iterations and avoids GC pressure on long-running
+    loops.
+    """
+    out: List[Issue] = []
+    for m in re.finditer(r"\byield\s+return\s+new\s+WaitForSeconds\s*\(", content):
+        line = _line_number(content, m.start())
+        out.append(_emit(
+            file_path, line, content,
+            rule_id="CSP006", category="Performance", severity="warning",
+            message="`new WaitForSeconds(...)` per yield allocates each loop iteration.",
+            fix_suggestion="Cache as a private field: `static readonly WaitForSeconds _wait = new(0.5f);` then `yield return _wait;`.",
+        ))
+    return out
+
+
+# ── Best practices (CSB*) — batch 2 ───────────────────────────────────
+
+
+def detect_csb003_catch_exception_broad(content: str, file_path: str) -> List[Issue]:
+    """CSB003: `catch (Exception)` without filter — swallows specific errors.
+
+    Allowed when the catch body either rethrows (`throw;`) or logs the
+    exception (`LogException` / `LogError` / `Console.WriteLine`). Anything
+    else is considered overly broad and worth flagging.
+    """
+    out: List[Issue] = []
+    pattern = re.compile(r"\bcatch\s*\(\s*(?:System\.)?Exception\s+(\w+)\s*\)\s*\{")
+    for m in pattern.finditer(content):
+        brace = m.end() - 1
+        depth = 1
+        end = brace
+        for i in range(brace + 1, len(content)):
+            if content[i] == "{":
+                depth += 1
+            elif content[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        body = content[brace + 1:end]
+        rethrows = re.search(r"\bthrow\s*[;(]", body)
+        logged = re.search(r"\b(?:Log(?:Exception|Error|Warning)|Console\.(?:Write|Error))\b", body)
+        if rethrows or logged:
+            continue
+        line = _line_number(content, m.start())
+        out.append(_emit(
+            file_path, line, content,
+            rule_id="CSB003", category="BestPractices", severity="warning",
+            message="`catch (Exception)` without rethrow or logging — masks bugs.",
+            fix_suggestion="Catch a specific exception type, or `Debug.LogException(ex)` and rethrow.",
+        ))
+    return out
+
+
+def detect_csb005_async_void(content: str, file_path: str) -> List[Issue]:
+    """CSB005: `async void` method — exceptions crash the process.
+
+    The single justified case is event handlers (signature ends in
+    `(object sender, EventArgs e)` or names starting with `On…`). Plain
+    async void methods are unobservable failure points.
+    """
+    out: List[Issue] = []
+    pattern = re.compile(
+        r"\b(?:public|private|protected|internal)\s+(?:static\s+)?async\s+void\s+(\w+)\s*\(([^)]*)\)",
+    )
+    for m in pattern.finditer(content):
+        name = m.group(1)
+        params = m.group(2)
+        is_event_handler = (
+            name.startswith("On")
+            or "EventArgs" in params
+            or re.search(r"\bsender\b", params)
+        )
+        if is_event_handler:
+            continue
+        line = _line_number(content, m.start())
+        out.append(_emit(
+            file_path, line, content,
+            rule_id="CSB005", category="BestPractices", severity="warning",
+            message=f"async void method '{name}' — uncaught exceptions crash the process.",
+            fix_suggestion="Return `async Task` (or `async UniTask` in Unity) so callers can await and observe errors.",
+        ))
+    return out
+
+
+def detect_csb006_magic_number(content: str, file_path: str) -> List[Issue]:
+    """CSB006: magic number literal in expression.
+
+    Flags integer / float literals >2 that appear in expressions but not
+    in declarations (`= 5;`), array indices `[0]/[1]`, or single-digit
+    loop bounds. Skips obvious enumerations (0/1/-1).
+    """
+    out: List[Issue] = []
+    # Scan each line; skip lines that look like declarations.
+    for idx, line_text in enumerate(content.splitlines(), start=1):
+        stripped = line_text.strip()
+        if not stripped or stripped.startswith("//"):
+            continue
+        # Skip declarations and obvious initialisers.
+        if re.search(r"\b(?:const|static\s+readonly|readonly|enum)\b", stripped):
+            continue
+        if re.match(r"^\s*(?:public|private|protected|internal)?\s*[\w<>?,\[\]\s]+=\s*[\d.\-+e]+\s*[;,]", stripped):
+            continue
+        # Look for numeric literals in expressions.
+        for num in re.finditer(r"(?<![\w.])-?\d+(?:\.\d+)?[fFdDmM]?(?![\w.])", stripped):
+            val = num.group(0).rstrip("fFdDmM")
+            try:
+                f = float(val)
+            except ValueError:
+                continue
+            if abs(f) <= 2:  # 0, 1, 2, -1 are common, skip
+                continue
+            # Skip if the number is the immediate RHS of `=` (assignment-init)
+            preceding = stripped[:num.start()].rstrip()
+            if preceding.endswith("="):
+                continue
+            # Skip array indices like `[5]` or `[i + 5]` where the number is small
+            if preceding.endswith("[") or "[" in preceding[-10:] and "]" not in preceding[-10:]:
+                # Inside brackets — small literal indices are typical
+                if abs(f) < 10:
+                    continue
+            out.append(_emit(
+                file_path, idx, content,
+                rule_id="CSB006", category="BestPractices", severity="info",
+                message=f"Magic number {val} in expression — extract to a named constant.",
+                fix_suggestion=f"Replace with `private const float MyMeaningfulName = {val};` (or appropriate type).",
+            ))
+            break  # one issue per line keeps the report compact
+    return out
+
+
+# ── Security (CSS*) — batch 2 ─────────────────────────────────────────
+
+
+def detect_css003_http_url(content: str, file_path: str) -> List[Issue]:
+    """CSS003: hardcoded `http://` URL literal — should be https."""
+    out: List[Issue] = []
+    for m in re.finditer(r"\"http://[^\"\\s]+\"", content):
+        line = _line_number(content, m.start())
+        # Skip example/comment-ish localhost references — harmless and noisy.
+        snippet = m.group(0).lower()
+        if "localhost" in snippet or "127.0.0.1" in snippet:
+            continue
+        out.append(_emit(
+            file_path, line, content,
+            rule_id="CSS003", category="Security", severity="warning",
+            message="Hardcoded `http://` URL — traffic is unencrypted.",
+            fix_suggestion="Switch to https://, or wire the base URL through configuration.",
+        ))
+    return out
+
+
+def detect_css004_playerprefs_secret(content: str, file_path: str) -> List[Issue]:
+    """CSS004: PlayerPrefs storing credentials.
+
+    PlayerPrefs is plaintext on disk (registry on Windows, plist on
+    macOS, XML on Linux/Android). Storing passwords / tokens / keys
+    there is a leak waiting to happen.
+    """
+    out: List[Issue] = []
+    pattern = re.compile(
+        r"PlayerPrefs\.SetString\s*\(\s*\"[^\"]*(?:password|passwd|token|secret|api[_-]?key|bearer)[^\"]*\"",
+        re.IGNORECASE,
+    )
+    for m in pattern.finditer(content):
+        line = _line_number(content, m.start())
+        out.append(_emit(
+            file_path, line, content,
+            rule_id="CSS004", category="Security", severity="error",
+            message="PlayerPrefs stores credential-like data in plaintext on disk.",
+            fix_suggestion="Use a platform secure store (Keychain / DPAPI) or encrypt before persisting.",
+        ))
+    return out
+
+
+# ── Maintainability (CSM*) — batch 2 ──────────────────────────────────
+
+
+def detect_csm004_too_many_params(content: str, file_path: str) -> List[Issue]:
+    """CSM004: method with > 5 parameters — bundle into a struct/options class."""
+    out: List[Issue] = []
+    method_re = re.compile(
+        r"\b(?:public|private|protected|internal)\s+(?:static\s+|virtual\s+|override\s+|async\s+|sealed\s+)*"
+        r"[\w<>,\s\[\]?]+?\s+(\w+)\s*\(([^)]*)\)\s*\{",
+    )
+    for m in method_re.finditer(content):
+        params_raw = m.group(2).strip()
+        if not params_raw:
+            continue
+        # Don't split on commas inside generic args like `Dictionary<string,int>`
+        depth = 0
+        params: List[str] = []
+        last = 0
+        for i, c in enumerate(params_raw):
+            if c == "<":
+                depth += 1
+            elif c == ">":
+                depth -= 1
+            elif c == "," and depth == 0:
+                params.append(params_raw[last:i].strip())
+                last = i + 1
+        params.append(params_raw[last:].strip())
+        params = [p for p in params if p]
+        if len(params) <= 5:
+            continue
+        line = _line_number(content, m.start())
+        out.append(_emit(
+            file_path, line, content,
+            rule_id="CSM004", category="Maintainability", severity="warning",
+            message=f"Method '{m.group(1)}' has {len(params)} parameters — extract a parameter object.",
+            fix_suggestion="Group related parameters into a `record` or `struct`; pass that instead.",
+        ))
+    return out
+
+
+def detect_csm005_deep_nesting(content: str, file_path: str) -> List[Issue]:
+    """CSM005: control-flow nesting depth ≥ 4 — extract guard clauses / helpers.
+
+    Tracks nesting depth by walking { / } while inside method bodies.
+    Reports at the deepest opening brace per method when threshold is hit.
+    """
+    out: List[Issue] = []
+    method_re = re.compile(
+        r"\b(?:public|private|protected|internal)\s+(?:static\s+|virtual\s+|override\s+|async\s+|sealed\s+)*"
+        r"[\w<>,\s\[\]?]+?\s+(\w+)\s*\([^)]*\)\s*\{",
+    )
+    for m in method_re.finditer(content):
+        brace_open = m.end() - 1
+        depth = 1
+        max_depth = 1
+        max_pos = brace_open
+        for i in range(brace_open + 1, len(content)):
+            c = content[i]
+            if c == "{":
+                depth += 1
+                if depth > max_depth:
+                    max_depth = depth
+                    max_pos = i
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+        # max_depth counts the method body itself as level 1; control
+        # nesting of 4 inside that body means max_depth == 5.
+        if max_depth >= 5:
+            line = _line_number(content, max_pos)
+            out.append(_emit(
+                file_path, line, content,
+                rule_id="CSM005", category="Maintainability", severity="warning",
+                message=f"Method '{m.group(1)}' nests {max_depth - 1} levels deep — flatten with early returns or extract helpers.",
+                fix_suggestion="Replace nested if/else chains with early-return guard clauses, or move inner blocks into private methods.",
             ))
     return out

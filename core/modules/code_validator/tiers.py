@@ -111,6 +111,7 @@ _FREE_BP = frozenset(
 # emitting them yet.
 _FREE_CS_LANG = frozenset(
     {
+        # ── Batch 1 ──
         # Unity-specific top picks
         "UN001",   # GameObject.Find in Update
         "UN002",   # GetComponent in Update
@@ -127,6 +128,21 @@ _FREE_CS_LANG = frozenset(
         # Maintainability
         "CSM001",  # Long method
         "CSM002",  # Long file
+        # ── Batch 2 ──
+        # CSP002 / CSP004 / CSP006 — fundamental perf traps, free.
+        # CSP001 LINQ-in-Update gated to Indie (advanced perf insight).
+        "CSP002",  # String concat in loop
+        "CSP004",  # Instantiate in Update
+        "CSP006",  # new WaitForSeconds per yield
+        # Unity gotchas users hit on day one — free.
+        "UN008",   # Camera.main in Update
+        "UN012",   # .tag string compare instead of CompareTag
+        # Broad catch and HTTP URL are baseline hygiene — free.
+        "CSB003",  # catch (Exception) too broad
+        "CSS003",  # Hardcoded http://
+        "CSS004",  # PlayerPrefs storing credentials
+        # CSB005 async void / CSB006 magic number / CSM004 too many params /
+        # CSM005 deep nesting — Indie tier (advanced quality signal).
     }
 )
 

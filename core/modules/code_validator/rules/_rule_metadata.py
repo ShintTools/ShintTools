@@ -171,6 +171,20 @@ RULE_NAMES: Dict[str, str] = {
     "CSM001": "Method exceeds 50 lines",
     "CSM002": "File exceeds 500 lines",
     "CSM003": "Class exposes too many public members",
+    # ── Batch 2 ──
+    "CSP001": "LINQ operator in Update",
+    "CSP002": "String concatenation in loop",
+    "CSP004": "Instantiate in Update",
+    "CSP006": "new WaitForSeconds per yield",
+    "CSB003": "Broad catch (Exception) without rethrow or log",
+    "CSB005": "async void non-event-handler",
+    "CSB006": "Magic number in expression",
+    "CSS003": "Hardcoded http:// URL",
+    "CSS004": "PlayerPrefs storing credentials",
+    "CSM004": "Method has too many parameters",
+    "CSM005": "Method nests too deeply",
+    "UN008":  "Camera.main in Update",
+    "UN012":  "String comparison with .tag instead of CompareTag",
 }
 
 
