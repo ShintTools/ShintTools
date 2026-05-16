@@ -16,6 +16,11 @@
 
 from typing import Dict, List
 
+from code_validator.rules._rule_metadata import enrich_issue
+from code_validator.rules.csharp._csharp_helpers import (
+    CSHARP_RULE_TO_PATTERN,
+    _fixer,
+)
 from code_validator.rules.csharp.csharp_rules import (
     # Batch 1
     detect_csb001_empty_catch,
@@ -100,5 +105,75 @@ def run_all_csharp_rules(
     issues += detect_csm003_class_god_object(content, file_path)
     issues += detect_csm004_too_many_params(content, file_path)
     issues += detect_csm005_deep_nesting(content, file_path)
+
+    # ── Context window + AFTER preview ───────────────────────────────
+    # Mirrors cpp_orchestrator: slice ±2 lines around each issue so the
+    # plugin's Preview toggle can render a before/after diff without
+    # re-reading the file. For auto-fixable rules we additionally invoke
+    # the fixer to compute context_after; if the fixer can't transform
+    # the line we fall back to mark_for_review so the AFTER panel
+    # always renders SOMETHING.
+    _CONTEXT = 2
+    source_lines = content.splitlines()
+    for issue in issues:
+        line_no = issue.get("line", 0)
+        if line_no < 1 or not source_lines:
+            continue
+
+        start = max(0, line_no - 1 - _CONTEXT)
+        end = min(len(source_lines), line_no + _CONTEXT)
+        window = source_lines[start:end]
+        issue["context_before"] = "\n".join(window)
+        issue["context_line_start"] = start + 1  # 1-based
+
+        after_context = ""
+        rule_id = issue.get("rule_id", "")
+        if (
+            _fixer is not None
+            and issue.get("is_auto_fixable")
+            and rule_id in CSHARP_RULE_TO_PATTERN
+        ):
+            fixed_code = content
+            try:
+                fixed_code, _, _ = _fixer.fix(rule_id, content, line_no)
+            except Exception:
+                fixed_code = content
+
+            # Fallback — the fixer couldn't change the line (eg the
+            # replace_text source string wasn't present). Drop a
+            # mark_for_review marker so the AFTER panel still shows
+            # the rule's intent.
+            if fixed_code == content:
+                try:
+                    reason = issue.get(
+                        "fix_suggestion",
+                        "Manual review required",
+                    )
+                    fixed_code, _, _ = _fixer._apply_mark_for_review(
+                        content,
+                        line_no,
+                        reason,
+                    )
+                except Exception:
+                    fixed_code = content
+
+            if fixed_code != content:
+                fixed_lines = fixed_code.splitlines()
+                # Allow extra lines for multi-line fixes (mark_for_review
+                # inserts a new line above the issue, so the AFTER window
+                # ends up one line longer than BEFORE).
+                f_end = min(
+                    len(fixed_lines),
+                    start + len(window) + 4,
+                )
+                after_context = "\n".join(fixed_lines[start:f_end])
+
+        issue["context_after"] = after_context
+
+    # rule_name + rule_explanation enrichment. The Unity plugin uses
+    # rule_name as the row label (falling back to rule_id) and ships
+    # rule_explanation to /agent/explain for grounding.
+    for issue in issues:
+        enrich_issue(issue)
 
     return issues

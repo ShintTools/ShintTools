@@ -69,6 +69,23 @@ def _update_body(content: str) -> Optional[tuple[int, int]]:
     return span[0], span[1]
 
 
+# Rules whose detectors fire issues that the line-level CSharpFixer
+# can transform (replace_text / delete_line / mark_for_review). Adding
+# a rule_id here flips `is_auto_fixable` on for the wire payload so the
+# Unity plugin renders the AUTO badge, the per-row Apply button, and
+# pulls context_after from the orchestrator's fixer pass.
+#
+# Keep this in sync with CSHARP_RULE_TO_PATTERN in _csharp_helpers.py:
+# every entry here MUST have a pattern handler, otherwise the
+# orchestrator falls through to mark_for_review which still produces
+# a usable diff but isn't a real auto-fix.
+_AUTO_FIXABLE: set[str] = {
+    "UN004",   # delete_line  — Debug.Log inside Update
+    "UN006",   # replace_text — public field on MonoBehaviour
+    "CSB002",  # mark_for_review — TODO comment
+}
+
+
 def _emit(file_path: str, line_no: int, content: str, *,
           rule_id: str, category: str, severity: str,
           message: str, fix_suggestion: str) -> Issue:
@@ -81,7 +98,7 @@ def _emit(file_path: str, line_no: int, content: str, *,
         "message": message,
         "snippet": _line_text(content, line_no),
         "fix_suggestion": fix_suggestion,
-        "is_auto_fixable": False,
+        "is_auto_fixable": rule_id in _AUTO_FIXABLE,
     }
 
 
