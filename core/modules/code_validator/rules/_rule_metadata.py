@@ -185,6 +185,15 @@ RULE_NAMES: Dict[str, str] = {
     "CSM005": "Method nests too deeply",
     "UN008":  "Camera.main in Update",
     "UN012":  "String comparison with .tag instead of CompareTag",
+    # ── Unity Visual Scripting (VS*) ──────────────────────────────────
+    "VSP001": "Log node inside an Update graph",
+    "VSP002": "Cast node without null-check downstream",
+    "VSM001": "Visual Scripting graph too large",
+    "VSM002": "Disconnected node in graph",
+    "VSB001": "Orphan custom event",
+    "VSB002": "Empty graph asset",
+    "VSB003": "Deep flow chain in graph",
+    "VSS001": "Hardcoded secret in graph literal",
 }
 
 

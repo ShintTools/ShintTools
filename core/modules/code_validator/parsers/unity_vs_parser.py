@@ -45,7 +45,9 @@ _VS_MARKERS = (
 #   $type: Unity.VisualScripting.Log, Assembly-CSharp
 # Trailing assembly part is everything after the first comma.
 _UNIT_TYPE_RE = re.compile(
-    r"^\s+(?:_type|\$type):\s*\"?(?P<type>Unity\.VisualScripting\.[\w<>.]+)",
+    # YAML array entries are written `    - _type: …`, plain fields as
+    # `    _type: …`. The optional `- ` covers both shapes.
+    r"^\s+(?:-\s+)?(?:_type|\$type):\s*\"?(?P<type>Unity\.VisualScripting\.[\w<>.]+)",
     re.MULTILINE,
 )
 

@@ -25,6 +25,9 @@ from code_validator.parsers.unity_vs_parser import parse_unity_graph  # noqa: E4
 from code_validator.rules.blueprint.blueprint_orchestrator import (  # noqa: E402
     run_all_blueprint_rules_from_export,
 )
+from code_validator.rules.unity_graphs.unity_graph_orchestrator import (  # noqa: E402
+    run_all_unity_graph_rules,
+)
 from code_validator.rules.cpp.cpp_orchestrator import run_all_cpp_rules  # noqa: E402
 from code_validator.rules.csharp.csharp_orchestrator import run_all_csharp_rules  # noqa: E402
 from code_validator.rules._rule_metadata import RULE_NAMES  # noqa: E402
@@ -448,11 +451,16 @@ async def validate_unity_graphs(payload: ValidateUnityGraphsRequest):
         if g is not None:
             parsed_graphs.append(g)
 
-    # Phase A — no rule orchestrator yet. v1.4.4 wires in the VS rules
-    # (VSP001/VSM001/VSB001/VSS001 family).
-    all_issues: list[dict] = []
+    # Run the 8 initial VS rules. Auto-fix isn't wired yet — graph YAML
+    # editing is a v1.4.5+ topic — so is_auto_fixable stays False on every
+    # issue. file_path normalisation matches the cpp/csharp routes.
+    all_issues = run_all_unity_graph_rules(parsed_graphs)
+    for issue in all_issues:
+        issue["is_auto_fixable"] = False
+        issue["file_path"] = issue.get("asset_path", "")
 
     tier = await resolve_tier(payload.api_key)
+    all_issues = filter_issues_by_tier(all_issues, tier)
 
     files_scanned = len(parsed_graphs)
     unit_count_total = sum(g["unit_count"] for g in parsed_graphs)
