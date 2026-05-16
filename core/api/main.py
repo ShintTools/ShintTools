@@ -63,6 +63,21 @@ async def lifespan(app: FastAPI):
     else:
         print("shinttools.config.json not found")
 
+    # Tier-gated rule decryption. On the locked image the rule
+    # files are shipped as .shintenc blobs; the launcher injects
+    # SHINTTOOLS_AGENT_KEY after a successful indie sign-in and
+    # this loader decrypts them into sys.modules. On free / dev
+    # installs the plaintext .py files coexist and the loader is
+    # a no-op (returns False, no exception).
+    try:
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        from shint_secure_loader import try_activate
+        modules_root = Path(__file__).parent.parent / "modules"
+        app.state.has_decrypted_rules = try_activate(modules_root)
+    except Exception as e:
+        print(f"[secure_loader] activation skipped: {e}")
+        app.state.has_decrypted_rules = False
+
     # Detect available modules
     app.state.modules = detect_modules()
     print(f"Modules detected: {app.state.modules}")
