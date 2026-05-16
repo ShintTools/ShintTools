@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "modules"))
 
 from code_validator.parsers.fixers.cpp_fixer import CppFixer  # noqa: E402
 from code_validator.parsers.fixers.fix_patterns import RULE_TO_PATTERN  # noqa: E402
+from code_validator.parsers.unity_vs_parser import parse_unity_graph  # noqa: E402
 from code_validator.rules.blueprint.blueprint_orchestrator import (  # noqa: E402
     run_all_blueprint_rules_from_export,
 )
@@ -407,6 +408,70 @@ async def validate_blueprints(
         "issues": all_issues,
         "tier": tier,
         "quality_score": score_doc["overall_score"],
+    }
+
+
+class UnityGraphFile(BaseModel):
+    """One Visual Scripting `.asset` file shipped by the Unity plugin."""
+
+    path: str = ""
+    content: str = ""
+
+
+class ValidateUnityGraphsRequest(BaseModel):
+    """Request for Visual Scripting graph validation. Mirrors
+    ValidateProjectRequest in shape so the Unity plugin reuses its
+    config (project_id/api_key/project_name) for graph scans."""
+
+    project_id: str = ""
+    api_key: str = ""
+    project_name: str = ""
+    graphs: list[UnityGraphFile] = Field(default_factory=list)
+
+
+@router.post("/validate/unity-graphs")
+async def validate_unity_graphs(payload: ValidateUnityGraphsRequest):
+    """Validate Unity Visual Scripting (com.unity.visualscripting) graph
+    assets. Each entry carries the YAML content of one `.asset` file.
+
+    Phase A (this release): parses each graph, returns a summary with
+    `graphs_scanned` + `unit_count_total` so the plugin can render a
+    KPI tile. Rule evaluation lands in v1.4.4 — for now the issues
+    array is always empty.
+
+    Mirrors /validate/blueprints in tier resolution + persistence so
+    free-tier quotas and audit history apply uniformly.
+    """
+    parsed_graphs: list[dict] = []
+    for entry in payload.graphs:
+        g = parse_unity_graph(entry.content, entry.path)
+        if g is not None:
+            parsed_graphs.append(g)
+
+    # Phase A — no rule orchestrator yet. v1.4.4 wires in the VS rules
+    # (VSP001/VSM001/VSB001/VSS001 family).
+    all_issues: list[dict] = []
+
+    tier = await resolve_tier(payload.api_key)
+
+    files_scanned = len(parsed_graphs)
+    unit_count_total = sum(g["unit_count"] for g in parsed_graphs)
+
+    summary = _build_summary(
+        all_issues,
+        files_scanned=files_scanned,
+        tier=tier,
+    )
+    summary["graphs_scanned"] = files_scanned
+    summary["unit_count_total"] = unit_count_total
+
+    await _persist_result("code_validator_unity_graphs", summary, all_issues)
+
+    return {
+        "summary": summary,
+        "issues": all_issues,
+        "graphs": parsed_graphs,
+        "tier": tier,
     }
 
 
