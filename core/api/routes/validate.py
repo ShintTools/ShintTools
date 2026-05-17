@@ -29,7 +29,9 @@ from code_validator.rules.unity_graphs.unity_graph_orchestrator import (  # noqa
     run_all_unity_graph_rules,
 )
 from code_validator.rules.cpp.cpp_orchestrator import run_all_cpp_rules  # noqa: E402
-from code_validator.rules.csharp.csharp_orchestrator import run_all_csharp_rules  # noqa: E402
+from code_validator.rules.csharp.csharp_orchestrator import (  # noqa: E402
+    run_all_csharp_rules,
+)
 from code_validator.rules._rule_metadata import RULE_NAMES  # noqa: E402
 from code_validator.tiers import FREE_RULES, filter_issues_by_tier  # noqa: E402
 
