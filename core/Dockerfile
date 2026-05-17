@@ -40,6 +40,12 @@ RUN rm -f \
     modules/code_validator/rules/cpp/cpp_orchestrator.py \
     modules/code_validator/rules/blueprint/blueprint_rules.py \
     modules/code_validator/rules/blueprint/blueprint_orchestrator.py \
+    modules/code_validator/rules/csharp/csharp_rules.py \
+    modules/code_validator/rules/csharp/csharp_orchestrator.py \
+    modules/code_validator/rules/csharp/_csharp_helpers.py \
+    modules/code_validator/rules/unity_graphs/unity_graph_rules.py \
+    modules/code_validator/rules/unity_graphs/unity_graph_orchestrator.py \
+    modules/code_validator/parsers/unity_vs_parser.py \
     modules/code_validator/rules/_rule_metadata.py \
     modules/code_validator/parsers/cpp_parser.py \
     modules/code_validator/parsers/fixers/fix_patterns.py \

@@ -25,24 +25,28 @@ echo "Starting at $(date)"
 : ${UVICORN_HOST:=0.0.0.0}
 : ${UVICORN_PORT:=18200}
 
-# Check if agent module is available (Sprint C)
+# Check if agent module is available (Sprint C). The download is gated by
+# SHINTTOOLS_AGENT_ENABLED (default off): the LLM agent is an Indie-tier
+# feature, and the ~3 GB model would otherwise be pulled for every free
+# user too. The launcher sets this env var to "1" via docker-compose
+# only when the signed-in account resolves to a paying tier.
 if [ -f "modules/agent/model_downloader.py" ]; then
-    echo ""
-    echo "→ Agent module detected (Sprint C)"
-
-    # Try to ensure model is available (idempotent)
-    echo "→ Checking LLM model..."
-    if python -m modules.agent.model_downloader; then
-        echo "✓ LLM model ready"
-    else
-        EXIT_CODE=$?
-        if [ $EXIT_CODE -eq 2 ]; then
-            # File not found = model doesn't exist yet
-            echo "⚠ LLM model unavailable (may be offline). Agent endpoints will report 'not available'."
+    if [ "$SHINTTOOLS_AGENT_ENABLED" = "1" ]; then
+        echo ""
+        echo "→ Agent module detected and enabled (Indie tier)"
+        echo "→ Checking LLM model..."
+        if python -m modules.agent.model_downloader; then
+            echo "✓ LLM model ready"
         else
-            # Other error (network, permission, etc)
-            echo "⚠ Failed to download LLM model (exit code $EXIT_CODE). Agent will gracefully degrade."
+            EXIT_CODE=$?
+            if [ $EXIT_CODE -eq 2 ]; then
+                echo "⚠ LLM model unavailable (may be offline). Agent endpoints will report 'not available'."
+            else
+                echo "⚠ Failed to download LLM model (exit code $EXIT_CODE). Agent will gracefully degrade."
+            fi
         fi
+    else
+        echo "→ Agent module present but disabled (SHINTTOOLS_AGENT_ENABLED!=1). LLM agent is an Indie feature; skipping ~3 GB model download."
     fi
 else
     echo "→ Agent module not available (main branch only, not develop)"

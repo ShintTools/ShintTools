@@ -21,10 +21,15 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "modules"))
 
 from code_validator.parsers.fixers.cpp_fixer import CppFixer  # noqa: E402
 from code_validator.parsers.fixers.fix_patterns import RULE_TO_PATTERN  # noqa: E402
+from code_validator.parsers.unity_vs_parser import parse_unity_graph  # noqa: E402
 from code_validator.rules.blueprint.blueprint_orchestrator import (  # noqa: E402
     run_all_blueprint_rules_from_export,
 )
+from code_validator.rules.unity_graphs.unity_graph_orchestrator import (  # noqa: E402
+    run_all_unity_graph_rules,
+)
 from code_validator.rules.cpp.cpp_orchestrator import run_all_cpp_rules  # noqa: E402
+from code_validator.rules.csharp.csharp_orchestrator import run_all_csharp_rules  # noqa: E402
 from code_validator.rules._rule_metadata import RULE_NAMES  # noqa: E402
 from code_validator.tiers import FREE_RULES, filter_issues_by_tier  # noqa: E402
 
@@ -216,19 +221,26 @@ def _analyse_file(
 ) -> list[dict]:
     """
     Run rules against a single source file.
-    Currently supports C++ files for Unreal Engine.
+
+    Engine routing:
+      - `engine="unreal"` + .cpp/.h   → run_all_cpp_rules    (full taxonomy)
+      - `engine="unity"`  + .cs       → run_all_csharp_rules (partial — see
+                                        rules/csharp/ for implemented set)
+      - anything else                  → no detectors, empty list
     """
     file_ext = Path(file_path).suffix.lower()
+    issues: list[dict] = []
 
     if engine == "unreal" and file_ext in _CPP_EXTENSIONS:
         issues = run_all_cpp_rules(content, file_path)
-        for issue in issues:
-            rule_id = issue.get("rule_id", "")
-            issue["is_auto_fixable"] = rule_id in RULE_TO_PATTERN
-            issue["file_path"] = file_path
-        return issues
+    elif engine == "unity" and file_ext == ".cs":
+        issues = run_all_csharp_rules(content, file_path)
 
-    return []
+    for issue in issues:
+        rule_id = issue.get("rule_id", "")
+        issue["is_auto_fixable"] = rule_id in RULE_TO_PATTERN
+        issue["file_path"] = file_path
+    return issues
 
 
 def _is_auto_fixable(rule_id: str) -> bool:
@@ -399,6 +411,75 @@ async def validate_blueprints(
         "issues": all_issues,
         "tier": tier,
         "quality_score": score_doc["overall_score"],
+    }
+
+
+class UnityGraphFile(BaseModel):
+    """One Visual Scripting `.asset` file shipped by the Unity plugin."""
+
+    path: str = ""
+    content: str = ""
+
+
+class ValidateUnityGraphsRequest(BaseModel):
+    """Request for Visual Scripting graph validation. Mirrors
+    ValidateProjectRequest in shape so the Unity plugin reuses its
+    config (project_id/api_key/project_name) for graph scans."""
+
+    project_id: str = ""
+    api_key: str = ""
+    project_name: str = ""
+    graphs: list[UnityGraphFile] = Field(default_factory=list)
+
+
+@router.post("/validate/unity-graphs")
+async def validate_unity_graphs(payload: ValidateUnityGraphsRequest):
+    """Validate Unity Visual Scripting (com.unity.visualscripting) graph
+    assets. Each entry carries the YAML content of one `.asset` file.
+
+    Phase A (this release): parses each graph, returns a summary with
+    `graphs_scanned` + `unit_count_total` so the plugin can render a
+    KPI tile. Rule evaluation lands in v1.4.4 — for now the issues
+    array is always empty.
+
+    Mirrors /validate/blueprints in tier resolution + persistence so
+    free-tier quotas and audit history apply uniformly.
+    """
+    parsed_graphs: list[dict] = []
+    for entry in payload.graphs:
+        g = parse_unity_graph(entry.content, entry.path)
+        if g is not None:
+            parsed_graphs.append(g)
+
+    # Run the 8 initial VS rules. Auto-fix isn't wired yet — graph YAML
+    # editing is a v1.4.5+ topic — so is_auto_fixable stays False on every
+    # issue. file_path normalisation matches the cpp/csharp routes.
+    all_issues = run_all_unity_graph_rules(parsed_graphs)
+    for issue in all_issues:
+        issue["is_auto_fixable"] = False
+        issue["file_path"] = issue.get("asset_path", "")
+
+    tier = await resolve_tier(payload.api_key)
+    all_issues = filter_issues_by_tier(all_issues, tier)
+
+    files_scanned = len(parsed_graphs)
+    unit_count_total = sum(g["unit_count"] for g in parsed_graphs)
+
+    summary = _build_summary(
+        all_issues,
+        files_scanned=files_scanned,
+        tier=tier,
+    )
+    summary["graphs_scanned"] = files_scanned
+    summary["unit_count_total"] = unit_count_total
+
+    await _persist_result("code_validator_unity_graphs", summary, all_issues)
+
+    return {
+        "summary": summary,
+        "issues": all_issues,
+        "graphs": parsed_graphs,
+        "tier": tier,
     }
 
 

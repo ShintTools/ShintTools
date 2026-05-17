@@ -93,7 +93,62 @@ _FREE_BP = frozenset(
     }
 )
 
-FREE_RULES: FrozenSet[str] = _FREE_CP | _FREE_CB | _FREE_CS | _FREE_CM | _FREE_BP
+# ── C# / Unity (engine=unity) ─────────────────────────
+#
+# Mirrors the cpp tier split. The full taxonomy reserves 96 IDs:
+#
+#   CSP001-CSP016  Performance         (16 rules)
+#   CSB001-CSB034  Best practices      (34 rules)
+#   CSS001-CSS013  Security            (13 rules)
+#   CSM001-CSM008  Maintainability     (8 rules)
+#   UN001-UN025    Unity-specific      (25 rules)
+#
+# Only the IDs listed below are implemented in csharp_rules.py for the
+# current batch. The free set covers the user-facing detectors that
+# match the cpp "free split" 1:1 in spirit. Reserved (not yet
+# implemented) IDs are still legal in this set so the tier filter is
+# stable across rule batches — _analyse_file simply has no detector
+# emitting them yet.
+_FREE_CS_LANG = frozenset(
+    {
+        # ── Batch 1 ──
+        # Unity-specific top picks
+        "UN001",   # GameObject.Find in Update
+        "UN002",   # GetComponent in Update
+        "UN003",   # FindObjectOfType in Update
+        "UN004",   # Debug.Log in Update
+        "UN006",   # public field on MonoBehaviour
+        "UN007",   # empty Update
+        # Best practices
+        "CSB001",  # Empty catch
+        "CSB002",  # TODO/FIXME comment
+        # Security
+        "CSS001",  # SQL concat
+        "CSS002",  # Hardcoded secret
+        # Maintainability
+        "CSM001",  # Long method
+        "CSM002",  # Long file
+        # ── Batch 2 ──
+        # CSP002 / CSP004 / CSP006 — fundamental perf traps, free.
+        # CSP001 LINQ-in-Update gated to Indie (advanced perf insight).
+        "CSP002",  # String concat in loop
+        "CSP004",  # Instantiate in Update
+        "CSP006",  # new WaitForSeconds per yield
+        # Unity gotchas users hit on day one — free.
+        "UN008",   # Camera.main in Update
+        "UN012",   # .tag string compare instead of CompareTag
+        # Broad catch and HTTP URL are baseline hygiene — free.
+        "CSB003",  # catch (Exception) too broad
+        "CSS003",  # Hardcoded http://
+        "CSS004",  # PlayerPrefs storing credentials
+        # CSB005 async void / CSB006 magic number / CSM004 too many params /
+        # CSM005 deep nesting — Indie tier (advanced quality signal).
+    }
+)
+
+FREE_RULES: FrozenSet[str] = (
+    _FREE_CP | _FREE_CB | _FREE_CS | _FREE_CM | _FREE_BP | _FREE_CS_LANG
+)
 
 # Indie: everything — no filter applied
 INDIE_RULES: Optional[FrozenSet[str]] = None  # None = all rules

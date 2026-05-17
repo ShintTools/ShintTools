@@ -40,6 +40,14 @@ _MODULES = [
     # ── Blueprint rules ───────────────────────────────────────────────────
     "modules/code_validator/rules/blueprint/blueprint_rules.py",
     "modules/code_validator/rules/blueprint/blueprint_orchestrator.py",
+    # ── C# rules (Unity) ──────────────────────────────────────────────────
+    "modules/code_validator/rules/csharp/csharp_rules.py",
+    "modules/code_validator/rules/csharp/csharp_orchestrator.py",
+    "modules/code_validator/rules/csharp/_csharp_helpers.py",
+    # ── Unity Visual Scripting graphs ─────────────────────────────────────
+    "modules/code_validator/rules/unity_graphs/unity_graph_rules.py",
+    "modules/code_validator/rules/unity_graphs/unity_graph_orchestrator.py",
+    "modules/code_validator/parsers/unity_vs_parser.py",
     # ── Rule metadata (names + docstring extraction used by LLM) ─────────
     "modules/code_validator/rules/_rule_metadata.py",
     # ── Parsers & fixers ──────────────────────────────────────────────────
