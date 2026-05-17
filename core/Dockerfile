@@ -55,6 +55,7 @@ RUN rm -f \
     modules/code_validator/tiers.py \
     modules/metrics/score_calculator.py \
     modules/naming/rules/ue5_naming_rules.py \
+    modules/naming/rules/unity_naming_rules.py \
     modules/naming/rules/naming_orchestrator.py \
     modules/agent/explainer.py \
     modules/agent/llm_backend.py \
