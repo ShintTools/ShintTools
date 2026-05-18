@@ -37,13 +37,13 @@ sys.path.insert(0, _CORE)
 sys.path.insert(0, os.path.join(_CORE, "modules"))
 sys.path.insert(
     0,
-    os.path.join(_CORE, "modules", "code_validator", "parsers", "fixers"),
+    os.path.join(_CORE, "modules", "code_validator", "unreal", "parsers", "fixers"),
 )
 
-from code_validator.rules.cpp.cpp_maintainability import (  # noqa: E402
+from code_validator.unreal.cpp.cpp_maintainability import (  # noqa: E402
     detect_deep_nesting,
 )
-from code_validator.rules.cpp.cpp_performance import detect_large_tick  # noqa: E402
+from code_validator.unreal.cpp.cpp_performance import detect_large_tick  # noqa: E402
 
 try:
     from cpp_fixer import CppFixer  # noqa: E402

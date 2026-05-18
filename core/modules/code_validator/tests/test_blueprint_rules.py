@@ -1,11 +1,11 @@
 import json
 from pathlib import Path
 
-from code_validator.rules.cpp.cpp_best_practices import (
+from code_validator.unreal.cpp.cpp_best_practices import (
     detect_infinite_loop,
     detect_runtime_load,
 )
-from code_validator.rules.cpp.cpp_performance import (
+from code_validator.unreal.cpp.cpp_performance import (
     detect_find_object_in_tick,
     detect_get_component_in_tick,
 )

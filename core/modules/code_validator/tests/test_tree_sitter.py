@@ -5,7 +5,7 @@ import sys
 sys.path.insert(0, "C:/Users/Usuario/ShintTools/core")
 sys.path.insert(
     0,
-    "C:/Users/Usuario/ShintTools/core" "/modules/code_validator/parsers/fixers",
+    "C:/Users/Usuario/ShintTools/core" "/modules/code_validator/unreal/parsers/fixers",
 )
 
 from cpp_fixer import CppFixer  # noqa: E402

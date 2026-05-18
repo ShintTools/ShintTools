@@ -137,7 +137,7 @@ def main() -> int:
     # etc.) print a clean error instead of crashing the script header.
     from agent.explainer import build_explainer_prompt, explain_issue
     from agent.llm_backend import is_loaded, load_model
-    from code_validator.rules._rule_metadata import enrich_issue
+    from code_validator.shared._rule_metadata import enrich_issue
 
     # Re-run enrichment from the live rule metadata so the smoke test
     # uses whatever rule_name and rule_explanation the orchestrators
