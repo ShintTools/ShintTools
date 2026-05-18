@@ -68,7 +68,7 @@ def main() -> None:
 
     # ── Connect ──────────────────────────────────────────────────────────────
     try:
-        client = MongoClient(args.mongo, serverSelectionTimeoutMS=5000)
+        client: MongoClient = MongoClient(args.mongo, serverSelectionTimeoutMS=5000)
         client.admin.command("ping")
         print(f"✓ Connected to MongoDB at {args.mongo}")
     except ConnectionFailure as exc:
