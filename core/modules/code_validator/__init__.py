@@ -16,11 +16,11 @@
 #     Maintainability:  BPM001-BPM005
 # Phase 2: add Unity C# rules (csharp_rules.py)
 
-from code_validator.rules.blueprint import (
+from code_validator.unreal.blueprint import (
     run_all_blueprint_rules,
     run_all_blueprint_rules_from_export,
 )
-from code_validator.rules.cpp import run_all_cpp_rules
+from code_validator.unreal.cpp import run_all_cpp_rules
 
 
 def analyse(file_path: str, content: str) -> list[dict]:

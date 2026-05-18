@@ -19,29 +19,29 @@ from pydantic import BaseModel, Field
 # Add modules path to import code_validator rules
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "modules"))
 
-from code_validator.parsers.fixers.cpp_fixer import CppFixer  # noqa: E402
-from code_validator.parsers.fixers.fix_patterns import RULE_TO_PATTERN  # noqa: E402
-from code_validator.parsers.unity_vs_parser import parse_unity_graph  # noqa: E402
-from code_validator.rules.blueprint.blueprint_orchestrator import (  # noqa: E402
-    run_all_blueprint_rules_from_export,
-)
-from code_validator.rules.unity_graphs.unity_graph_orchestrator import (  # noqa: E402
-    run_all_unity_graph_rules,
-)
-from code_validator.rules.cpp.cpp_orchestrator import run_all_cpp_rules  # noqa: E402
-from code_validator.rules.csharp.csharp_orchestrator import (  # noqa: E402
+from code_validator.shared._rule_metadata import RULE_NAMES  # noqa: E402
+from code_validator.shared.tiers import FREE_RULES, filter_issues_by_tier  # noqa: E402
+from code_validator.unity.csharp.csharp_orchestrator import (  # noqa: E402
     run_all_csharp_rules,
 )
-from code_validator.rules._rule_metadata import RULE_NAMES  # noqa: E402
-from code_validator.tiers import FREE_RULES, filter_issues_by_tier  # noqa: E402
+from code_validator.unity.parsers.unity_vs_parser import parse_unity_graph  # noqa: E402
+from code_validator.unity.visual_scripting.unity_graph_orchestrator import (  # noqa: E402,E501
+    run_all_unity_graph_rules,
+)
+from code_validator.unreal.blueprint.blueprint_orchestrator import (  # noqa: E402
+    run_all_blueprint_rules_from_export,
+)
+from code_validator.unreal.cpp.cpp_orchestrator import run_all_cpp_rules  # noqa: E402
+from code_validator.unreal.parsers.fixers.cpp_fixer import CppFixer  # noqa: E402
+from code_validator.unreal.parsers.fixers.fix_patterns import (  # noqa: E402
+    RULE_TO_PATTERN,
+)
 
 # Total code-validator rules available (C++ + Blueprint), excluding
 # asset-naming (NM*) which lives in /assets/scan. Computed once at
 # import so the summary can advertise "X of Y rules" without a per-
 # request recount.
-_TOTAL_CODE_RULES: int = sum(
-    1 for rid in RULE_NAMES if not rid.startswith("NM")
-)
+_TOTAL_CODE_RULES: int = sum(1 for rid in RULE_NAMES if not rid.startswith("NM"))
 from metrics.score_calculator import (  # noqa: E402
     compute_score,
     recalculate_after_fixes,
@@ -505,7 +505,7 @@ async def apply_fixes(payload: ApplyFixesRequest):
 
     # Resolve tier to block fixes on rules outside the plan
     tier = await resolve_tier(payload.api_key)
-    from code_validator.tiers import get_tier_config  # noqa: E402
+    from code_validator.shared.tiers import get_tier_config  # noqa: E402
 
     tier_cfg = get_tier_config(tier)
     allowed_rules = tier_cfg["rules"]  # None = all allowed

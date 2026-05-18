@@ -7,8 +7,8 @@
 # Current rules: UE5 naming conventions (ue5_naming_rules.py)
 # Phase 2: add Unity naming rules
 
-from naming.rules import run_all_naming_rules
-from naming.rules.ue5_naming_rules import apply_asset_rename, scan_asset_paths
+from naming.naming_orchestrator import run_all_naming_rules
+from naming.unreal.ue5_naming_rules import apply_asset_rename, scan_asset_paths
 
 __all__ = [
     "scan_asset_paths",

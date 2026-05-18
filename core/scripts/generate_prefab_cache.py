@@ -35,7 +35,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "modules"))
 
-from code_validator.rules._rule_metadata import (  # noqa: E402
+from code_validator.shared._rule_metadata import (  # noqa: E402
     RULE_NAMES,
     _get_explanations,
 )

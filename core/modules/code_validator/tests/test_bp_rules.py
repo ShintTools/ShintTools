@@ -9,9 +9,8 @@ Fixtures:
 import json
 from pathlib import Path
 
-from parsers.fixers.fix_patterns import build_bp_fix_instruction
-from rules.blueprint.blueprint_orchestrator import run_all_blueprint_rules
-from rules.blueprint.blueprint_rules import (
+from unreal.blueprint.blueprint_orchestrator import run_all_blueprint_rules
+from unreal.blueprint.blueprint_rules import (
     detect_abandoned_blueprint,
     detect_blueprint_no_functions,
     detect_disconnected_nodes,
@@ -30,6 +29,7 @@ from rules.blueprint.blueprint_rules import (
     detect_unused_variables,
     detect_variable_no_category,
 )
+from unreal.parsers.fixers.fix_patterns import build_bp_fix_instruction
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
