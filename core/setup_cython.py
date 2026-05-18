@@ -62,6 +62,7 @@ _MODULES = [
     "modules/metrics/score_calculator.py",
     # ── Naming rules ──────────────────────────────────────────────────────
     "modules/naming/rules/ue5_naming_rules.py",
+    "modules/naming/rules/unity_naming_rules.py",
     "modules/naming/rules/naming_orchestrator.py",
     # ── Agent / LLM explanation logic ─────────────────────────────────────
     "modules/agent/explainer.py",

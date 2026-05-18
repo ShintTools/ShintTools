@@ -103,7 +103,7 @@ async def scan_assets(payload: AssetScanRequest):
         asset_records = asset_records[:asset_limit]
 
     t0 = time.perf_counter()
-    issues = run_all_naming_rules(asset_records)
+    issues = run_all_naming_rules(asset_records, engine=payload.engine)
     scan_time = round(time.perf_counter() - t0, 4)
 
     is_free = tier == "free"

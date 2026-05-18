@@ -161,10 +161,16 @@ RULE_TO_PATTERN = {
     # with the surrounding context in mind. (CS002 SpawnActor, CS003
     # Cast<>, CS007 OtherActor and CS008 WeakPtr keep auto-fix because
     # the patterns are structurally simpler.)
-    "CS001": ("mark_for_review", "GetWorld() needs null-check — wrap callsite in `if (UWorld* World = GetWorld()) { ... }`"),
+    "CS001": (
+        "mark_for_review",
+        "GetWorld() needs null-check — wrap callsite in `if (UWorld* World = GetWorld()) { ... }`",  # noqa: E501
+    ),
     "CS002": ("null_check", "SpawnActor"),
     "CS003": ("null_check", "Cast<"),
-    "CS006": ("mark_for_review", "GetOwner() needs null-check — wrap callsite in `if (AActor* Owner = GetOwner()) { ... }`"),
+    "CS006": (
+        "mark_for_review",
+        "GetOwner() needs null-check — wrap callsite in `if (AActor* Owner = GetOwner()) { ... }`",  # noqa: E501
+    ),
     "CS007": ("null_check", "OtherActor"),
     "CS008": ("null_check", "WeakPtr"),
     "CS011": ("replace_text", ("http://", "https://")),
@@ -172,9 +178,18 @@ RULE_TO_PATTERN = {
     "CS004": ("add_zero_check", None),  # Division -> ternary zero check
     "CS005": ("add_bounds_check", None),  # Array[] -> IsValidIndex() guard
     "CS012": ("comment_line", None),  # Hardcoded secret -> comment out
-    "CS013": ("mark_for_review", "GetPlayerController() needs null-check — wrap callsite in `if (APlayerController* PC = GetPlayerController(0)) { ... }`"),
-    "CS014": ("mark_for_review", "GetGameInstance() needs null-check — wrap callsite in `if (UGameInstance* GI = GetGameInstance()) { ... }`"),
-    "CS015": ("mark_for_review", "GetPlayerState() needs null-check — wrap callsite in `if (auto* PS = GetPlayerState<APlayerState>()) { ... }`"),
+    "CS013": (
+        "mark_for_review",
+        "GetPlayerController() needs null-check — wrap callsite in `if (APlayerController* PC = GetPlayerController(0)) { ... }`",  # noqa: E501
+    ),
+    "CS014": (
+        "mark_for_review",
+        "GetGameInstance() needs null-check — wrap callsite in `if (UGameInstance* GI = GetGameInstance()) { ... }`",  # noqa: E501
+    ),
+    "CS015": (
+        "mark_for_review",
+        "GetPlayerState() needs null-check — wrap callsite in `if (auto* PS = GetPlayerState<APlayerState>()) { ... }`",  # noqa: E501
+    ),
     # ==========================================================
     # Maintainability (CM) — real auto-fix patterns
     # ==========================================================
