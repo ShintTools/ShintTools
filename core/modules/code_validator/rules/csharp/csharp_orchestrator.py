@@ -25,8 +25,6 @@ from code_validator.rules.csharp.csharp_rules import (  # Batch 1; Batch 2; Batc
     detect_csb004_infinite_loop,
     detect_csb005_async_void,
     detect_csb006_magic_number,
-    detect_csb007_missing_base_start_awake,
-    detect_csb008_missing_base_ondestroy,
     detect_csb009_missing_override,
     detect_csb010_hardcoded_path,
     detect_csb011_empty_if_body,
@@ -44,7 +42,6 @@ from code_validator.rules.csharp.csharp_rules import (  # Batch 1; Batch 2; Batc
     detect_csp002_string_concat_in_loop,
     detect_csp003_heavy_math_in_update,
     detect_csp004_instantiate_in_update,
-    detect_csp005_thread_sleep,
     detect_csp006_new_waitforseconds,
     detect_csp007_string_ops_in_update,
     detect_csp008_large_update_body,
@@ -52,7 +49,6 @@ from code_validator.rules.csharp.csharp_rules import (  # Batch 1; Batch 2; Batc
     detect_csp010_new_object_in_loop,
     detect_csp011_gc_collect,
     detect_csp012_debug_assert_in_update,
-    detect_csp013_resources_load_in_update,
     detect_css001_sql_concat,
     detect_css002_hardcoded_secret,
     detect_css003_http_url,
@@ -137,19 +133,15 @@ def run_all_csharp_rules(
 
     # Performance (CSP*) — batch 3
     issues += detect_csp003_heavy_math_in_update(content, file_path)
-    issues += detect_csp005_thread_sleep(content, file_path)
     issues += detect_csp007_string_ops_in_update(content, file_path)
     issues += detect_csp008_large_update_body(content, file_path)
     issues += detect_csp009_collection_copy_in_loop(content, file_path)
     issues += detect_csp010_new_object_in_loop(content, file_path)
     issues += detect_csp011_gc_collect(content, file_path)
     issues += detect_csp012_debug_assert_in_update(content, file_path)
-    issues += detect_csp013_resources_load_in_update(content, file_path)
 
     # Best practices (CSB*) — batch 3
     issues += detect_csb004_infinite_loop(content, file_path)
-    issues += detect_csb007_missing_base_start_awake(content, file_path)
-    issues += detect_csb008_missing_base_ondestroy(content, file_path)
     issues += detect_csb009_missing_override(content, file_path)
     issues += detect_csb010_hardcoded_path(content, file_path)
     issues += detect_csb011_empty_if_body(content, file_path)

@@ -1036,26 +1036,6 @@ def detect_csp003_heavy_math_in_update(content: str, file_path: str) -> List[Iss
     ]
 
 
-def detect_csp005_thread_sleep(content: str, file_path: str) -> List[Issue]:
-    """CSP005: Thread.Sleep on main thread — blocks the game loop entirely."""
-    out: List[Issue] = []
-    for m in re.finditer(r"\bThread\.Sleep\s*\(", content):
-        line = _line_number(content, m.start())
-        out.append(
-            _emit(
-                file_path,
-                line,
-                content,
-                rule_id="CSP005",
-                category="Performance",
-                severity="error",
-                message="Thread.Sleep blocks the current thread — freezes gameplay if called from a MonoBehaviour.",  # noqa: E501
-                fix_suggestion="Use `yield return new WaitForSeconds(x)` in a Coroutine for game-thread delays.",  # noqa: E501
-            )
-        )
-    return out
-
-
 def detect_csp007_string_ops_in_update(content: str, file_path: str) -> List[Issue]:
     """CSP007: string allocation inside Update — GC pressure every frame."""
     body = _update_body(content)
@@ -1255,30 +1235,6 @@ def detect_csp012_debug_assert_in_update(content: str, file_path: str) -> List[I
     ]
 
 
-def detect_csp013_resources_load_in_update(content: str, file_path: str) -> List[Issue]:
-    """CSP013: Resources.Load inside Update — synchronous disk read every frame."""
-    body = _update_body(content)
-    if not body:
-        return []
-    region = content[body[0] : body[1]]
-    m = re.search(r"\bResources\.Load(?:All|Async)?\s*[<(]", region)
-    if not m:
-        return []
-    line = _line_number(content, body[0] + m.start())
-    return [
-        _emit(
-            file_path,
-            line,
-            content,
-            rule_id="CSP013",
-            category="Performance",
-            severity="error",
-            message="Resources.Load inside Update — synchronous disk/bundle read stalls the main thread every frame.",  # noqa: E501
-            fix_suggestion="Load assets once in Awake/Start and cache the result; use Addressables for async loading.",  # noqa: E501
-        )
-    ]
-
-
 # ── Best practices (CSB*) — batch 3 ────────────────────────────────────
 
 
@@ -1314,52 +1270,6 @@ def detect_csb004_infinite_loop(content: str, file_path: str) -> List[Issue]:
             )
         )
     return out
-
-
-def detect_csb007_missing_base_start_awake(content: str, file_path: str) -> List[Issue]:
-    """CSB007: override Start/Awake without base.Start()/base.Awake() — skips base class initialisation."""  # noqa: E501
-    out: List[Issue] = []
-    for lifecycle in ("Start", "Awake"):
-        span = _find_method_body(content, rf"\boverride\s+void\s+{lifecycle}\s*\(\s*\)")
-        if not span:
-            continue
-        body = content[span[0] : span[1]]
-        if re.search(rf"\bbase\.{lifecycle}\s*\(", body):
-            continue
-        out.append(
-            _emit(
-                file_path,
-                span[2],
-                content,
-                rule_id="CSB007",
-                category="BestPractices",
-                severity="warning",
-                message=f"override {lifecycle}() does not call base.{lifecycle}() — may skip base class initialisation.",  # noqa: E501
-                fix_suggestion=f"Add `base.{lifecycle}();` at the top of the method.",
-            )
-        )
-    return out
-
-
-def detect_csb008_missing_base_ondestroy(content: str, file_path: str) -> List[Issue]:
-    """CSB008: override OnDestroy without base.OnDestroy() — may leak base class resources."""  # noqa: E501
-    span = _find_method_body(content, r"\boverride\s+void\s+OnDestroy\s*\(\s*\)")
-    if not span:
-        return []
-    if re.search(r"\bbase\.OnDestroy\s*\(", content[span[0] : span[1]]):
-        return []
-    return [
-        _emit(
-            file_path,
-            span[2],
-            content,
-            rule_id="CSB008",
-            category="BestPractices",
-            severity="warning",
-            message="override OnDestroy() does not call base.OnDestroy() — may skip base class cleanup.",  # noqa: E501
-            fix_suggestion="Add `base.OnDestroy();` at the end of the method.",
-        )
-    ]
 
 
 def detect_csb009_missing_override(content: str, file_path: str) -> List[Issue]:

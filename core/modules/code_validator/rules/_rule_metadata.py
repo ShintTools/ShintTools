@@ -188,18 +188,14 @@ RULE_NAMES: Dict[str, str] = {
     # ── C# / Unity Batch 3 ────────────────────────────────────────────
     # Performance
     "CSP003": "Heavy Mathf call in Update",
-    "CSP005": "Thread.Sleep on game thread",
     "CSP007": "String operations in Update",
     "CSP008": "Update method body too large",
     "CSP009": "Collection copied in loop",
     "CSP010": "New object allocation in loop",
     "CSP011": "Manual GC.Collect call",
     "CSP012": "Debug.Assert inside Update",
-    "CSP013": "Resources.Load in Update",
     # Best Practices
     "CSB004": "Infinite loop without exit",
-    "CSB007": "Missing base.Start / base.Awake call",
-    "CSB008": "Missing base.OnDestroy call",
     "CSB009": "MonoBehaviour method missing override",
     "CSB010": "Hardcoded path string",
     "CSB011": "Empty if / else body",

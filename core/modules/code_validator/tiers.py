@@ -147,9 +147,7 @@ _FREE_CS_LANG = frozenset(
         # Obvious day-one traps: Thread.Sleep, GC.Collect, hardcoded path,
         # empty if body, missing null-checks. Advanced diagnostics (god
         # object, large body, allocation-in-loop, etc.) are Indie-only.
-        "CSP005",  # Thread.Sleep on game thread
         "CSP011",  # GC.Collect
-        "CSP013",  # Resources.Load in Update
         "CSB004",  # Infinite loop
         "CSB010",  # Hardcoded path
         "CSB011",  # Empty if body
