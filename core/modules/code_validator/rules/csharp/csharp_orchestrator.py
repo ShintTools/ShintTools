@@ -10,26 +10,54 @@
 #   CSM001-CSM008  Maintainability     (8 rules)
 #   UN001-UN025    Unity-specific      (25 rules)
 #
-# This file currently registers 27 detectors (batches 1 + 2). Reserved
+# This file currently registers 59 detectors (batches 1–3). Reserved
 # IDs without an implementation yet are still legal in tiers.py so the
 # free / indie filter stays stable across rule batches.
 
 from typing import Dict, List
 
 from code_validator.rules._rule_metadata import enrich_issue
-from code_validator.rules.csharp._csharp_helpers import (
-    CSHARP_RULE_TO_PATTERN,
-    _fixer,
-)
-from code_validator.rules.csharp.csharp_rules import (
-    # Batch 1
+from code_validator.rules.csharp._csharp_helpers import CSHARP_RULE_TO_PATTERN, _fixer
+from code_validator.rules.csharp.csharp_rules import (  # Batch 1; Batch 2; Batch 3 — Performance; Batch 3 — Best Practices; Batch 3 — Security; Batch 3 — Unity-specific  # noqa: E501
     detect_csb001_empty_catch,
     detect_csb002_todo_comment,
+    detect_csb003_catch_exception_broad,
+    detect_csb004_infinite_loop,
+    detect_csb005_async_void,
+    detect_csb006_magic_number,
+    detect_csb009_missing_override,
+    detect_csb010_hardcoded_path,
+    detect_csb011_empty_if_body,
+    detect_csb012_event_not_unsubscribed,
+    detect_csb013_log_outside_editor_guard,
+    detect_csb014_float_no_f_suffix,
+    detect_csb015_empty_destructor,
+    detect_csb016_commented_out_code,
     detect_csm001_long_method,
     detect_csm002_long_file,
     detect_csm003_class_god_object,
+    detect_csm004_too_many_params,
+    detect_csm005_deep_nesting,
+    detect_csp001_linq_in_update,
+    detect_csp002_string_concat_in_loop,
+    detect_csp003_heavy_math_in_update,
+    detect_csp004_instantiate_in_update,
+    detect_csp006_new_waitforseconds,
+    detect_csp007_string_ops_in_update,
+    detect_csp008_large_update_body,
+    detect_csp009_collection_copy_in_loop,
+    detect_csp010_new_object_in_loop,
+    detect_csp011_gc_collect,
+    detect_csp012_debug_assert_in_update,
     detect_css001_sql_concat,
     detect_css002_hardcoded_secret,
+    detect_css003_http_url,
+    detect_css004_playerprefs_secret,
+    detect_css005_instantiate_no_check,
+    detect_css006_getcomponent_no_check,
+    detect_css007_direct_cast_no_check,
+    detect_css008_division_no_zero_check,
+    detect_css009_collision_no_null_check,
     detect_un001_findobject_in_update,
     detect_un002_getcomponent_in_update,
     detect_un003_findobjectoftype_in_update,
@@ -37,20 +65,15 @@ from code_validator.rules.csharp.csharp_rules import (
     detect_un005_sendmessage_use,
     detect_un006_public_field_monobehaviour,
     detect_un007_empty_update,
-    # Batch 2
-    detect_csb003_catch_exception_broad,
-    detect_csb005_async_void,
-    detect_csb006_magic_number,
-    detect_csm004_too_many_params,
-    detect_csm005_deep_nesting,
-    detect_csp001_linq_in_update,
-    detect_csp002_string_concat_in_loop,
-    detect_csp004_instantiate_in_update,
-    detect_csp006_new_waitforseconds,
-    detect_css003_http_url,
-    detect_css004_playerprefs_secret,
     detect_un008_camera_main_in_update,
+    detect_un009_coroutine_leak,
+    detect_un010_physics_in_update,
+    detect_un011_transform_in_loop,
     detect_un012_tag_string_compare,
+    detect_un013_missing_require_component,
+    detect_un014_dont_destroy_non_singleton,
+    detect_un015_resources_load,
+    detect_un016_scriptableobject_no_menu,
 )
 
 Issue = Dict
@@ -62,7 +85,7 @@ def run_all_csharp_rules(
 ) -> List[Issue]:
     """Run all implemented C# / Unity rules against a .cs source file.
 
-    Currently covers 27 of the 96 reserved IDs (batches 1 + 2). The
+    Currently covers 59 of the 96 reserved IDs (batches 1–3). The
     validate route maps `engine="unity"` + .cs extension here;
     subsequent rule batches extend this orchestrator without any
     caller-side change.
@@ -106,13 +129,45 @@ def run_all_csharp_rules(
     issues += detect_csm004_too_many_params(content, file_path)
     issues += detect_csm005_deep_nesting(content, file_path)
 
+    # ── Batch 3 ──────────────────────────────────────────────────────────
+
+    # Performance (CSP*) — batch 3
+    issues += detect_csp003_heavy_math_in_update(content, file_path)
+    issues += detect_csp007_string_ops_in_update(content, file_path)
+    issues += detect_csp008_large_update_body(content, file_path)
+    issues += detect_csp009_collection_copy_in_loop(content, file_path)
+    issues += detect_csp010_new_object_in_loop(content, file_path)
+    issues += detect_csp011_gc_collect(content, file_path)
+    issues += detect_csp012_debug_assert_in_update(content, file_path)
+
+    # Best practices (CSB*) — batch 3
+    issues += detect_csb004_infinite_loop(content, file_path)
+    issues += detect_csb009_missing_override(content, file_path)
+    issues += detect_csb010_hardcoded_path(content, file_path)
+    issues += detect_csb011_empty_if_body(content, file_path)
+    issues += detect_csb012_event_not_unsubscribed(content, file_path)
+    issues += detect_csb013_log_outside_editor_guard(content, file_path)
+    issues += detect_csb014_float_no_f_suffix(content, file_path)
+    issues += detect_csb015_empty_destructor(content, file_path)
+    issues += detect_csb016_commented_out_code(content, file_path)
+
+    # Security (CSS*) — batch 3
+    issues += detect_css005_instantiate_no_check(content, file_path)
+    issues += detect_css006_getcomponent_no_check(content, file_path)
+    issues += detect_css007_direct_cast_no_check(content, file_path)
+    issues += detect_css008_division_no_zero_check(content, file_path)
+    issues += detect_css009_collision_no_null_check(content, file_path)
+
+    # Unity-specific (UN*) — batch 3
+    issues += detect_un009_coroutine_leak(content, file_path)
+    issues += detect_un010_physics_in_update(content, file_path)
+    issues += detect_un011_transform_in_loop(content, file_path)
+    issues += detect_un013_missing_require_component(content, file_path)
+    issues += detect_un014_dont_destroy_non_singleton(content, file_path)
+    issues += detect_un015_resources_load(content, file_path)
+    issues += detect_un016_scriptableobject_no_menu(content, file_path)
+
     # ── Context window + AFTER preview ───────────────────────────────
-    # Mirrors cpp_orchestrator: slice ±2 lines around each issue so the
-    # plugin's Preview toggle can render a before/after diff without
-    # re-reading the file. For auto-fixable rules we additionally invoke
-    # the fixer to compute context_after; if the fixer can't transform
-    # the line we fall back to mark_for_review so the AFTER panel
-    # always renders SOMETHING.
     _CONTEXT = 2
     source_lines = content.splitlines()
     for issue in issues:
@@ -124,7 +179,7 @@ def run_all_csharp_rules(
         end = min(len(source_lines), line_no + _CONTEXT)
         window = source_lines[start:end]
         issue["context_before"] = "\n".join(window)
-        issue["context_line_start"] = start + 1  # 1-based
+        issue["context_line_start"] = start + 1
 
         after_context = ""
         rule_id = issue.get("rule_id", "")
@@ -139,10 +194,6 @@ def run_all_csharp_rules(
             except Exception:
                 fixed_code = content
 
-            # Fallback — the fixer couldn't change the line (eg the
-            # replace_text source string wasn't present). Drop a
-            # mark_for_review marker so the AFTER panel still shows
-            # the rule's intent.
             if fixed_code == content:
                 try:
                     reason = issue.get(
@@ -159,9 +210,6 @@ def run_all_csharp_rules(
 
             if fixed_code != content:
                 fixed_lines = fixed_code.splitlines()
-                # Allow extra lines for multi-line fixes (mark_for_review
-                # inserts a new line above the issue, so the AFTER window
-                # ends up one line longer than BEFORE).
                 f_end = min(
                     len(fixed_lines),
                     start + len(window) + 4,
@@ -170,9 +218,6 @@ def run_all_csharp_rules(
 
         issue["context_after"] = after_context
 
-    # rule_name + rule_explanation enrichment. The Unity plugin uses
-    # rule_name as the row label (falling back to rule_id) and ships
-    # rule_explanation to /agent/explain for grounding.
     for issue in issues:
         enrich_issue(issue)
 
