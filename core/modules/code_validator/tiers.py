@@ -113,12 +113,12 @@ _FREE_CS_LANG = frozenset(
     {
         # ── Batch 1 ──
         # Unity-specific top picks
-        "UN001",   # GameObject.Find in Update
-        "UN002",   # GetComponent in Update
-        "UN003",   # FindObjectOfType in Update
-        "UN004",   # Debug.Log in Update
-        "UN006",   # public field on MonoBehaviour
-        "UN007",   # empty Update
+        "UN001",  # GameObject.Find in Update
+        "UN002",  # GetComponent in Update
+        "UN003",  # FindObjectOfType in Update
+        "UN004",  # Debug.Log in Update
+        "UN006",  # public field on MonoBehaviour
+        "UN007",  # empty Update
         # Best practices
         "CSB001",  # Empty catch
         "CSB002",  # TODO/FIXME comment
@@ -135,19 +135,77 @@ _FREE_CS_LANG = frozenset(
         "CSP004",  # Instantiate in Update
         "CSP006",  # new WaitForSeconds per yield
         # Unity gotchas users hit on day one — free.
-        "UN008",   # Camera.main in Update
-        "UN012",   # .tag string compare instead of CompareTag
+        "UN008",  # Camera.main in Update
+        "UN012",  # .tag string compare instead of CompareTag
         # Broad catch and HTTP URL are baseline hygiene — free.
         "CSB003",  # catch (Exception) too broad
         "CSS003",  # Hardcoded http://
         "CSS004",  # PlayerPrefs storing credentials
         # CSB005 async void / CSB006 magic number / CSM004 too many params /
         # CSM005 deep nesting — Indie tier (advanced quality signal).
+        # ── Batch 3 free picks ──
+        # Obvious day-one traps: Thread.Sleep, GC.Collect, hardcoded path,
+        # empty if body, missing null-checks. Advanced diagnostics (god
+        # object, large body, allocation-in-loop, etc.) are Indie-only.
+        "CSP005",  # Thread.Sleep on game thread
+        "CSP011",  # GC.Collect
+        "CSP013",  # Resources.Load in Update
+        "CSB004",  # Infinite loop
+        "CSB010",  # Hardcoded path
+        "CSB011",  # Empty if body
+        "CSB013",  # Debug.Log outside #if UNITY_EDITOR
+        "CSS005",  # Instantiate not null-checked
+        "CSS006",  # GetComponent not null-checked
+        "UN009",  # Coroutine leak
+        "UN010",  # Physics in Update
+    }
+)
+
+# ── Unity Asset Naming (NMU) ──────────────────────────────────────
+# Three engine-specific rules from naming/rules/unity_naming_rules.py.
+# All three are available on Free (same philosophy as NM001/009/016).
+_FREE_NMU = frozenset(
+    {
+        "NMU001",  # Missing type prefix
+        "NMU009",  # Asset in wrong folder
+        "NMU016",  # Wrong prefix for type
+    }
+)
+
+# ── Unity Visual Scripting (VS*) ─────────────────────────────────
+# Free: obvious perf + structural issues a beginner would miss.
+# Indie: advanced graph analysis (variable overload, state machine
+#        size, deep chains, security).
+_FREE_VS = frozenset(
+    {
+        "VSP001",  # Log in Update graph
+        "VSP002",  # Unsafe cast
+        "VSP003",  # GetComponent in Update graph
+        "VSP004",  # Find in Update graph
+        "VSP005",  # Instantiate/Destroy in Update graph
+        "VSM001",  # Graph too large (> 50 nodes)
+        "VSB001",  # Orphan custom event
+        "VSB002",  # Empty graph
+        "VSB005",  # GetComponent no null-check
+        "VSB006",  # SendMessage usage
+        "VSB007",  # WaitForSeconds in Update
+        "VSB008",  # Script graph no root
+        "VSS002",  # Debug.Break in graph
+        # Indie-only: VSM003/004 (variable/state overload),
+        #             VSB003/004 (deep chain, too many event roots),
+        #             VSS001/003 (hardcoded secret, PlayerPrefs).
     }
 )
 
 FREE_RULES: FrozenSet[str] = (
-    _FREE_CP | _FREE_CB | _FREE_CS | _FREE_CM | _FREE_BP | _FREE_CS_LANG
+    _FREE_CP
+    | _FREE_CB
+    | _FREE_CS
+    | _FREE_CM
+    | _FREE_BP
+    | _FREE_CS_LANG
+    | _FREE_NMU
+    | _FREE_VS
 )
 
 # Indie: everything — no filter applied
