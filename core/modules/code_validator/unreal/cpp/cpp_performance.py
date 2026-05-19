@@ -25,7 +25,7 @@
 # Total: 17 rules
 
 import re
-from typing import List
+from typing import List, Optional, Tuple
 
 from code_validator.unreal.cpp._cpp_helpers import (
     Issue,
@@ -37,6 +37,263 @@ from code_validator.unreal.cpp._cpp_helpers import (
     _is_header,
     _is_source,
 )
+
+# Tree-sitter-based body extraction.
+#
+# The legacy regex `\{([^}]*(?:\{[^}]*\}[^}]*)*)\}` only handles ONE level
+# of inner braces, so calls nested inside if/for/switch/while blocks were
+# missed. CppParser walks the real C++ AST and captures the full body at
+# any nesting depth.
+#
+# Import is best-effort: if tree-sitter or its grammar is unavailable the
+# affected rules transparently fall back to the old regex (see
+# `_iter_function_bodies` / `_iter_loop_bodies`).
+try:
+    from code_validator.unreal.parsers.cpp_parser import CppParser
+
+    _TREE_SITTER_AVAILABLE = True
+except Exception:  # pragma: no cover - import-time env guard
+    CppParser = None  # type: ignore[assignment,misc]
+    _TREE_SITTER_AVAILABLE = False
+
+
+def _byte_to_char_pos(content: str, byte_offset: int) -> int:
+    """Convert a UTF-8 byte offset into a character index in ``content``.
+
+    Tree-sitter reports positions as byte offsets; the rest of this module
+    works with character offsets (``_get_line_number`` etc.). For pure-ASCII
+    UE5 source the two are identical, but this stays correct for any
+    non-ASCII content (comments, string literals).
+    """
+    return len(content.encode("utf-8")[:byte_offset].decode("utf-8", "ignore"))
+
+
+def _node_text(node, content: str) -> str:
+    """Return the source text of a tree-sitter node."""
+    if getattr(node, "text", None) is not None:
+        return node.text.decode("utf-8", "ignore")
+    return content[
+        _byte_to_char_pos(content, node.start_byte) : _byte_to_char_pos(
+            content, node.end_byte
+        )
+    ]
+
+
+def _walk(node):
+    """Yield ``node`` and all of its descendants."""
+    yield node
+    for child in node.children:
+        yield from _walk(child)
+
+
+def _declarator_qualified_name(func_def) -> str:
+    """Extract ``Class::Method`` (or ``Method``) from a function_definition."""
+    for child in func_def.children:
+        if child.type == "function_declarator":
+            for sub in _walk(child):
+                if sub.type == "qualified_identifier":
+                    return sub.text.decode("utf-8", "ignore")
+                if sub.type == "identifier":
+                    return sub.text.decode("utf-8", "ignore")
+    return ""
+
+
+_RAW_PARSER = None
+_RAW_PARSER_TRIED = False
+
+
+def _raw_parser():
+    """Build a tree-sitter parser directly, robust across API versions.
+
+    ``CppParser`` only catches ``TypeError`` to detect the tree-sitter
+    0.21.x API. On 0.21.0 ``Parser(language)`` does *not* raise — it
+    silently builds a parser whose ``parse()`` then raises ``ValueError``.
+    To keep tree-sitter actually working (instead of always falling back
+    to the weak regex) we build the parser here using the 0.21.x-correct
+    ``Parser() + set_language()`` path, without touching cpp_parser.py.
+
+    Cached after the first attempt. Returns None if unavailable.
+    """
+    global _RAW_PARSER, _RAW_PARSER_TRIED
+    if _RAW_PARSER_TRIED:
+        return _RAW_PARSER
+    _RAW_PARSER_TRIED = True
+    try:
+        import tree_sitter_cpp as tscpp
+        from tree_sitter import Language, Parser
+
+        try:
+            lang = Language(tscpp.language())  # tree-sitter >= 0.22
+        except TypeError:
+            lang = Language(tscpp.language(), "cpp")  # 0.21.x
+
+        try:
+            parser = Parser()
+            parser.set_language(lang)  # 0.21.x path
+        except (TypeError, AttributeError):
+            parser = Parser(lang)  # >= 0.22 path
+        _RAW_PARSER = parser
+    except Exception:
+        _RAW_PARSER = None
+    return _RAW_PARSER
+
+
+def _try_parse(content: str):
+    """Parse ``content`` and return the root node, or None on failure.
+
+    Tries ``CppParser`` first (per the migration spec); if that fails for
+    any reason (tree-sitter missing, version mismatch, parse error) it
+    retries with a directly-built parser, and finally returns None so the
+    caller transparently falls back to the legacy regex.
+    """
+    if not _TREE_SITTER_AVAILABLE or CppParser is None:
+        return _try_parse_raw(content)
+    try:
+        parser = CppParser()
+        return parser.parse(content)
+    except Exception:
+        return _try_parse_raw(content)
+
+
+def _try_parse_raw(content: str):
+    """Parse with the directly-built parser. Returns root node or None."""
+    parser = _raw_parser()
+    if parser is None:
+        return None
+    try:
+        code_bytes = content.encode("utf-8") if isinstance(content, str) else content
+        return parser.parse(code_bytes).root_node
+    except Exception:
+        return None
+
+
+def _iter_function_bodies(
+    content: str,
+    name_regex: str,
+) -> Optional[List[Tuple[str, str, int]]]:
+    """Yield ``(class_name, body_text, body_char_start)`` for each matching func.
+
+    ``name_regex`` is matched against the bare method name (e.g. ``Tick`` or
+    ``Tick|Update``). ``body_text`` is the code *between* the outer braces
+    (matching the legacy regex group), and ``body_char_start`` is the
+    character index in ``content`` of the first character inside ``{``.
+
+    Returns None when tree-sitter is unavailable so the caller can fall
+    back to the legacy regex.
+    """
+    root = _try_parse(content)
+    if root is None:
+        return None
+
+    name_pat = re.compile(r"^(?:%s)$" % name_regex)
+    results: List[Tuple[str, str, int]] = []
+    for node in _walk(root):
+        if node.type != "function_definition":
+            continue
+        qualified = _declarator_qualified_name(node)
+        if "::" in qualified:
+            class_name, _, method = qualified.rpartition("::")
+        else:
+            class_name, method = "Unknown", qualified
+        if not name_pat.match(method):
+            continue
+        body = None
+        for child in node.children:
+            if child.type == "compound_statement":
+                body = child
+                break
+        if body is None:
+            continue
+        # Strip the enclosing braces to mirror the legacy regex group(2).
+        outer = _node_text(body, content)
+        inner = outer[1:-1] if outer.startswith("{") and outer.endswith("}") else outer
+        body_char_start = _byte_to_char_pos(content, body.start_byte) + 1
+        results.append((class_name, inner, body_char_start))
+    return results
+
+
+def _iter_loop_bodies(
+    content: str,
+) -> Optional[List[Tuple[str, int]]]:
+    """Yield ``(body_text, body_char_start)`` for each for/while loop body.
+
+    Mirrors the legacy loop regex group(1) (code between the loop's braces)
+    but at any nesting depth. Returns None if tree-sitter is unavailable.
+    """
+    root = _try_parse(content)
+    if root is None:
+        return None
+
+    results: List[Tuple[str, int]] = []
+    for node in _walk(root):
+        if node.type not in ("for_statement", "while_statement"):
+            continue
+        body = None
+        for child in node.children:
+            if child.type == "compound_statement":
+                body = child
+                break
+        if body is None:
+            continue
+        outer = _node_text(body, content)
+        inner = outer[1:-1] if outer.startswith("{") and outer.endswith("}") else outer
+        body_char_start = _byte_to_char_pos(content, body.start_byte) + 1
+        results.append((inner, body_char_start))
+    return results
+
+
+# Legacy regexes — used only when tree-sitter is unavailable.
+_LEGACY_TICK_RE = re.compile(
+    r"void\s+(\w+)::(?:Tick|Update)\s*\([^)]*\)\s*" r"\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
+    re.DOTALL,
+)
+_LEGACY_TICK_ONLY_RE = re.compile(
+    r"void\s+(\w+)::Tick\s*\([^)]*\)\s*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
+    re.DOTALL,
+)
+_LEGACY_LOOP_RE = re.compile(
+    r"(?:for|while)\s*\([^)]*\)\s*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
+    re.DOTALL,
+)
+
+
+def _tick_bodies(
+    content: str,
+    tick_only: bool = False,
+) -> List[Tuple[str, str, int]]:
+    """Return ``(class_name, body_text, body_char_start)`` for Tick/Update.
+
+    Prefers the tree-sitter AST (full body at any nesting depth); falls
+    back to the legacy 1-level regex when tree-sitter is unavailable.
+
+    When ``tick_only`` is True only ``Tick`` is matched (not ``Update``),
+    matching the few rules that historically targeted Tick exclusively.
+    """
+    name_regex = "Tick" if tick_only else "Tick|Update"
+    ts_result = _iter_function_bodies(content, name_regex)
+    if ts_result is not None:
+        return ts_result
+
+    legacy_re = _LEGACY_TICK_ONLY_RE if tick_only else _LEGACY_TICK_RE
+    fallback: List[Tuple[str, str, int]] = []
+    for m in legacy_re.finditer(content):
+        fallback.append((m.group(1), m.group(2), m.start(2)))
+    return fallback
+
+
+def _loop_bodies(content: str) -> List[Tuple[str, int]]:
+    """Return ``(body_text, body_char_start)`` for every for/while loop.
+
+    Prefers the tree-sitter AST; falls back to the legacy regex.
+    """
+    ts_result = _iter_loop_bodies(content)
+    if ts_result is not None:
+        return ts_result
+
+    fallback: List[Tuple[str, int]] = []
+    for m in _LEGACY_LOOP_RE.finditer(content):
+        fallback.append((m.group(1), m.start(1)))
+    return fallback
 
 
 # CP001: FindObjectOfType inside Tick
@@ -50,17 +307,9 @@ def detect_find_object_in_tick(
     performance. Cache the reference in BeginPlay instead.
     """
     issues: List[Issue] = []
-    tick_pattern = re.compile(
-        r"void\s+(\w+)::(?:Tick|Update)\s*\([^)]*\)\s*"
-        r"\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
-        re.DOTALL,
-    )
-    for tick_match in tick_pattern.finditer(content):
-        class_name = tick_match.group(1)
-        tick_body = tick_match.group(2)
+    for class_name, tick_body, body_start in _tick_bodies(content):
         find_match = re.search(r"FindObjectOfType\s*<", tick_body)
         if find_match:
-            body_start = tick_match.start(2)
             line_no = _get_line_number(content, body_start + find_match.start())
             snippet_line = (
                 content.splitlines()[line_no - 1].strip()
@@ -98,17 +347,9 @@ def detect_get_component_in_tick(
     in BeginPlay, not retrieved every frame.
     """
     issues: List[Issue] = []
-    tick_pattern = re.compile(
-        r"void\s+(\w+)::(?:Tick|Update)\s*\([^)]*\)\s*"
-        r"\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
-        re.DOTALL,
-    )
-    for tick_match in tick_pattern.finditer(content):
-        class_name = tick_match.group(1)
-        tick_body = tick_match.group(2)
+    for class_name, tick_body, body_start in _tick_bodies(content):
         comp_match = re.search(r"GetComponent(?:ByClass)?\s*[<(]", tick_body)
         if comp_match:
-            body_start = tick_match.start(2)
             line_no = _get_line_number(content, body_start + comp_match.start())
             snippet_line = (
                 content.splitlines()[line_no - 1].strip()
@@ -287,20 +528,12 @@ def detect_get_all_actors_in_tick(
         return []
 
     issues: List[Issue] = []
-    tick_pattern = re.compile(
-        r"void\s+(\w+)::(?:Tick|Update)\s*\([^)]*\)\s*"
-        r"\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
-        re.DOTALL,
-    )
-    for tick_match in tick_pattern.finditer(content):
-        class_name = tick_match.group(1)
-        tick_body = tick_match.group(2)
+    for class_name, tick_body, body_start in _tick_bodies(content):
         actor_match = re.search(
             r"\bGetAllActors(?:OfClass|WithInterface)\s*[<(]",
             tick_body,
         )
         if actor_match:
-            body_start = tick_match.start(2)
             line_no = _get_line_number(content, body_start + actor_match.start())
             source_lines = content.splitlines()
             snippet_line = (
@@ -432,22 +665,14 @@ def detect_heavy_math_in_tick(
         return []
 
     issues: List[Issue] = []
-    tick_pattern = re.compile(
-        r"void\s+(\w+)::(?:Tick|Update)\s*\([^)]*\)\s*"
-        r"\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
-        re.DOTALL,
-    )
     # Heavy math functions to detect
     heavy_math_pattern = re.compile(
         r"\bFMath::" r"(?:Sqrt|Sin|Cos|Tan|Atan2|Pow|Exp|Log)\s*\("
     )
 
-    for tick_match in tick_pattern.finditer(content):
-        class_name = tick_match.group(1)
-        tick_body = tick_match.group(2)
+    for class_name, tick_body, body_start in _tick_bodies(content):
         math_match = heavy_math_pattern.search(tick_body)
         if math_match:
-            body_start = tick_match.start(2)
             line_no = _get_line_number(content, body_start + math_match.start())
             source_lines = content.splitlines()
             snippet_line = (
@@ -492,21 +717,13 @@ def detect_string_ops_in_tick(
         return []
 
     issues: List[Issue] = []
-    tick_pattern = re.compile(
-        r"void\s+(\w+)::(?:Tick|Update)\s*\([^)]*\)\s*"
-        r"\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
-        re.DOTALL,
-    )
     string_op_pattern = re.compile(
         r"\bFString\s*\+=" r"|\bFString::Printf\s*\(" r"|\bFString::Format\s*\("
     )
 
-    for tick_match in tick_pattern.finditer(content):
-        class_name = tick_match.group(1)
-        tick_body = tick_match.group(2)
+    for class_name, tick_body, body_start in _tick_bodies(content):
         str_match = string_op_pattern.search(tick_body)
         if str_match:
-            body_start = tick_match.start(2)
             line_no = _get_line_number(content, body_start + str_match.start())
             source_lines = content.splitlines()
             snippet_line = (
@@ -704,24 +921,17 @@ def detect_tarray_copy_in_loop(
 
     issues: List[Issue] = []
 
-    # Find loop bodies
-    loop_pattern = re.compile(
-        r"(?:for|while)\s*\([^)]*\)\s*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
-        re.DOTALL,
-    )
-
     # Inside loop: TArray<Type> VarName = (copy assignment)
     copy_pattern = re.compile(r"\bTArray\s*<[^>]+>\s+(\w+)\s*=\s*(?!MoveTemp)")
 
-    for loop_match in loop_pattern.finditer(content):
-        loop_body = loop_match.group(1)
+    for loop_body, loop_body_start in _loop_bodies(content):
         copy_match = copy_pattern.search(loop_body)
 
         if copy_match:
             var_name = copy_match.group(1)
             line_no = _get_line_number(
                 content,
-                loop_match.start(1) + copy_match.start(),
+                loop_body_start + copy_match.start(),
             )
             source_lines = content.splitlines()
             snippet_line = (
@@ -769,19 +979,13 @@ def detect_new_object_in_loop(
 
     issues: List[Issue] = []
 
-    loop_pattern = re.compile(
-        r"(?:for|while)\s*\([^)]*\)\s*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
-        re.DOTALL,
-    )
-
-    for loop_match in loop_pattern.finditer(content):
-        loop_body = loop_match.group(1)
+    for loop_body, loop_body_start in _loop_bodies(content):
         newobj_match = re.search(r"\bNewObject\s*<", loop_body)
 
         if newobj_match:
             line_no = _get_line_number(
                 content,
-                loop_match.start(1) + newobj_match.start(),
+                loop_body_start + newobj_match.start(),
             )
             source_lines = content.splitlines()
             snippet_line = (
@@ -833,20 +1037,9 @@ def detect_ensure_in_tick(
     issues: List[Issue] = []
     source_lines = content.splitlines()
 
-    # Traditional regex with body matching limited to 1 level of nesting.
-    # This is the maximum Python re can do without a real parser. The plugin
-    # with Tree-sitter will perform exact function_body matching.
-    tick_pattern = re.compile(
-        r"void\s+(\w+)::(?:Tick|Update)\s*\([^)]*\)\s*"
-        r"\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
-        re.DOTALL,
-    )
-
-    for tick_match in tick_pattern.finditer(content):
-        class_name = tick_match.group(1)
-        tick_body = tick_match.group(2)
-        body_start = tick_match.start(2)
-
+    # Tree-sitter extracts the full Tick/Update body at any nesting depth;
+    # falls back to the legacy 1-level regex when tree-sitter is unavailable.
+    for class_name, tick_body, body_start in _tick_bodies(content):
         # Find ALL occurrences of ensure() in the body.
         for m in re.finditer(r"\bensure\s*\(", tick_body):
             # Filter out variants we do NOT want to touch.
@@ -1046,25 +1239,15 @@ def detect_spawn_actor_in_tick(
         return []
 
     issues: List[Issue] = []
-    tick_pattern = re.compile(
-        r"void\s+(\w+)::(?:Tick|Update)\s*\([^)]*\)\s*"
-        r"\{([^}]*(?:\{[^}]*\}[^}]*)*)\}",
-        re.DOTALL,
-    )
-
     spawn_pattern = re.compile(r"\bSpawnActor(?:Deferred)?\s*<")
 
-    for tick_match in tick_pattern.finditer(content):
-        class_name = tick_match.group(1)
-        tick_body = tick_match.group(2)
-
+    for class_name, tick_body, body_start in _tick_bodies(content):
         # Skip if body contains comment-only spawn mentions
         spawn_match = spawn_pattern.search(tick_body)
         if not spawn_match:
             continue
 
         # Verify the spawn is not inside a comment
-        body_start = tick_match.start(2)
         abs_pos = body_start + spawn_match.start()
         line_no = _get_line_number(content, abs_pos)
         source_lines = content.splitlines()

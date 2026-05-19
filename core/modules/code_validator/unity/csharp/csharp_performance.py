@@ -27,6 +27,7 @@ from code_validator.unity.csharp._csharp_helpers import (
     _line_number,
     _update_body,
 )
+from code_validator.unity.parsers.csharp_parser import CsharpParser
 
 _LINQ_OPERATORS = (
     r"Where|Select|SelectMany|ToList|ToArray|ToDictionary|First|FirstOrDefault|"
@@ -35,16 +36,48 @@ _LINQ_OPERATORS = (
 )
 
 
+def _update_region(content: str):
+    """Return (region_text, base_offset) for the Update/LateUpdate/
+    FixedUpdate body.
+
+    Tries the Tree-sitter ``CsharpParser`` first so deeply nested calls
+    are extracted from the real AST ``block`` node. ``base_offset`` is the
+    index of ``region_text`` inside ``content`` so the existing
+    ``_line_number(content, base + m.start())`` arithmetic stays valid.
+
+    Falls back to the regex ``_update_body`` brace-walker when
+    tree-sitter is unavailable or the method is absent. Returns ``None``
+    when no Update-family method exists.
+    """
+    try:
+        parser = CsharpParser()
+        tree = parser.parse(content)
+        body_node = parser.find_function_body(tree, "Update")
+    except Exception:
+        span = _update_body(content)
+        if not span:
+            return None
+        return content[span[0] : span[1]], span[0]
+    else:
+        if body_node is None:
+            return None
+        if hasattr(body_node, "text") and body_node.text is not None:
+            region = body_node.text.decode("utf-8")
+        else:
+            region = content[body_node.start_byte : body_node.end_byte]
+        return region, body_node.start_byte
+
+
 def detect_linq_in_update(content: str, file_path: str) -> List[Issue]:
     """CSP001: LINQ chain inside Update — allocates enumerator+lambda each frame."""
-    body = _update_body(content)
-    if not body:
+    res = _update_region(content)
+    if res is None:
         return []
-    region = content[body[0] : body[1]]
+    region, base = res
     m = re.search(rf"\.(?:{_LINQ_OPERATORS})\s*\(", region)
     if not m:
         return []
-    line = _line_number(content, body[0] + m.start())
+    line = _line_number(content, base + m.start())
     return [
         _emit(
             file_path,
@@ -109,10 +142,10 @@ def detect_string_concat_in_loop(content: str, file_path: str) -> List[Issue]:
 
 def detect_heavy_math_in_update(content: str, file_path: str) -> List[Issue]:
     """CSP003: expensive Mathf calls inside Update — CPU overhead every frame."""
-    body = _update_body(content)
-    if not body:
+    res = _update_region(content)
+    if res is None:
         return []
-    region = content[body[0] : body[1]]
+    region, base = res
     m = re.search(
         r"\bMathf\.(?:Sqrt|Sin|Cos|Tan|Asin|Acos|Atan|Atan2|Pow|Exp|Log)\s*\(",
         region,
@@ -121,7 +154,7 @@ def detect_heavy_math_in_update(content: str, file_path: str) -> List[Issue]:
         return []
     fn_match = re.search(r"Mathf\.(\w+)", region[m.start() :])
     fn_name = fn_match.group(1) if fn_match else "Sqrt/Sin/Pow"
-    line = _line_number(content, body[0] + m.start())
+    line = _line_number(content, base + m.start())
     return [
         _emit(
             file_path,
@@ -138,14 +171,14 @@ def detect_heavy_math_in_update(content: str, file_path: str) -> List[Issue]:
 
 def detect_instantiate_in_update(content: str, file_path: str) -> List[Issue]:
     """CSP004: Instantiate inside Update — per-frame GameObject allocation."""
-    body = _update_body(content)
-    if not body:
+    res = _update_region(content)
+    if res is None:
         return []
-    region = content[body[0] : body[1]]
+    region, base = res
     m = re.search(r"\bInstantiate\s*\(", region)
     if not m:
         return []
-    line = _line_number(content, body[0] + m.start())
+    line = _line_number(content, base + m.start())
     return [
         _emit(
             file_path,
@@ -187,10 +220,10 @@ def detect_new_waitforseconds(content: str, file_path: str) -> List[Issue]:
 
 def detect_string_ops_in_update(content: str, file_path: str) -> List[Issue]:
     """CSP007: string allocation inside Update — GC pressure every frame."""
-    body = _update_body(content)
-    if not body:
+    res = _update_region(content)
+    if res is None:
         return []
-    region = content[body[0] : body[1]]
+    region, base = res
     m = re.search(
         r'(?:string\.Format|String\.Format|string\.Concat|\$"[^"]*"'
         r'|"[^"]+"\s*\+\s*\w|\w+\s*\+\s*"[^"]+")',
@@ -198,7 +231,7 @@ def detect_string_ops_in_update(content: str, file_path: str) -> List[Issue]:
     )
     if not m:
         return []
-    line = _line_number(content, body[0] + m.start())
+    line = _line_number(content, base + m.start())
     return [
         _emit(
             file_path,
@@ -215,17 +248,55 @@ def detect_string_ops_in_update(content: str, file_path: str) -> List[Issue]:
 
 def detect_large_update_body(content: str, file_path: str) -> List[Issue]:
     """CSP008: Update method body exceeds 50 lines — too much work per frame."""
-    sig_re = r"\b(?:private|public|protected|internal)?\s*void\s+(?:Update|LateUpdate)\s*\(\s*\)"  # noqa: E501
-    span = _find_method_body(content, sig_re)
-    if not span:
-        return []
-    body_lines = content[span[0] : span[1]].count("\n")
+    try:
+        parser = CsharpParser()
+        tree = parser.parse(content)
+        # CSP008 only flags Update / LateUpdate (NOT FixedUpdate), so we
+        # scan method nodes in document order and take the first whose
+        # name is exactly Update or LateUpdate — the Update alias in
+        # find_function_body would also match FixedUpdate.
+        body_node = None
+        for _n in parser._traverse(tree):
+            if _n.type != "method_declaration":
+                continue
+            for _c in _n.children:
+                if (
+                    _c.type == "identifier"
+                    and _c.text
+                    and _c.text.decode("utf-8") in ("Update", "LateUpdate")
+                ):
+                    body_node = parser._find_child(_n, "block")
+                    break
+            if body_node is not None:
+                break
+    except Exception:
+        sig_re = r"\b(?:private|public|protected|internal)?\s*void\s+(?:Update|LateUpdate)\s*\(\s*\)"  # noqa: E501
+        span = _find_method_body(content, sig_re)
+        if not span:
+            return []
+        body_lines = content[span[0] : span[1]].count("\n")
+        sig_line = span[2]
+    else:
+        if body_node is None:
+            return []
+        if hasattr(body_node, "text") and body_node.text is not None:
+            body_lines = body_node.text.decode("utf-8").count("\n")
+        else:
+            body_lines = content[body_node.start_byte : body_node.end_byte].count("\n")
+        # Mirror the regex helper which reported the signature line; the
+        # method_declaration parent's first line is that signature.
+        method_node = body_node.parent
+        sig_line = (
+            method_node.start_point[0] + 1
+            if method_node is not None
+            else body_node.start_point[0] + 1
+        )
     if body_lines < 50:
         return []
     return [
         _emit(
             file_path,
-            span[2],
+            sig_line,
             content,
             rule_id="CSP008",
             category="Performance",
@@ -362,14 +433,14 @@ def detect_gc_collect(content: str, file_path: str) -> List[Issue]:
 
 def detect_debug_assert_in_update(content: str, file_path: str) -> List[Issue]:
     """CSP012: Debug.Assert inside Update — evaluates condition and formats message every frame."""  # noqa: E501
-    body = _update_body(content)
-    if not body:
+    res = _update_region(content)
+    if res is None:
         return []
-    region = content[body[0] : body[1]]
+    region, base = res
     m = re.search(r"\bDebug\.Assert\s*\(", region)
     if not m:
         return []
-    line = _line_number(content, body[0] + m.start())
+    line = _line_number(content, base + m.start())
     return [
         _emit(
             file_path,
