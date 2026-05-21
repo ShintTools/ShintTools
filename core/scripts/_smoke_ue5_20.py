@@ -12,7 +12,7 @@ from typing import Any, Dict, List
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from modules.agent.explainer import explain_issue  # noqa: E402
+from modules.agent.explainer import explain_issue, warmup  # noqa: E402
 from modules.agent.llm_backend import load_model  # noqa: E402
 
 CASES: List[Dict[str, Any]] = [
@@ -492,7 +492,11 @@ def run() -> None:
     t_load_start = time.perf_counter()
     load_model()
     t_load_end = time.perf_counter()
-    print(f"Model ready. (load: {t_load_end - t_load_start:.1f}s)\n")
+    print(f"Model ready. (load: {t_load_end - t_load_start:.1f}s)")
+
+    print("Warming up KV cache...")
+    t_wu = warmup()
+    print(f"Warm-up done. ({t_wu:.1f}s)\n")
 
     passed = 0
     failed = 0
@@ -523,8 +527,6 @@ def run() -> None:
             print(explanation)
             print(f"  time: {elapsed:.1f}s")
 
-            rule_name = issue.get("rule_name", "")
-            bold_ok = f"**{rule_name}**" in explanation
             closing = (
                 "ShintTools' Auto-Fix can apply it for you."
                 if auto
@@ -532,16 +534,12 @@ def run() -> None:
             )
             closing_ok = closing in explanation
 
-            result = []
-            result.append("[OK]  bold" if bold_ok else "[FAIL] bold missing")
-            result.append("[OK]  closing" if closing_ok else "[FAIL] closing wrong")
             print()
-            for r in result:
-                print(f"  {r}")
-
-            if bold_ok and closing_ok:
+            if closing_ok:
+                print("  [OK] closing line correct")
                 passed += 1
             else:
+                print(f"  [WARN] closing line wrong — expected: '{closing}'")
                 failed += 1
                 failed_labels.append(label)
 

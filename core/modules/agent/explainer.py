@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import time
 from typing import Any, Iterator, Mapping
 
 from .llm_backend import generate as _llm_generate
@@ -127,10 +128,10 @@ _FEW_SHOT_EXAMPLE = (
     "\n"
     "EXPLANATION\n"
     "Your `BeginPlay` grabs `GetWorld()` and uses the pointer straight "
-    "away — that's the **GetWorld without null-check** pattern. The "
-    "world can come back null in editor utilities, commandlets, or "
-    "during shutdown, so dereferencing it without a guard is unsafe. "
-    "Capture and check it first with `if (UWorld* W = GetWorld())`. "
+    "away without a null check. The world can come back null in editor "
+    "utilities, commandlets, or during shutdown, so dereferencing it "
+    "without a guard is unsafe. Capture and check it first with "
+    "`if (UWorld* W = GetWorld())`. "
     "ShintTools' Auto-Fix can apply it for you.\n"
     "\n"
     "INPUT\n"
@@ -148,8 +149,7 @@ _FEW_SHOT_EXAMPLE = (
     "\n"
     "EXPLANATION\n"
     "Your `BP_PlayerInventory` modifies a replicated variable in "
-    "EventGraph without first checking authority — that's the "
-    "**Missing authority check before action** pattern. In multiplayer "
+    "EventGraph without first checking authority. In multiplayer "
     "only the server should modify replicated state; clients writing "
     "to it directly can cause desync, cheating, or server rejection. "
     "Gate the Set node behind a `HasAuthority` or `SwitchHasAuthority` "
@@ -169,11 +169,10 @@ _FEW_SHOT_EXAMPLE = (
     "\n"
     "EXPLANATION\n"
     "Your `AnalyticsService.cs` stores the API key as a plain string "
-    "literal — that's the **Hard-coded secret in source** pattern. "
-    "Anyone who can read the git history can recover that value even "
-    "if you delete the line later, so it needs to leave the source "
-    "file entirely. Move it to an environment variable or a secrets "
-    "manager and read it at runtime. You must fix this manually.\n"
+    "literal in source. Anyone who can read the git history can recover "
+    "that value even if you delete the line later, so it needs to leave "
+    "the source file entirely. Move it to an environment variable or a "
+    "secrets manager and read it at runtime. You must fix this manually.\n"
     "\n"
     "INPUT\n"
     "rule_name: Asset missing type prefix\n"
@@ -187,8 +186,7 @@ _FEW_SHOT_EXAMPLE = (
     "    asset: /Game/Characters/HeroSword\n"
     "\n"
     "EXPLANATION\n"
-    "Your `HeroSword` asset has no type prefix — that's the "
-    "**Asset missing type prefix** pattern. UE5 conventions require "
+    "Your `HeroSword` asset has no type prefix. UE5 conventions require "
     "every asset to start with a short prefix so the Content Browser "
     "stays navigable and assets don't collide when referenced by name "
     "in code. Add `SM_` before the name to match its Static Mesh type. "
@@ -244,6 +242,37 @@ def build_explainer_prompt(issue_dict: Mapping[str, Any]) -> str:
         f"{issue_block_text}\n\n"
         f"EXPLANATION\n"
     )
+
+
+# ── Warm-up ───────────────────────────────────────────────────────────────
+
+
+# Minimal issue used only to build the KV cache for the shared prompt
+# prefix (system instruction + few-shots ≈ 900 tokens). The content
+# does not matter; what matters is that the prefix is identical to
+# every real request so llama.cpp can reuse it.
+_WARMUP_ISSUE: dict[str, Any] = {
+    "rule_name": "warmup",
+    "rule_explanation": "warmup",
+    "is_auto_fixable": False,
+}
+
+
+def warmup() -> float:
+    """Prime the KV cache by running one dummy inference.
+
+    Call once after load_model() at server startup. The shared prompt
+    prefix (system instruction + 4 few-shots) is identical for every
+    real request, so this single call amortises the cold-start cost:
+    subsequent calls only process the short per-issue suffix (~50-100
+    tokens) instead of the full ~950-token prompt.
+
+    Returns elapsed seconds so the caller can log the warm-up time.
+    """
+    prompt = build_explainer_prompt(_WARMUP_ISSUE)
+    t0 = time.perf_counter()
+    _llm_generate(prompt, max_tokens=1, temperature=0.0, stop=[])
+    return time.perf_counter() - t0
 
 
 # ── Public API ─────────────────────────────────────────────────────────────
