@@ -381,7 +381,6 @@ async def explain(payload: AgentExplainRequest) -> AgentExplainResponse:
 
     from modules.agent.explainer import explain_issue
     from modules.agent.llm_backend import is_loaded
-    from modules.agent.prefab_explanations import lookup_prefab
 
     tier = await resolve_tier(payload.api_key)
     if tier == "free":
@@ -390,25 +389,12 @@ async def explain(payload: AgentExplainRequest) -> AgentExplainResponse:
             detail="AI explanations are an Indie-tier feature.",
         )
 
-    # 1) Prefab lookup — instant, in-memory, never touches the LLM.
-    prefab = lookup_prefab(payload.issue.rule_id)
-    if prefab and prefab.get("explanation"):
-        return AgentExplainResponse(
-            success=True,
-            explanation=prefab["explanation"],
-            generation_seconds=0.0,
-            cached=True,
-            source="prefab",
-            tier=tier,
-            error_message="",
-        )
-
     # Pydantic strips unknown fields by default. We pass the issue as a
     # plain dict to the explainer so any extra fields the orchestrator
     # added (context_before, snippet, asset_path, graph) survive.
     issue_payload_dict = payload.issue.model_dump(mode="json")
 
-    # 2) MongoDB cache DISABLED — always generate fresh.
+    # Always generate fresh — prefab and MongoDB cache both disabled.
     # Explanations are logged to local JSONL for fine-tuning instead.
 
     # 3) Live LLM call (always).
@@ -499,28 +485,8 @@ async def _explain_stream_events(
 
     from modules.agent.explainer import explain_issue_stream
     from modules.agent.llm_backend import is_loaded
-    from modules.agent.prefab_explanations import lookup_prefab
 
-    # 1) Prefab — emit as one chunk + done, no DB, no model.
-    prefab = lookup_prefab(payload.issue.rule_id)
-    if prefab and prefab.get("explanation"):
-        prefab_text = prefab["explanation"]
-        yield "data: " + json.dumps({"chunk": prefab_text}) + "\n\n"
-        yield (
-            "data: "
-            + json.dumps(
-                {
-                    "done": True,
-                    "full_text": prefab_text,
-                    "cached": True,
-                    "source": "prefab",
-                    "generation_seconds": 0.0,
-                }
-            )
-            + "\n\n"
-        )
-        return
-
+    # Always generate fresh — prefab and MongoDB cache both disabled.
     issue_payload_dict = payload.issue.model_dump(mode="json")
 
     # 2) MongoDB cache DISABLED — always generate fresh.
