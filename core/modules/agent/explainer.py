@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import time
 from typing import Any, Iterator, Mapping
 
 from .llm_backend import generate as _llm_generate
@@ -241,6 +242,37 @@ def build_explainer_prompt(issue_dict: Mapping[str, Any]) -> str:
         f"{issue_block_text}\n\n"
         f"EXPLANATION\n"
     )
+
+
+# ── Warm-up ───────────────────────────────────────────────────────────────
+
+
+# Minimal issue used only to build the KV cache for the shared prompt
+# prefix (system instruction + few-shots ≈ 900 tokens). The content
+# does not matter; what matters is that the prefix is identical to
+# every real request so llama.cpp can reuse it.
+_WARMUP_ISSUE: dict[str, Any] = {
+    "rule_name": "warmup",
+    "rule_explanation": "warmup",
+    "is_auto_fixable": False,
+}
+
+
+def warmup() -> float:
+    """Prime the KV cache by running one dummy inference.
+
+    Call once after load_model() at server startup. The shared prompt
+    prefix (system instruction + 4 few-shots) is identical for every
+    real request, so this single call amortises the cold-start cost:
+    subsequent calls only process the short per-issue suffix (~50-100
+    tokens) instead of the full ~950-token prompt.
+
+    Returns elapsed seconds so the caller can log the warm-up time.
+    """
+    prompt = build_explainer_prompt(_WARMUP_ISSUE)
+    t0 = time.perf_counter()
+    _llm_generate(prompt, max_tokens=1, temperature=0.0, stop=[])
+    return time.perf_counter() - t0
 
 
 # ── Public API ─────────────────────────────────────────────────────────────

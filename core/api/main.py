@@ -115,6 +115,16 @@ async def lifespan(app: FastAPI):
                         print("✓ LLM model loaded successfully")
                     except Exception as e:
                         print(f"WARNING: Failed to load LLM model: {e}")
+                    else:
+                        try:
+                            from modules.agent.explainer import warmup as _warmup
+
+                            elapsed = _warmup()
+                            print(
+                                f"✓ LLM warm-up done ({elapsed:.1f}s) — KV cache primed"
+                            )
+                        except Exception as e:
+                            print(f"WARNING: LLM warm-up failed: {e}")
         except ImportError:
             print("INFO: Agent module not available (develop branch only)")
 
