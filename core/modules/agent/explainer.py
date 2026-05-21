@@ -27,13 +27,14 @@ from typing import Any, Iterator, Mapping
 
 from .llm_backend import generate as _llm_generate
 from .llm_backend import generate_stream as _llm_generate_stream
+from .model_config import detect_config_from_env
 
 # Identifier of the LLM weights currently loaded. Goes into the cache
 # key so that swapping the GGUF (e.g. upgrading to a different
 # quantisation, or a different model entirely) automatically
 # invalidates every cached explanation produced by the old weights.
 DEFAULT_MODEL_ID = os.environ.get(
-    "SHINTTOOLS_MODEL_FILE", "deepseek-coder-1.3b-instruct.Q4_K_M.gguf"
+    "SHINTTOOLS_MODEL_FILE", "Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf"
 )
 
 
@@ -91,37 +92,15 @@ def _coerce_snippet(issue_dict: Mapping[str, Any]) -> str:
 # ── Prompt builder ─────────────────────────────────────────────────────────
 
 
-_SYSTEM_INSTRUCTION = (
-    "You are a senior UE5 engineer reviewing a teammate's code. "
-    "ShintTools' deterministic rules already detected the issue below "
-    "— your one job is to explain in your own words why it matters and "
-    "what they should do next, the way you would say it out loud at a "
-    "desk.\n"
-    "\n"
-    "Style:\n"
-    "  - Friendly and conversational, not a compliance report. Speak"
-    " in the second person ('your code', 'you call', 'you should').\n"
-    "  - 2 to 4 short sentences in English. No headings, no bullet"
-    " lists, no code fences.\n"
-    "  - Active voice. Avoid 'is made', 'is called', 'the dereferencing"
-    " of'. Prefer 'you call', 'you dereference', 'your code does X'.\n"
-    "\n"
-    "Rules:\n"
-    "  - Refer to the rule by its rule_name in **bold markdown**."
-    " Never mention the internal rule_id (e.g. CS001).\n"
-    "  - Ground every claim in the rule_explanation provided below."
-    " Do not invent UE5 APIs, classes, macros, contexts, or behaviours"
-    " that the explanation does not mention. If the explanation lists"
-    " specific contexts (e.g. 'editor utilities, commandlets, or"
-    " shutdown'), use exactly those words — do not add others.\n"
-    "  - You may quote tiny code pieces inline with `backticks` (one"
-    " expression at most). Do not rewrite the snippet, do not produce"
-    " multi-line code blocks.\n"
-    "  - Close with a one-line action: if is_auto_fixable is true, say"
-    " ShintTools' Auto-Fix can apply it for them; otherwise say it"
-    " must be fixed manually (in the UE5 editor for Blueprints, via"
-    " an AssetRegistry rename for Naming)."
-)
+def _get_system_instruction() -> str:
+    """Get the system instruction for the currently configured model.
+
+    This allows future model swaps to use prompts tuned for their
+    instruction style without code duplication.
+    """
+    config = detect_config_from_env()
+    return config.system_prompt
+
 
 # Two few-shots: one C++ auto-fixable case, one Blueprint manual-fix
 # case. Two examples teach the model both endings of the closing line
@@ -175,7 +154,27 @@ _FEW_SHOT_EXAMPLE = (
     "to it directly can cause desync, cheating, or server rejection. "
     "Gate the Set node behind a `HasAuthority` or `SwitchHasAuthority` "
     "branch. There is no Auto-Fix for Blueprint nodes — open the "
-    "Blueprint in the UE5 editor and add the guard manually."
+    "Blueprint in the UE5 editor and add the guard manually.\n"
+    "\n"
+    "INPUT\n"
+    "rule_name: Hard-coded secret in source\n"
+    "rule_explanation: Hard-coded secret literal found in source code. "
+    "Secrets committed to version control can be leaked via git history "
+    "even after deletion. Move them to environment variables or a "
+    "secrets manager.\n"
+    "file: Assets/Scripts/Analytics/AnalyticsService.cs\n"
+    "line: 12\n"
+    "is_auto_fixable: false\n"
+    "snippet:\n"
+    '    private const string api_key = "sk-prod-4f8a2c91b";\n'
+    "\n"
+    "EXPLANATION\n"
+    "Your `AnalyticsService.cs` stores the API key as a plain string "
+    "literal — that's the **Hard-coded secret in source** pattern. "
+    "Anyone who can read the git history can recover that value even "
+    "if you delete the line later, so it needs to leave the source "
+    "file entirely. Move it to an environment variable or a secrets "
+    "manager and read it at runtime. You must fix this manually."
 )
 
 
@@ -220,7 +219,7 @@ def build_explainer_prompt(issue_dict: Mapping[str, Any]) -> str:
     # continues from there. Stop tokens cut off any follow-on noise
     # (a second "INPUT" block, markdown headings, code fences).
     return (
-        f"{_SYSTEM_INSTRUCTION}\n\n"
+        f"{_get_system_instruction()}\n\n"
         f"{_FEW_SHOT_EXAMPLE}\n\n"
         f"{issue_block_text}\n\n"
         f"EXPLANATION\n"

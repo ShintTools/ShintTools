@@ -11,7 +11,7 @@
 #   SHINTTOOLS_MODEL_FILE   exact .gguf filename to load
 #
 # For the MVP the whole product ships with a single bundled model
-# (DeepSeek Coder 1.3B Q4_K_M, fetched once from ShintTools' own
+# (Qwen2.5-Coder 1.5B Q4_K_M, fetched once from ShintTools' own
 # GitHub Releases by model_downloader.py). The env vars stay in place
 # so we can swap the model without code changes when needed.
 
@@ -21,13 +21,18 @@ import os
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
-# Default model: DeepSeek Coder 1.3B Q4_K_M (~800 MB).
+# Default model: Qwen2.5-Coder 1.5B Q4_K_M (~940 MB).
 # Small enough to run on a developer laptop without a GPU.
-DEFAULT_MODEL_FILE = "deepseek-coder-1.3b-instruct.Q4_K_M.gguf"
+DEFAULT_MODEL_FILE = "Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf"
 
 # Models live outside the source tree (in core/models/) so they don't end
 # up in git or in Docker image layers we don't want to bake the model into.
-DEFAULT_MODELS_DIR = Path(__file__).resolve().parent.parent.parent / "models"
+DEFAULT_MODELS_DIR = (
+    Path(__file__).resolve().parent.parent.parent
+    / "models"
+    / "agent"
+    / "qwen2.5-coder-1.5b"
+)
 
 
 # Module-level singleton. Loaded once during FastAPI lifespan; reused

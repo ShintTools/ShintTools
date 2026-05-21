@@ -57,9 +57,8 @@ from .llm_backend import _resolved_model_path
 #   That keeps anonymous downloads working without compromising the
 #   privacy of the main codebase.
 #
-# DEFAULT_MODEL_SHA256 is the SHA-256 of the upstream file as published
-# by TheBloke/deepseek-coder-1.3b-instruct-GGUF on Hugging Face. We
-# re-host the exact same bytes at DEFAULT_MODEL_URL on GitHub Releases —
+# DEFAULT_MODEL_SHA256 is the SHA-256 of the Qwen2.5-Coder model file.
+# We host it at DEFAULT_MODEL_URL on GitHub Releases —
 # bytes must match, otherwise integrity verification rejects the file.
 #
 # Compute the digest locally with PowerShell:
@@ -70,10 +69,10 @@ from .llm_backend import _resolved_model_path
 #         path/to/file.gguf
 DEFAULT_MODEL_URL = (
     "https://github.com/Genesishg1509/ShintTools-Models/releases/download/"
-    "v1.0-models/deepseek-coder-1.3b-instruct.Q4_K_M.gguf"
+    "v2.0-models/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf"
 )
 DEFAULT_MODEL_SHA256 = (
-    "04cebb6fafa40ae628cf6bfeb76032ec792852f54020c559ad0a56b9f2839118"
+    "f530705d447660a4336c329981af164b471b60b974b1d808d57e8ec9fe23b239"
 )
 
 # 1 MiB chunks — large enough to keep syscall overhead negligible,
