@@ -12,7 +12,7 @@ from typing import Any, Dict, List
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from modules.agent.explainer import explain_issue  # noqa: E402
+from modules.agent.explainer import explain_issue, warmup  # noqa: E402
 from modules.agent.llm_backend import load_model  # noqa: E402
 
 CASES: List[Dict[str, Any]] = [
@@ -492,7 +492,11 @@ def run() -> None:
     t_load_start = time.perf_counter()
     load_model()
     t_load_end = time.perf_counter()
-    print(f"Model ready. (load: {t_load_end - t_load_start:.1f}s)\n")
+    print(f"Model ready. (load: {t_load_end - t_load_start:.1f}s)")
+
+    print("Warming up KV cache...")
+    t_wu = warmup()
+    print(f"Warm-up done. ({t_wu:.1f}s)\n")
 
     passed = 0
     failed = 0
