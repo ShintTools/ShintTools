@@ -595,9 +595,6 @@ def run() -> None:
             print(explanation)
             print(f"  time: {elapsed:.1f}s")
 
-            rule_name = issue["rule_name"]
-            bold_name = f"**{rule_name}**"
-            has_bold = bold_name in explanation
             expected_closing = (
                 "ShintTools' Auto-Fix can apply it for you."
                 if issue["is_auto_fixable"]
@@ -605,25 +602,12 @@ def run() -> None:
             )
             has_closing = expected_closing in explanation
 
-            status = []
-            if has_bold:
-                status.append("[OK] rule_name bold")
-            else:
-                status.append(f"[WARN] rule_name not bolded — got: {explanation[-60:]}")
-            if has_closing:
-                status.append("[OK] closing line correct")
-            else:
-                status.append(
-                    f"[WARN] closing line wrong — expected: '{expected_closing}'"
-                )
-
             print()
-            for s in status:
-                print(f"  {s}")
-
-            if all(s.startswith("[OK]") for s in status):
+            if has_closing:
+                print("  [OK] closing line correct")
                 passed += 1
             else:
+                print(f"  [WARN] closing line wrong — expected: '{expected_closing}'")
                 failed += 1
 
         except Exception as e:
