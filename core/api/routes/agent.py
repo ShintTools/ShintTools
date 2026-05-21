@@ -378,15 +378,8 @@ async def explain(payload: AgentExplainRequest) -> AgentExplainResponse:
     without crashing the UX.
     """
     import time
-    from datetime import datetime, timezone
 
-    from api.database import get_cached_explanation, save_cached_explanation
-    from modules.agent.explainer import (
-        DEFAULT_MODEL_ID,
-        build_explainer_prompt,
-        compute_cache_key,
-        explain_issue,
-    )
+    from modules.agent.explainer import explain_issue
     from modules.agent.llm_backend import is_loaded
     from modules.agent.prefab_explanations import lookup_prefab
 
@@ -415,26 +408,10 @@ async def explain(payload: AgentExplainRequest) -> AgentExplainResponse:
     # added (context_before, snippet, asset_path, graph) survive.
     issue_payload_dict = payload.issue.model_dump(mode="json")
 
-    # Build the prompt OUTSIDE the LLM call so we can hash it for the
-    # cache. The prompt builder is pure and cheap (no I/O).
-    rendered_prompt = build_explainer_prompt(issue_payload_dict)
-    cache_key = compute_cache_key(rendered_prompt)
+    # 2) MongoDB cache DISABLED — always generate fresh.
+    # Explanations are logged to local JSONL for fine-tuning instead.
 
-    # 2) MongoDB cache (90-day TTL applied inside the helper).
-    # Best-effort: any DB hiccup falls through to a fresh LLM call.
-    cached_doc = await get_cached_explanation(cache_key)
-    if cached_doc and cached_doc.get("explanation"):
-        return AgentExplainResponse(
-            success=True,
-            explanation=cached_doc["explanation"],
-            generation_seconds=0.0,
-            cached=True,
-            source="cache",
-            tier=tier,
-            error_message="",
-        )
-
-    # 3) Live LLM call.
+    # 3) Live LLM call (always).
     if not is_loaded():
         return AgentExplainResponse(
             success=False,
@@ -465,18 +442,17 @@ async def explain(payload: AgentExplainRequest) -> AgentExplainResponse:
 
     generation_seconds = round(time.perf_counter() - started_at, 2)
 
-    # Persist the new explanation for next time. Best-effort — a write
+    # Log to local JSONL for fine-tuning. Best-effort — a write
     # failure does not affect the response we already produced.
-    await save_cached_explanation(
-        cache_key,
-        {
-            "rule_id": payload.issue.rule_id,
-            "rule_name": payload.issue.rule_name,
-            "explanation": generated_text,
-            "model_id": DEFAULT_MODEL_ID,
-            "generation_seconds": generation_seconds,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        },
+    from modules.agent.finetuning_logger import log_explanation
+
+    log_explanation(
+        rule_id=payload.issue.rule_id,
+        rule_name=payload.issue.rule_name,
+        rule_explanation=payload.issue.rule_explanation,
+        explanation_generated=generated_text,
+        issue_payload=issue_payload_dict,
+        generation_seconds=generation_seconds,
     )
 
     return AgentExplainResponse(
@@ -520,15 +496,8 @@ async def _explain_stream_events(
     — no LLM call.
     """
     import time
-    from datetime import datetime, timezone
 
-    from api.database import get_cached_explanation, save_cached_explanation
-    from modules.agent.explainer import (
-        DEFAULT_MODEL_ID,
-        build_explainer_prompt,
-        compute_cache_key,
-        explain_issue_stream,
-    )
+    from modules.agent.explainer import explain_issue_stream
     from modules.agent.llm_backend import is_loaded
     from modules.agent.prefab_explanations import lookup_prefab
 
@@ -553,28 +522,9 @@ async def _explain_stream_events(
         return
 
     issue_payload_dict = payload.issue.model_dump(mode="json")
-    rendered_prompt = build_explainer_prompt(issue_payload_dict)
-    cache_key = compute_cache_key(rendered_prompt)
 
-    # 2) MongoDB cache hit: one chunk + done, no model touch.
-    cached_doc = await get_cached_explanation(cache_key)
-    if cached_doc and cached_doc.get("explanation"):
-        cached_text = cached_doc["explanation"]
-        yield "data: " + json.dumps({"chunk": cached_text}) + "\n\n"
-        yield (
-            "data: "
-            + json.dumps(
-                {
-                    "done": True,
-                    "full_text": cached_text,
-                    "cached": True,
-                    "source": "cache",
-                    "generation_seconds": 0.0,
-                }
-            )
-            + "\n\n"
-        )
-        return
+    # 2) MongoDB cache DISABLED — always generate fresh.
+    # Explanations are logged to local JSONL for fine-tuning instead.
 
     if not is_loaded():
         yield "data: " + json.dumps(
@@ -616,18 +566,18 @@ async def _explain_stream_events(
 
     # Persist the new explanation IF the stream completed cleanly and
     # we actually produced text. Best-effort — a write failure does
-    # not affect what we already sent down the wire.
+    # Log to local JSONL for fine-tuning. Best-effort — a write
+    # failure does not affect what we already sent down the wire.
     if stream_failed is None and accumulated_text:
-        await save_cached_explanation(
-            cache_key,
-            {
-                "rule_id": payload.issue.rule_id,
-                "rule_name": payload.issue.rule_name,
-                "explanation": accumulated_text,
-                "model_id": DEFAULT_MODEL_ID,
-                "generation_seconds": generation_seconds,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            },
+        from modules.agent.finetuning_logger import log_explanation
+
+        log_explanation(
+            rule_id=payload.issue.rule_id,
+            rule_name=payload.issue.rule_name,
+            rule_explanation=payload.issue.rule_explanation,
+            explanation_generated=accumulated_text,
+            issue_payload=issue_payload_dict,
+            generation_seconds=generation_seconds,
         )
 
     yield (

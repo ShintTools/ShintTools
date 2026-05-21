@@ -13,6 +13,9 @@ core/models/*
 models/
 *.gguf
 
+# Fine-tuning logs (generated locally, not committed)
+core/finetuning_logs/
+
 # Claude Code workspace (memoria local + settings personales)
 .claude/
 
