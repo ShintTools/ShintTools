@@ -13,11 +13,6 @@ ShintTools must keep working with zero extra dependencies installed.
 
 from typing import Any, Optional
 
-# tree_sitter_languages bundles the compiled C# grammar. Importing it at
-# module load lets a missing dependency surface as a plain ImportError
-# the callers already know how to swallow.
-from tree_sitter_languages import get_language, get_parser  # noqa: F401
-
 # Unity polls Update / LateUpdate / FixedUpdate identically, so a rule
 # that says "X inside Update" must also inspect the other two bodies.
 _UPDATE_ALIASES = ("Update", "LateUpdate", "FixedUpdate")
@@ -47,19 +42,15 @@ class CsharpParser:
     def __init__(self) -> None:
         """Initialize the parser.
 
-        Handles both tree-sitter API versions the same way CppParser
-        does. ``tree_sitter_languages`` already returns ready-made
-        Language / Parser objects, but we still guard the call so a
-        future API shift degrades to the ImportError fallback rather
-        than crashing the validator.
+        Lazy-imports tree_sitter_languages so that a missing package
+        raises ImportError here (where callers catch it) instead of at
+        module load time (which would break the entire import chain).
         """
         try:
-            # tree_sitter_languages >= current: returns a Parser bound
-            # to the C# grammar directly.
+            from tree_sitter_languages import get_parser  # noqa: PLC0415
+
             self.parser = get_parser("c_sharp")
-        except Exception as exc:  # pragma: no cover - defensive
-            # Surface as ImportError so the rule modules treat it the
-            # same as a missing dependency and fall back to regex.
+        except Exception as exc:
             raise ImportError(f"tree_sitter C# grammar unavailable: {exc}") from exc
 
     def parse(self, source: str) -> Any:
