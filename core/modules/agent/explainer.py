@@ -118,9 +118,9 @@ _FEW_SHOT_EXAMPLE = (
     "rule_explanation: GetWorld() can return nullptr in editor "
     "utilities, commandlets, or during shutdown. Always guard with "
     "'if (UWorld* W = GetWorld())' before dereferencing.\n"
+    "is_auto_fixable: true\n"
     "file: MyActor.cpp\n"
     "line: 12\n"
-    "is_auto_fixable: true\n"
     "snippet:\n"
     "    UWorld* World = GetWorld();\n"
     "    AActor* Spawned = World->SpawnActor<AActor>(SpawnClass);\n"
@@ -140,8 +140,8 @@ _FEW_SHOT_EXAMPLE = (
     "In multiplayer, only the server should modify replicated state. "
     "Clients writing replicated variables directly can cause desync, "
     "cheating, or server rejection.\n"
-    "file: /Game/Blueprints/BP_PlayerInventory\n"
     "is_auto_fixable: false\n"
+    "file: /Game/Blueprints/BP_PlayerInventory\n"
     "snippet:\n"
     "    asset: /Game/Blueprints/BP_PlayerInventory\n"
     "    graph: EventGraph\n"
@@ -161,9 +161,9 @@ _FEW_SHOT_EXAMPLE = (
     "Secrets committed to version control can be leaked via git history "
     "even after deletion. Move them to environment variables or a "
     "secrets manager.\n"
+    "is_auto_fixable: false\n"
     "file: Assets/Scripts/Analytics/AnalyticsService.cs\n"
     "line: 12\n"
-    "is_auto_fixable: false\n"
     "snippet:\n"
     '    private const string api_key = "sk-prod-4f8a2c91b";\n'
     "\n"
@@ -213,15 +213,17 @@ def build_explainer_prompt(issue_dict: Mapping[str, Any]) -> str:
     issue_block_lines: list[str] = ["INPUT", f"rule_name: {rule_name}"]
     if rule_explanation:
         issue_block_lines.append(f"rule_explanation: {rule_explanation}")
+    # is_auto_fixable comes right after rule context so the model reads it
+    # before any code snippet and uses it for the closing line.
+    issue_block_lines.append(
+        f"is_auto_fixable: {'true' if is_auto_fixable else 'false'}"
+    )
     if short_message:
         issue_block_lines.append(f"message: {short_message}")
     if file_path:
         issue_block_lines.append(f"file: {file_path}")
     if isinstance(line, int) and line > 0:
         issue_block_lines.append(f"line: {line}")
-    issue_block_lines.append(
-        f"is_auto_fixable: {'true' if is_auto_fixable else 'false'}"
-    )
     if snippet:
         # Indent each snippet line by 4 spaces so the LLM sees a clear
         # boundary between metadata and code.
