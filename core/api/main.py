@@ -6,7 +6,17 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from api.middleware import setup_middlewares
-from api.routes import agent, assets, config, dashboard, health, metrics, validate
+from api.routes import (
+    agent,
+    assets,
+    config,
+    dashboard,
+    health,
+    license,
+    metrics,
+    unity,
+    validate,
+)
 
 # (NUEVO: assets, dashboard)
 from fastapi import FastAPI
@@ -158,4 +168,6 @@ app.include_router(dashboard.router)  # POST /dashboard/report (NUEVO)
 app.include_router(
     metrics.router
 )  # GET /metrics/score/latest  GET /metrics/score/history
-app.include_router(agent.router)  # POST /agent/* (Sprint C - Rules-based prioritizer)
+app.include_router(agent.router)  # POST /agent/*
+app.include_router(license.router)  # POST /license
+app.include_router(unity.router)  # POST /validate/unity/scan
