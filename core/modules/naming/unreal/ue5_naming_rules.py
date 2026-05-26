@@ -561,10 +561,9 @@ def detect_missing_prefix(asset_records: List[AssetRecord]) -> List[Issue]:
     """NM001: flag assets that lack a valid UE5 type prefix.
 
     UE5 conventions require every asset to start with a short prefix
-    identifying its class. Without a prefix, assets are hard to find
-    by type in the Content Browser and risk colliding with other
-    types when referenced by name in code. Add the prefix that
-    matches the asset's type.
+    identifying its class (SM_, T_, M_, BP_, …). Without one, assets
+    are hard to find in the Content Browser and risk colliding with
+    other types when referenced by name from code.
 
     Uses asset_type from AssetRegistry when available, otherwise
     infers from folder name. Assets in unrecognised folders are
@@ -1013,14 +1012,12 @@ def detect_wrong_folder(
     """NM009: flag assets whose type does not match their folder.
 
     A StaticMesh in /Textures/ or a Blueprint in /Materials/ confuses
-    team members browsing the Content Browser and breaks any tooling
-    that resolves assets by folder convention. Move the asset to its
-    expected folder, or rename the folder if it intentionally holds
-    mixed types.
+    teammates browsing the Content Browser and breaks tooling that
+    resolves assets by folder convention. Move the asset to its
+    expected folder.
 
     Uses the real asset_type from UE5 AssetRegistry (sent by the plugin).
     Skips assets with Unknown type — requires real type to be useful.
-    Example: a StaticMesh in /Textures/ or a Blueprint in /Materials/.
     """
     issues: List[Issue] = []
 
@@ -1410,14 +1407,10 @@ def detect_version_suffix(asset_records: List[AssetRecord]) -> List[Issue]:
 def detect_wrong_prefix_for_type(
     asset_records: List[AssetRecord],
 ) -> List[Issue]:
-    """NM016: flag assets that have a valid prefix but wrong for their type.
-
-    NM001 catches assets with NO valid prefix. This rule catches assets
-    that DO have a valid prefix but it doesn't match the asset_type
-    reported by the UE5 AssetRegistry.
-
-    Example: a StaticMesh named 'T_Rock' — T_ is valid for Texture2D
-    but should be SM_ for StaticMesh.
+    """NM016: flag assets that carry a valid prefix that doesn't match
+    their type. NM001 handles missing prefixes; this catches the mismatched
+    case — e.g. a StaticMesh named 'T_Rock' (T_ is valid for Texture2D
+    but should be SM_).
 
     Requires asset_type from AssetRegistry — skips assets with Unknown type.
     """

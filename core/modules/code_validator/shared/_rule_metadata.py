@@ -220,7 +220,36 @@ RULE_NAMES: Dict[str, str] = {
     "UN016": "ScriptableObject without CreateAssetMenu",
     # ── Unity Asset Naming (NMU) ──────────────────────────────────────
     "NMU001": "Unity asset missing type prefix",
+    # NMU017-NMU031: engine-agnostic rules remapped to NMU* for Unity scans
+    "NMU017": "Unity asset name contains spaces",
+    "NMU018": "Unity asset name contains special characters",
+    "NMU019": "Unity asset name starts with lowercase",
+    "NMU020": "Duplicate Unity asset name across folders",
+    "NMU021": "Unity texture missing channel suffix",
+    "NMU022": "Unity asset name not PascalCase",
+    "NMU023": "Unity asset name too long",
+    "NMU024": "Unity asset name has duplicated prefix",
+    "NMU025": "Unity asset name starts with a number",
+    "NMU026": "Unity asset name has consecutive underscores",
+    "NMU027": "Unity asset name ends with underscore",
+    "NMU028": "Unity asset name is generic or placeholder",
+    "NMU029": "Unity asset name has version suffix",
+    "NMU030": "Unity asset name too short",
+    "NMU031": "Unity asset name redundantly repeats type",
+    "NMU002": "Unity asset path outside Assets/",
+    "NMU003": "Unity asset path uses backslashes",
+    "NMU004": "Unity C# script in wrong folder",
+    "NMU005": "Unity asset inside Resources folder",
+    "NMU006": "Unity asset inside StreamingAssets",
+    "NMU007": "Runtime asset inside Editor folder",
+    "NMU008": "Unity scene not in Scenes folder",
     "NMU009": "Unity asset in wrong folder",
+    "NMU010": "ScriptableObject missing descriptive suffix",
+    "NMU011": "Texture missing PBR channel suffix",
+    "NMU012": "Unity asset extension not lowercase",
+    "NMU013": "Unity asset path has traversal segments",
+    "NMU014": "Unity asset path has double slashes",
+    "NMU015": "AudioClip missing category suffix",
     "NMU016": "Unity asset has wrong prefix for its type",
     # ── Unity Visual Scripting (VS*) ──────────────────────────────────
     "VSP001": "Log node inside an Update graph",
@@ -462,6 +491,26 @@ def _build_rule_id_to_function() -> Dict[str, Callable[..., Any]]:
         detect_weak_ptr_no_check,
     )
 
+    # Unity naming detectors.
+    from naming.unity.unity_naming_rules import (
+        detect_unity_audio_missing_suffix,
+        detect_unity_backslash_in_path,
+        detect_unity_double_slash,
+        detect_unity_editor_folder_misuse,
+        detect_unity_missing_prefix,
+        detect_unity_parent_dir_in_path,
+        detect_unity_path_outside_assets,
+        detect_unity_resources_folder,
+        detect_unity_scene_misplaced,
+        detect_unity_script_misplaced,
+        detect_unity_scriptableobject_suffix,
+        detect_unity_streaming_assets,
+        detect_unity_texture_pbr_suffix,
+        detect_unity_uppercase_extension,
+        detect_unity_wrong_folder,
+        detect_unity_wrong_prefix_for_type,
+    )
+
     # Naming detectors live under the separate `naming` top-level module.
     from naming.unreal.ue5_naming_rules import (
         detect_consecutive_underscores,
@@ -608,6 +657,23 @@ def _build_rule_id_to_function() -> Dict[str, Callable[..., Any]]:
         "NM016": detect_wrong_prefix_for_type,
         "NM017": detect_name_too_short,
         "NM018": detect_redundant_type_in_name,
+        # Unity Asset Naming
+        "NMU001": detect_unity_missing_prefix,
+        "NMU002": detect_unity_path_outside_assets,
+        "NMU003": detect_unity_backslash_in_path,
+        "NMU004": detect_unity_script_misplaced,
+        "NMU005": detect_unity_resources_folder,
+        "NMU006": detect_unity_streaming_assets,
+        "NMU007": detect_unity_editor_folder_misuse,
+        "NMU008": detect_unity_scene_misplaced,
+        "NMU009": detect_unity_wrong_folder,
+        "NMU010": detect_unity_scriptableobject_suffix,
+        "NMU011": detect_unity_texture_pbr_suffix,
+        "NMU012": detect_unity_uppercase_extension,
+        "NMU013": detect_unity_parent_dir_in_path,
+        "NMU014": detect_unity_double_slash,
+        "NMU015": detect_unity_audio_missing_suffix,
+        "NMU016": detect_unity_wrong_prefix_for_type,
     }
 
 

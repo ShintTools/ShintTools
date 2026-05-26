@@ -362,10 +362,9 @@ def detect_array_no_bounds_check(
     in Debug builds and causes undefined behaviour in
     Shipping. Use IsValidIndex(i) before accessing.
 
-    Lookback window: 15 lines (configurable).
-    Loop variables (i, j, k, idx, Index) are only skipped
-    when the enclosing for-loop iterates with .Num() of
-    the SAME array. Block comments are handled correctly.
+    Detection: 15-line lookback. Loop variables (i, j, k,
+    idx, Index) are only skipped when the enclosing for-loop
+    iterates with .Num() of the SAME array.
     """
     if not _is_cpp(file_path):
         return []
@@ -1089,13 +1088,13 @@ def detect_server_rpc_no_validate(
     file_path: str,
 ) -> List[Issue]:
     """
-    Detects UFUNCTION(Server, Reliable) or UFUNCTION(Server, Unreliable)
-    declarations that lack WithValidation. Without a _Validate function,
-    a malicious client can send arbitrary parameters to the server RPC.
-    Epic recommends always using WithValidation for Server RPCs.
+    Detects UFUNCTION(Server, Reliable / Unreliable) declarations that
+    lack WithValidation. Without a _Validate function, a malicious
+    client can send arbitrary parameters to the server RPC. Epic
+    recommends always using WithValidation for Server RPCs.
 
-    Checks both the UFUNCTION macro and the file body for a matching
-    _Validate implementation to reduce false positives.
+    Detection: checks both the UFUNCTION macro and the file body for
+    a matching _Validate implementation to reduce false positives.
     """
     if not _is_header(file_path):
         return []
@@ -1173,14 +1172,14 @@ def detect_client_rpc_modifies_replicated(
 ) -> List[Issue]:
     """
     Detects Client RPC implementations that assign to variables
-    known to be UPROPERTY(Replicated). Client RPCs execute on
-    the owning client — modifying replicated state from the
-    client side causes desync because the server's version
-    overwrites it on the next replication tick.
+    known to be UPROPERTY(Replicated). Client RPCs run on the
+    owning client — modifying replicated state from the client
+    causes desync because the server's version overwrites it on
+    the next replication tick.
 
-    Scans the header (.h) for UPROPERTY(Replicated*) variable
-    names, then checks Client RPC bodies in the source (.cpp)
-    for assignments to those variables.
+    Detection: scans the header for UPROPERTY(Replicated*) variable
+    names, then checks Client RPC bodies in the source for
+    assignments to those variables.
     """
     if not _is_source(file_path):
         return []

@@ -103,12 +103,13 @@ def _get_system_instruction() -> str:
     return config.system_prompt
 
 
-# Two few-shots: one C++ auto-fixable case, one Blueprint manual-fix
-# case. Two examples teach the model both endings of the closing line
-# (Auto-Fix vs manual fix) and both input shapes (file_content snippet
-# vs asset_path/graph). Every claim in each EXPLANATION is rooted in
-# its rule_explanation — adding novel context here would teach the
-# model to hallucinate, defeating the whole purpose.
+# Five few-shots: C++ auto-fixable, Blueprint manual-fix, C# secret
+# manual-fix, UE5 naming auto-fixable, Unity naming auto-fixable.
+# Together they cover both closing-line variants (Auto-Fix / manual),
+# both snippet shapes (code vs asset path), and both naming engines
+# (UE5 /Game/ paths vs Unity Assets/ paths + bare .png extension).
+# Every claim in each EXPLANATION is rooted in its rule_explanation —
+# adding novel context here would teach the model to hallucinate.
 #
 # The label format is identical to the live issue block ("INPUT" /
 # "EXPLANATION") so the small model sees a single consistent pattern
@@ -190,7 +191,26 @@ _FEW_SHOT_EXAMPLE = (
     "every asset to start with a short prefix so the Content Browser "
     "stays navigable and assets don't collide when referenced by name "
     "in code. Add `SM_` before the name to match its Static Mesh type. "
-    "ShintTools' Auto-Fix can apply it for you."
+    "ShintTools' Auto-Fix can apply it for you.\n"
+    "\n"
+    "INPUT\n"
+    "rule_name: Unity asset missing type prefix\n"
+    "rule_explanation: Unity assets should start with a type prefix that "
+    "matches their class: T_ for Texture2D, M_ for Material, P_ for "
+    "prefabs (GameObject), A_ for AnimationClip, AC_ for AnimatorController. "
+    "Without a prefix, assets are hard to identify by type in the Project "
+    "window and risk collisions when referenced by name from scripts or "
+    "Addressables.\n"
+    "is_auto_fixable: true\n"
+    "snippet:\n"
+    "    asset: Assets/Characters/HeroSword.png\n"
+    "\n"
+    "EXPLANATION\n"
+    "Your `HeroSword.png` Texture2D is missing its type prefix. Unity "
+    "conventions require Texture2D assets to start with `T_` so they are "
+    "easy to identify in the Project window and don't collide when "
+    "referenced by name from scripts or Addressables. Rename it to "
+    "`T_HeroSword.png`. ShintTools' Auto-Fix can apply it for you."
 )
 
 
@@ -262,10 +282,10 @@ def warmup() -> float:
     """Prime the KV cache by running one dummy inference.
 
     Call once after load_model() at server startup. The shared prompt
-    prefix (system instruction + 4 few-shots) is identical for every
+    prefix (system instruction + 5 few-shots) is identical for every
     real request, so this single call amortises the cold-start cost:
     subsequent calls only process the short per-issue suffix (~50-100
-    tokens) instead of the full ~950-token prompt.
+    tokens) instead of the full ~1 100-token prompt.
 
     Returns elapsed seconds so the caller can log the warm-up time.
     """

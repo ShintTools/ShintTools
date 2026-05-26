@@ -14,6 +14,8 @@ async def async_client():
     # Initialize app state manually for tests
     app.state.modules = ["code_validator", "naming"]
     app.state.config_path = None
+    app.state.db_connected = False  # Mocked: DB not available in tests
+    app.state.commit_sha = "abc1234"  # Mocked: test commit (7-char SHA)
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"

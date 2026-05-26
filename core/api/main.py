@@ -60,6 +60,28 @@ def detect_modules() -> list[str]:
     return sorted(available)
 
 
+def get_commit_sha() -> str:
+    """
+    Returns the current git commit SHA (7-char short form).
+    Falls back to 'unknown' if not in a git repository or git is unavailable.
+    """
+    try:
+        import subprocess
+
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=Path(__file__).resolve().parent.parent,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return "unknown"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -76,6 +98,10 @@ async def lifespan(app: FastAPI):
     # Detect available modules
     app.state.modules = detect_modules()
     print(f"Modules detected: {app.state.modules}")
+
+    # Get git commit SHA
+    app.state.commit_sha = get_commit_sha()
+    print(f"Commit: {app.state.commit_sha}")
 
     # Check MongoDB connection
     from api.database import ping_database

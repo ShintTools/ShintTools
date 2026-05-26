@@ -12,6 +12,7 @@ async def test_status_returns_ok(async_client):
     assert response.json()["status"] == "ok"
     assert response.json()["version"] == "0.1.0"
     assert "modules" in response.json()
+    assert "commit" in response.json()
 
 
 @pytest.mark.anyio
@@ -23,3 +24,19 @@ async def test_status_modules_are_listed(async_client):
 
     assert response.status_code == 200
     assert isinstance(response.json()["modules"], list)
+
+
+@pytest.mark.anyio
+async def test_health_returns_ok(async_client):
+    """
+    Verifies that GET /health returns 200 with status, version, and commit.
+    """
+    response = await async_client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert response.json()["version"] == "0.1.0"
+    assert "commit" in response.json()
+    assert (
+        response.json()["commit"] in ("unknown",) or len(response.json()["commit"]) == 7
+    )  # short SHA is 7 chars

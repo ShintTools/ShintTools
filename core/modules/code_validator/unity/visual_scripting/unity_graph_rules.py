@@ -362,17 +362,14 @@ _SECRET_RE = re.compile(
 
 
 def detect_vss001_hardcoded_secret(graph: Graph) -> List[Issue]:
-    """VSS001 — string literal inside any node containing a secret-ish name.
+    """VSS001 — string literal inside any node whose name looks
+    secret-ish (api_key, token, password). Visual Scripting literals
+    live in the graph YAML as quoted values.
 
-    Visual Scripting string literals live in the graph YAML as quoted
-    values. Phase B scans the raw YAML for `value: "..."` lines with
-    secret-like substrings. The parser doesn't expose literal lists
-    yet; we fall back to a raw-content scan against the surrounding
-    YAML the route forwards via the graph dict (`_raw_content` field
-    when injected by the route — empty here).
-
-    Without raw content the rule is a no-op; v1.4.5 will hook the
-    parser to surface literals.
+    Implementation: Phase B scans the raw YAML for `value: "..."`
+    lines with secret-like substrings via `_raw_content` injected by
+    the route. Without raw content the rule is a no-op; v1.4.5 will
+    hook the parser to surface literals directly.
     """
     return []  # active in v1.4.5
 
