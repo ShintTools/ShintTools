@@ -160,13 +160,38 @@ _FREE_CS_LANG = frozenset(
 )
 
 # ── Unity Asset Naming (NMU) ──────────────────────────────────────
-# Three engine-specific rules from naming/rules/unity_naming_rules.py.
-# All three are available on Free (same philosophy as NM001/009/016).
+# Free: fundamental rules that every team hits on day one — path
+# correctness, platform safety, and the three original prefix/folder
+# checks.
+# Indie: advanced organisation rules (StreamingAssets intent, Editor
+# folder misuse, PBR suffix convention, ScriptableObject naming).
 _FREE_NMU = frozenset(
     {
         "NMU001",  # Missing type prefix
+        "NMU002",  # Path outside Assets/
+        "NMU003",  # Backslash in path (Linux/CI safety)
+        "NMU004",  # C# script in wrong folder
+        "NMU005",  # Asset inside Resources/ (build bloat)
+        "NMU008",  # Scene not in Scenes/
         "NMU009",  # Asset in wrong folder
+        "NMU012",  # Uppercase extension (Linux/CI safety)
         "NMU016",  # Wrong prefix for type
+        # NMU017-NMU031: engine-agnostic rules remapped from NM* for Unity scans
+        "NMU017",  # Spaces in name
+        "NMU018",  # Special characters
+        "NMU019",  # Lowercase name
+        "NMU020",  # Duplicate names
+        "NMU021",  # Missing tex suffix
+        "NMU022",  # Non PascalCase
+        "NMU023",  # Name too long
+        "NMU024",  # Double prefix
+        "NMU025",  # Number start
+        "NMU026",  # Consecutive underscores
+        "NMU027",  # Trailing underscore
+        "NMU028",  # Generic name
+        "NMU029",  # Version suffix
+        "NMU030",  # Name too short
+        "NMU031",  # Redundant type in name
     }
 )
 

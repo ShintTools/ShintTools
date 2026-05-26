@@ -12,11 +12,14 @@ async def get_health(request: Request):
     """
     Primary health-check endpoint for plugins.
     Returns 200 OK so that the UE5 plugin status indicator turns Online.
+    Includes commit SHA for version tracking.
     """
     db_connected = getattr(request.app.state, "db_connected", False)
+    commit_sha = getattr(request.app.state, "commit_sha", "unknown")
     return {
         "status": "ok",
         "version": "0.1.0",
+        "commit": commit_sha,
         "database": "ok" if db_connected else "unavailable",
     }
 
@@ -34,14 +37,16 @@ async def ping():
 async def get_status(request: Request):
     """
     Detailed status endpoint for the web dashboard.
-    Includes version, detected modules and MongoDB connection status.
+    Includes version, commit SHA, detected modules and MongoDB connection status.
     """
     db_connected = getattr(request.app.state, "db_connected", False)
     modules = getattr(request.app.state, "modules", [])
+    commit_sha = getattr(request.app.state, "commit_sha", "unknown")
 
     return {
         "status": "ok",
         "version": "0.1.0",
+        "commit": commit_sha,
         "modules": modules,
         "database": {
             "connected": db_connected,

@@ -95,10 +95,9 @@ def detect_linq_in_update(content: str, file_path: str) -> List[Issue]:
 def detect_string_concat_in_loop(content: str, file_path: str) -> List[Issue]:
     """CSP002: `str += …` inside for/while/foreach body — O(n²) allocations.
 
-    Heuristic: a `<var> +=` line that contains either a string literal
-    or `.ToString(` on the RHS, located inside a brace-balanced loop body.
-    Captures the most damaging case (per-iteration string build); leaves
-    the small fraction of false positives to a future Tree-sitter pass.
+    Detection: a `<var> +=` line whose RHS contains a string literal or
+    `.ToString(`, located inside a brace-balanced loop body. Captures
+    the most damaging case (per-iteration string build).
     """
     out: List[Issue] = []
     loop_re = re.compile(r"\b(?:for|foreach|while)\s*\(")

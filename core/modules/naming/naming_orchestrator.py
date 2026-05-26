@@ -18,7 +18,20 @@ from typing import Any, Dict, List
 
 from code_validator.shared._rule_metadata import enrich_issue
 from naming.unity.unity_naming_rules import (
+    detect_unity_audio_missing_suffix,
+    detect_unity_backslash_in_path,
+    detect_unity_double_slash,
+    detect_unity_editor_folder_misuse,
     detect_unity_missing_prefix,
+    detect_unity_parent_dir_in_path,
+    detect_unity_path_outside_assets,
+    detect_unity_resources_folder,
+    detect_unity_scene_misplaced,
+    detect_unity_script_misplaced,
+    detect_unity_scriptableobject_suffix,
+    detect_unity_streaming_assets,
+    detect_unity_texture_pbr_suffix,
+    detect_unity_uppercase_extension,
     detect_unity_wrong_folder,
     detect_unity_wrong_prefix_for_type,
 )
@@ -47,6 +60,29 @@ from naming.unreal.ue5_naming_rules import (
 Issue = Dict[str, Any]
 AssetRecord = Dict[str, str]
 
+# ── Unity ID remap ────────────────────────────────────
+# Engine-agnostic rules emit NM002-NM018 regardless of engine.
+# When scanning Unity assets those NM* IDs confuse the Unity plugin
+# (they look like UE5 rules). This table remaps each one to an NMU*
+# equivalent so Unity clients only ever see NMU-prefixed findings.
+_NM_TO_NMU_UNITY: dict[str, str] = {
+    "NM002": "NMU017",  # spaces in name
+    "NM003": "NMU018",  # special chars
+    "NM004": "NMU019",  # lowercase names
+    "NM005": "NMU020",  # duplicate names
+    "NM006": "NMU021",  # missing tex suffix
+    "NM007": "NMU022",  # non pascal case
+    "NM008": "NMU023",  # name too long
+    "NM010": "NMU024",  # double prefix
+    "NM011": "NMU025",  # number start
+    "NM012": "NMU026",  # consecutive underscores
+    "NM013": "NMU027",  # trailing underscore
+    "NM014": "NMU028",  # generic name
+    "NM015": "NMU029",  # version suffix
+    "NM017": "NMU030",  # name too short
+    "NM018": "NMU031",  # redundant type in name
+}
+
 # ── RUNNER ────────────────────────────────────────────
 
 
@@ -73,6 +109,19 @@ def run_all_naming_rules(
         all_issues += detect_unity_missing_prefix(asset_records)
         all_issues += detect_unity_wrong_folder(asset_records)
         all_issues += detect_unity_wrong_prefix_for_type(asset_records)
+        all_issues += detect_unity_path_outside_assets(asset_records)
+        all_issues += detect_unity_backslash_in_path(asset_records)
+        all_issues += detect_unity_script_misplaced(asset_records)
+        all_issues += detect_unity_resources_folder(asset_records)
+        all_issues += detect_unity_streaming_assets(asset_records)
+        all_issues += detect_unity_editor_folder_misuse(asset_records)
+        all_issues += detect_unity_scene_misplaced(asset_records)
+        all_issues += detect_unity_scriptableobject_suffix(asset_records)
+        all_issues += detect_unity_texture_pbr_suffix(asset_records)
+        all_issues += detect_unity_uppercase_extension(asset_records)
+        all_issues += detect_unity_parent_dir_in_path(asset_records)
+        all_issues += detect_unity_double_slash(asset_records)
+        all_issues += detect_unity_audio_missing_suffix(asset_records)
     else:
         all_issues += detect_missing_prefix(asset_records)
         all_issues += detect_wrong_folder(asset_records)
@@ -94,6 +143,15 @@ def run_all_naming_rules(
     all_issues += detect_version_suffix(asset_records)
     all_issues += detect_name_too_short(asset_records)
     all_issues += detect_redundant_type_in_name(asset_records)
+
+    # When running for Unity, remap engine-agnostic NM* IDs to NMU* so
+    # the Unity plugin never sees UE5-prefixed rule IDs.
+    if engine == "unity":
+        for issue in all_issues:
+            nm_id = issue.get("rule_id", "")
+            nmu_id = _NM_TO_NMU_UNITY.get(nm_id)
+            if nmu_id:
+                issue["rule_id"] = nmu_id
 
     # Enrich every issue with `rule_name` (humanized title) and
     # `rule_explanation` (first paragraph of the detector's docstring).

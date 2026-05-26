@@ -1220,11 +1220,11 @@ def detect_get_owner_no_check(
     blueprint: dict,
 ) -> List[Issue]:
     """BPP010: flag Blueprints that call GetOwner, GetInstigator, or
-    GetOwningPawn without a following IsValid or IsValidLowLevel node
-    in the same graph. These functions return nullptr when the actor
-    has no owner, is unpossessed, or has been destroyed. Dereferencing
-    the result without a validity check causes crashes at runtime,
-    especially in multiplayer sessions where ownership changes frequently.
+    GetOwningPawn without a downstream IsValid / IsValidLowLevel node
+    in the same graph. These return nullptr when the actor has no
+    owner, is unpossessed, or has been destroyed — dereferencing
+    without a validity check crashes at runtime, especially in
+    multiplayer where ownership changes frequently.
     """
     issues: List[Issue] = []
     bp_path = blueprint.get("path", "")
@@ -1294,12 +1294,10 @@ def detect_function_naming_convention(
     blueprint: dict,
 ) -> List[Issue]:
     """BPB009: flag public Blueprint functions whose names do not start
-    with a recognised action verb. UE5 convention expects function names
-    to be verb-noun pairs (GetHealth, SetSpeed, CalculateDamage, IsAlive).
-    Functions with noun-only or unclear names make the API harder to read
-    and are often confused with variables. Pure getter/setter functions
-    should start with Get/Set; boolean queries with Is/Has/Can/Should;
-    actions with a strong verb.
+    with a recognised action verb. UE5 convention expects verb-noun
+    pairs (GetHealth, SetSpeed, CalculateDamage, IsAlive): Get/Set for
+    accessors, Is/Has/Can/Should for boolean queries, a strong verb for
+    actions. Noun-only names are easily confused with variables.
     """
     issues: List[Issue] = []
     bp_path = blueprint.get("path", "")

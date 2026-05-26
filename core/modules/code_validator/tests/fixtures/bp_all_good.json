@@ -32,13 +32,13 @@
   ],
   "functions": [
     {
-      "name": "TakeDamage",
+      "name": "ApplyDamage",
       "complexity": 4,
       "is_public": true,
       "has_tooltip": true
     },
     {
-      "name": "Heal",
+      "name": "ApplyHeal",
       "complexity": 2,
       "is_public": true,
       "has_tooltip": true

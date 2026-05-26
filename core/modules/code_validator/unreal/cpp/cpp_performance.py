@@ -1158,11 +1158,10 @@ def detect_empty_tick_override(
 ) -> List[Issue]:
     """
     Detects Tick() overrides that are empty or only call
-    Super::Tick(DeltaTime) without adding any logic.
-    An empty Tick costs ~0.1ms per actor per frame due to
-    the virtual call overhead and tick registration. If the
-    actor doesn't need per-frame updates, remove the Tick
-    override and set bCanEverTick = false in the constructor.
+    Super::Tick(DeltaTime). An empty Tick still costs ~0.1 ms per
+    actor per frame from virtual dispatch and tick registration.
+    Remove the override and set bCanEverTick = false in the
+    constructor when per-frame updates aren't needed.
     """
     if not _is_source(file_path):
         return []

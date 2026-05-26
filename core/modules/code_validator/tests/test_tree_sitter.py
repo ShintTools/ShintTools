@@ -15,7 +15,7 @@ passed = 0
 failed = 0
 
 
-def test(
+def _run_case(
     name,
     rule_id,
     code,
@@ -59,7 +59,7 @@ def test(
 print("\n=== CORRECTED PATTERNS (CP007, CP010) ===")
 # ================================================================
 
-test(
+_run_case(
     "CP007: bCanEverTick = true -> false",
     "CP007",
     "AMyActor::AMyActor() {\n" "    PrimaryActorTick.bCanEverTick = true;\n}",
@@ -68,7 +68,7 @@ test(
     "= true",
 )
 
-test(
+_run_case(
     "CP010: FORCEINLINE -> inline",
     "CP010",
     "FORCEINLINE float GetSpeed() const {\n" "    return Speed;\n}",
@@ -81,7 +81,7 @@ test(
 print("\n=== NULL CHECK WITH IsValid() ===")
 # ================================================================
 
-test(
+_run_case(
     "CS001: GetWorld() -> if (UWorld* World = GetWorld())",
     "CS001",
     "void AMyActor::Setup() {\n" "    GetWorld()->SpawnActor();\n}",
@@ -89,7 +89,7 @@ test(
     "if (UWorld* World = GetWorld())",
 )
 
-test(
+_run_case(
     "CS003: Cast<> -> extract + IsValid(CastedAEnemy)",
     "CS003",
     "void AMyActor::OnHit() {\n" "    Cast<AEnemy>(Other)->TakeDamage(10);\n}",
@@ -97,7 +97,7 @@ test(
     "IsValid(CastedAEnemy)",
 )
 
-test(
+_run_case(
     "CS007: OtherActor -> IsValid(OtherActor)",
     "CS007",
     "void AMyActor::OnOverlap(AActor* OtherActor)"
@@ -110,7 +110,7 @@ test(
 print("\n=== EASY PATTERNS (Priority 2) ===")
 # ================================================================
 
-test(
+_run_case(
     "CB008: add_suffix (1.0 -> 1.0f)",
     "CB008",
     "void AMyActor::Setup() {\n" "    float Value = 1.0;\n}",
@@ -118,7 +118,7 @@ test(
     "1.0f",
 )
 
-test(
+_run_case(
     "CB019: add_virtual",
     "CB019",
     "class AMyActor : public AActor {\n" "    ~AMyActor();\n};",
@@ -126,7 +126,7 @@ test(
     "virtual ~AMyActor",
 )
 
-test(
+_run_case(
     "CB023: add_override",
     "CB023",
     "class AMyActor : public AActor {\n" "    void BeginPlay();\n};",
@@ -134,7 +134,7 @@ test(
     "override;",
 )
 
-test(
+_run_case(
     "CB030: wrap_text_macro",
     "CB030",
     "void AMyActor::Setup() {\n" '    FString Name = "Hello World";\n}',
@@ -142,7 +142,7 @@ test(
     'TEXT("Hello World")',
 )
 
-test(
+_run_case(
     "CM008: replace_destructor_default",
     "CM008",
     "class AMyActor : public AActor {\n" "    ~AMyActor() {}\n};",
@@ -155,7 +155,7 @@ test(
 print("\n=== MEDIUM PATTERNS (Priority 3) ===")
 # ================================================================
 
-test(
+_run_case(
     "CB012: wrap_static_cast",
     "CB012",
     "void AMyActor::Calculate() {\n" "    int Result = (float)Value + 1;\n}",
@@ -164,7 +164,7 @@ test(
     "(float)Value",
 )
 
-test(
+_run_case(
     "CS004: add_zero_check",
     "CS004",
     "void AMyActor::Calculate() {\n" "    float Result = Total / Count;\n}",
@@ -172,7 +172,7 @@ test(
     ["Count != 0", "Total / Count"],
 )
 
-test(
+_run_case(
     "CS005: add_bounds_check",
     "CS005",
     "void AMyActor::Process() {\n" "    auto Item = MyArray[Index];\n}",
@@ -184,7 +184,7 @@ test(
 print("\n=== NEW REAL AUTO-FIX PATTERNS " "(formerly mark_for_review) ===")
 # ========================================================
 
-test(
+_run_case(
     "CB001: comment_line (infinite loop)",
     "CB001",
     "void AMyActor::Run() {\n" "    while (true) { DoWork(); }\n}",
@@ -192,7 +192,7 @@ test(
     "// [SHINTTOOLS]",
 )
 
-test(
+_run_case(
     "CB002: comment_line (sync load)",
     "CB002",
     "void AMyActor::Load() {\n" "    LoadObject<UTexture2D>(nullptr, Path);\n}",
@@ -200,7 +200,7 @@ test(
     "// [SHINTTOOLS]",
 )
 
-test(
+_run_case(
     "CB003: replace_raw_new -> NewObject",
     "CB003",
     "void AMyActor::Setup() {\n" "    UMyObject* Obj = new UMyObject();\n}",
@@ -209,7 +209,7 @@ test(
     "new UMyObject",
 )
 
-test(
+_run_case(
     "CB004: comment_line (raw delete)",
     "CB004",
     "void AMyActor::Cleanup() {\n" "    delete MyObject;\n}",
@@ -217,7 +217,7 @@ test(
     "// [SHINTTOOLS]",
 )
 
-test(
+_run_case(
     "CB007: comment_line (system header)",
     "CB007",
     '#include <iostream>\n#include "MyActor.h"',
@@ -225,7 +225,7 @@ test(
     "// [SHINTTOOLS]",
 )
 
-test(
+_run_case(
     "CB009: remove_nullptr_init",
     "CB009",
     "    UPROPERTY() UMyComp* Comp = nullptr;",
@@ -234,7 +234,7 @@ test(
     "nullptr",
 )
 
-test(
+_run_case(
     "CB016: comment_line (string concat in loop)",
     "CB016",
     "void AMyActor::Build() {\n" "    Result += FString::Printf(" 'TEXT("%d"), i);\n}',
@@ -242,7 +242,7 @@ test(
     "// [SHINTTOOLS]",
 )
 
-test(
+_run_case(
     "CB021: replace_lambda_capture [&] -> [this]",
     "CB021",
     "void AMyActor::Setup() {\n" "    auto Lambda = [&]() { DoWork(); };\n}",
@@ -251,7 +251,7 @@ test(
     "[&]",
 )
 
-test(
+_run_case(
     "CB024: insert_line (Super::BeginPlay)",
     "CB024",
     "void AMyActor::BeginPlay() {\n" "    InitStuff();\n}",
@@ -259,7 +259,7 @@ test(
     "Super::BeginPlay();",
 )
 
-test(
+_run_case(
     "CB025: add_ufunction_category",
     "CB025",
     "    UFUNCTION(BlueprintCallable)\n" "    void DoStuff();",
@@ -267,7 +267,7 @@ test(
     'Category="Default"',
 )
 
-test(
+_run_case(
     "CB031: add_const_qualifier",
     "CB031",
     "    float GetHealth();",
@@ -277,7 +277,7 @@ test(
 
 # Regression: CB031 must NOT add 'const' to a static member function.
 # C++ forbids 'const' on static members (no 'this' pointer).
-test(
+_run_case(
     "CB031: skip static function (same-line static)",
     "CB031",
     "    static int32 GetDefault();",
@@ -287,7 +287,7 @@ test(
 )
 
 # Regression: split-style 'static' on the line above the signature.
-test(
+_run_case(
     "CB031: skip static function (split static)",
     "CB031",
     "    static\n    int32 GetDefault();",
@@ -296,7 +296,7 @@ test(
     " const;",
 )
 
-test(
+_run_case(
     "CB032: remove_const_ref",
     "CB032",
     "    const FVector& Location;",
@@ -305,7 +305,7 @@ test(
     "const",
 )
 
-test(
+_run_case(
     "CS012: comment_line (hardcoded secret)",
     "CS012",
     "void AMyActor::Connect() {\n" '    FString ApiKey = "sk-12345abcde";\n}',
@@ -317,7 +317,7 @@ test(
 print("\n=== MARK FOR REVIEW (true no-fix rules) ===")
 # ========================================================
 
-test(
+_run_case(
     "CB010: mark_for_review (magic number)",
     "CB010",
     "void AMyActor::Setup() {\n" "    Health = 100;\n}",
@@ -325,7 +325,7 @@ test(
     "[SHINTTOOLS REVIEW]",
 )
 
-test(
+_run_case(
     "CB015: mark_for_review (auto without type)",
     "CB015",
     "void AMyActor::Setup() {\n" "    auto Result = GetValue();\n}",
@@ -333,7 +333,7 @@ test(
     "[SHINTTOOLS REVIEW]",
 )
 
-test(
+_run_case(
     "CM004: mark_for_review (file too long)",
     "CM004",
     "// This file is 600 lines long\n" "void A() {}\n",
@@ -345,7 +345,7 @@ test(
 print("\n=== REGRESSION TESTS (existing patterns) ===")
 # ========================================================
 
-test(
+_run_case(
     "CB005: std::vector -> TArray",
     "CB005",
     "void AMyActor::Setup() {\n" "    std::vector<int> Numbers;\n}",
@@ -354,7 +354,7 @@ test(
     "std::vector",
 )
 
-test(
+_run_case(
     "CS011: http -> https",
     "CS011",
     "void AMyActor::Connect() {\n" '    FString Url = "http://api.example.com";\n}',
@@ -363,7 +363,7 @@ test(
     "http://api",
 )
 
-test(
+_run_case(
     "CM003: delete TODO comment",
     "CM003",
     "void AMyActor::Update() {\n"

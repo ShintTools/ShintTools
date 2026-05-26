@@ -1277,16 +1277,13 @@ def detect_ensure_not_always(
 ) -> List[Issue]:
     """
     Detects ensure() calls that could use ensureAlways().
-
     ensure() only fires once per session; subsequent failures are
     silently ignored. ensureAlways() reports each failure.
 
-    The autofix replaces `ensure(` with `ensureAlways(` on the exact
-    line. The detector excludes variants that should NOT be transformed
-    (ensureAlways, ensureMsgf, ensureAlwaysMsgf) to guarantee idempotence
-    of the fix — if the detector reported a line containing `ensureAlways(`,
-    the fixer's replace_text would produce `ensureAlwaysAlways(` and break
-    compilation.
+    Implementation: autofix replaces `ensure(` with `ensureAlways(` on
+    the exact line. Excludes ensureAlways/ensureMsgf/ensureAlwaysMsgf
+    so the fix is idempotent (otherwise replace_text would produce
+    `ensureAlwaysAlways(`).
     """
     if not _is_cpp(file_path):
         return []
@@ -1536,11 +1533,10 @@ def detect_exposed_on_spawn_no_default(
     declaration. If the spawner forgets to set the value, it will
     remain garbage / uninitialized.
 
-    The autofix inserts `= <default>` before the `;` based on the
-    detected type (int32 → 0, bool → false, UObject* → nullptr, etc.).
-    Inserting a default is idempotent with the constructor: if the
-    constructor already sets it, that value wins (default init runs
-    first). If not, it prevents garbage values.
+    Implementation: autofix inserts `= <default>` before the `;` based
+    on the detected type (int32 → 0, bool → false, UObject* → nullptr).
+    Idempotent with the constructor — if the constructor sets it, that
+    value wins (default init runs first).
     """
     if not _is_header(file_path):
         return []
@@ -1703,11 +1699,10 @@ def detect_timer_lambda_raw_this(
     Detects SetTimer with lambda capturing `this` directly.
     If the object is destroyed before the timer fires, it crashes.
 
-    The autofix wraps the lambda with
-    FTimerDelegate::CreateWeakLambda(this, <original lambda>). This is an
-    official overload of SetTimer and CreateWeakLambda only adds a
-    validity check of the UObject — it doesn't change lambda semantics,
-    just prevents the crash that this rule is trying to avoid.
+    Implementation: autofix wraps the lambda with
+    FTimerDelegate::CreateWeakLambda(this, <original lambda>) — an
+    official SetTimer overload that adds a UObject validity check
+    without changing lambda semantics.
     """
     if not _is_cpp(file_path):
         return []
@@ -1778,14 +1773,14 @@ def detect_log_verbose_shipping(
     file_path: str,
 ) -> List[Issue]:
     """
-    Detects UE_LOG with Verbose or VeryVerbose level without being inside
-    a `#if !UE_BUILD_SHIPPING` guard.
+    Detects UE_LOG with Verbose or VeryVerbose level outside a
+    `#if !UE_BUILD_SHIPPING` guard. UE5 strips these levels at compile
+    time, but explicitly wrapping also eliminates the cost of the
+    implicit FString::Printf formatting in Shipping — Epic's
+    recommended practice.
 
-    The autofix wraps the statement in
-    `#if !UE_BUILD_SHIPPING ... #endif`. Although UE5 already strips
-    Verbose/VeryVerbose at compilation level by default, explicitly wrapping
-    is still Epic's recommended practice because it also eliminates the cost
-    of string formatting (implicit FString::Printf) in Shipping.
+    Implementation: autofix wraps the statement in
+    `#if !UE_BUILD_SHIPPING ... #endif`.
     """
     if not _is_cpp(file_path):
         return []
@@ -2105,16 +2100,15 @@ def detect_raw_pointer_in_uproperty(
 ) -> List[Issue]:
     """
     Detects UPROPERTY-decorated members that use raw pointers
-    (e.g. 'AMyActor* Ref') instead of TObjectPtr<T>.
-    Since UE5.1, Epic recommends TObjectPtr for all UPROPERTY
-    raw pointers — it enables lazy loading, access tracking,
-    and future editor tooling. This rule only fires in headers
-    where UPROPERTY is on the preceding line, guaranteeing zero
-    false positives on non-reflected members.
+    (e.g. 'AMyActor* Ref') instead of TObjectPtr<T>. Since UE5.1
+    Epic recommends TObjectPtr for all UPROPERTY raw pointers —
+    it enables lazy loading, access tracking, and future editor
+    tooling.
 
-    Skips: TArray<T*>, TMap, TSet (container element pointers
-    are NOT migratable to TObjectPtr), and TSubclassOf/
-    TSoftObjectPtr/TWeakObjectPtr which are already smart refs.
+    Detection: only fires in headers where UPROPERTY is on the
+    preceding line. Skips TArray<T*>/TMap/TSet (container elements
+    can't migrate to TObjectPtr) and TSubclassOf / TSoftObjectPtr /
+    TWeakObjectPtr (already smart refs).
     """
     if not _is_header(file_path):
         return []

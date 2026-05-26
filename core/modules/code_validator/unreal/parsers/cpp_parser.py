@@ -46,19 +46,14 @@ class CppParser:
           - 0.21.x: Language(ptr, name), Parser() + set_language()
         """
         try:
-            # tree-sitter >= 0.22
+            # tree-sitter >= 0.22: single-arg Language + positional Parser
             cpp_language = Language(tscpp.language())  # type: ignore[call-arg]
+            self.parser = Parser(cpp_language)  # type: ignore[call-arg]
         except TypeError:
-            # tree-sitter 0.21.x requires the name argument
+            # tree-sitter 0.21.x: two-arg Language + set_language()
             cpp_language = Language(  # type: ignore[call-overload]
                 tscpp.language(), "cpp"
             )
-
-        try:
-            # tree-sitter >= 0.22
-            self.parser = Parser(cpp_language)  # type: ignore[call-arg]
-        except TypeError:
-            # tree-sitter 0.21.x: no-arg constructor + set_language
             self.parser = Parser()  # type: ignore[call-arg]
             self.parser.set_language(cpp_language)  # type: ignore[attr-defined]
 

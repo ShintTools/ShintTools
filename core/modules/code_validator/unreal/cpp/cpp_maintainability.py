@@ -500,21 +500,11 @@ def detect_commented_out_code(
     Commented-out code rots quickly, confuses readers, and
     inflates diffs.  Use version control instead.
 
-    Heuristics — a comment line is likely code if it contains:
-      - C++ statement terminators (;)
-      - Scope braces ({ or })
-      - Assignment operators (=, +=, -=, etc.)
-      - Function calls  foo(...)
-      - Preprocessor directives (#include, #if, #define)
-      - Common C++ keywords in code positions (return, if, for,
-        while, switch, case, break, continue, auto, void, int,
-        float, bool, class, struct)
-      - Arrow / scope operators (-> or ::)
-
-    Lines that look like normal documentation (no code markers)
-    are NOT counted toward the block.
-
-    Threshold: _MIN_BLOCK = 3 consecutive code-like comment lines.
+    Detection: a comment line is treated as code when it contains
+    C++ markers (;, { or }, assignment ops, foo(...) calls, #include
+    / #if / #define, keywords like return/if/for/while/class, or
+    -> / ::). Prose lines are not counted. Threshold: 3 consecutive
+    code-like comment lines (_MIN_BLOCK).
     """
     if not _is_cpp(file_path):
         return []
