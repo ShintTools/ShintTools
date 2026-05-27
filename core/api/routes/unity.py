@@ -23,7 +23,9 @@ from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "modules"))
 
-from code_validator.unity.csharp._csharp_helpers import CSHARP_RULE_TO_PATTERN
+from code_validator.unity.csharp._csharp_helpers import (  # noqa: E402
+    CSHARP_RULE_TO_PATTERN,
+)
 from code_validator.unity.csharp._csharp_helpers import (  # noqa: E402
     _fixer as _csharp_fixer,
 )
