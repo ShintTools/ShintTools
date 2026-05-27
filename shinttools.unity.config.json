@@ -1,0 +1,54 @@
+{
+  "_comment": "Configuración de testing para el plugin de Unity. Usada automáticamente por docker-compose.plugin-dev.yml.",
+  "version": "1.0",
+  "project_name": "UnityPluginTest",
+  "engine": "unity",
+  "project_id": "proj_devtest01",
+  "api_key": "shint_devtest0000000000",
+  "core_port": 18200,
+  "auto_start_core": false,
+  "modules": {
+    "naming": { "enabled": true },
+    "code_validator": { "enabled": true }
+  },
+  "naming": {
+    "textures": {
+      "prefix": "T_",
+      "case": "PascalCase"
+    },
+    "meshes": {
+      "prefix": "M_",
+      "case": "PascalCase"
+    },
+    "materials": {
+      "prefix": "Mat_",
+      "case": "PascalCase"
+    },
+    "prefabs": {
+      "prefix": "P_",
+      "case": "PascalCase"
+    },
+    "scripts": {
+      "prefix": "",
+      "case": "PascalCase"
+    },
+    "scenes": {
+      "prefix": "SCN_",
+      "case": "PascalCase"
+    },
+    "audio": {
+      "prefix": "SFX_",
+      "case": "PascalCase"
+    },
+    "animations": {
+      "prefix": "ANIM_",
+      "case": "PascalCase"
+    }
+  },
+  "code_validator": {
+    "max_cyclomatic_complexity": 15,
+    "max_file_lines": 500,
+    "max_function_parameters": 5,
+    "exclude_paths": ["Assets/Plugins/", "Assets/ThirdParty/", "Library/", "Packages/"]
+  }
+}

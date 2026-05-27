@@ -424,64 +424,97 @@ class UnityGraphFile(BaseModel):
 
 
 class ValidateUnityGraphsRequest(BaseModel):
-    """Request for Visual Scripting graph validation. Mirrors
-    ValidateProjectRequest in shape so the Unity plugin reuses its
-    config (project_id/api_key/project_name) for graph scans."""
+    """Request for Visual Scripting graph validation.
+
+    Accepts `files` (unified Unity plugin contract) or `graphs` (legacy alias).
+    The Unity plugin should always send `files` — the `graphs` field is kept
+    for backward compatibility only.
+    """
 
     project_id: str = ""
     api_key: str = ""
     project_name: str = ""
+    # Unified contract — same field name as Code Tool and Asset Tool
+    files: list[UnityGraphFile] = Field(default_factory=list)
+    # Legacy alias — kept so any older plugin build doesn't break
     graphs: list[UnityGraphFile] = Field(default_factory=list)
 
 
 @router.post("/validate/unity-graphs")
 async def validate_unity_graphs(payload: ValidateUnityGraphsRequest):
-    """Validate Unity Visual Scripting (com.unity.visualscripting) graph
-    assets. Each entry carries the YAML content of one `.asset` file.
+    """Validate Unity Visual Scripting (com.unity.visualscripting) graph assets.
 
-    Phase A (this release): parses each graph, returns a summary with
-    `graphs_scanned` + `unit_count_total` so the plugin can render a
-    KPI tile. Rule evaluation lands in v1.4.4 — for now the issues
-    array is always empty.
+    Accepts the YAML content of one or more `.asset` files and runs the built-in
+    Visual Scripting rules. Returns findings in the same unified format used by
+    /validate/unity/scan and /assets/unity/scan so the Unity plugin can reuse
+    its generic result handler for the Graph Tool.
 
-    Mirrors /validate/blueprints in tier resolution + persistence so
-    free-tier quotas and audit history apply uniformly.
+    Input: `files` list (unified contract). Falls back to `graphs` if `files`
+    is empty (backward compat with older builds).
+
+    Output per finding:
+        path          — graph asset path
+        rule          — index in user rules[] (-1 = built-in)
+        line          — 0 (graphs have no line numbers)
+        contextLine   — 0
+        contextBefore — relevant graph context or empty string
+        contextAfter  — empty (graph auto-fix not yet available)
+        fix           — empty (graph auto-fix not yet available)
+        rule_id       — built-in rule ID (e.g. "VSG001")
+        severity      — "warning" | "info" | "error"
+        message       — human-readable description
+        rule_name     — short rule title
+        is_auto_fixable — always false (graph YAML editing not yet wired)
     """
+    import time
+
+    t0 = time.perf_counter()
+
+    # Unified contract: prefer `files`, fall back to legacy `graphs`
+    entries = payload.files if payload.files else payload.graphs
+
     parsed_graphs: list[dict] = []
-    for entry in payload.graphs:
+    for entry in entries:
         g = parse_unity_graph(entry.content, entry.path)
         if g is not None:
             parsed_graphs.append(g)
 
-    # Run the 8 initial VS rules. Auto-fix isn't wired yet — graph YAML
-    # editing is a v1.4.5+ topic — so is_auto_fixable stays False on every
-    # issue. file_path normalisation matches the cpp/csharp routes.
+    # Run built-in Visual Scripting rules
     all_issues = run_all_unity_graph_rules(parsed_graphs)
+
+    # Normalize to unified output shape (same as /validate/unity/scan)
+    normalized: list[dict] = []
     for issue in all_issues:
-        issue["is_auto_fixable"] = False
-        issue["file_path"] = issue.get("asset_path", "")
+        normalized.append(
+            {
+                "path": issue.get("asset_path", issue.get("file_path", "")),
+                "rule": -1,  # built-in rule
+                "line": 0,  # graphs have no line numbers
+                "contextLine": 0,
+                "contextBefore": issue.get("context", ""),
+                "contextAfter": "",
+                "fix": "",
+                "rule_id": issue.get("rule_id", ""),
+                "severity": issue.get("severity", "warning"),
+                "message": issue.get("message", ""),
+                "rule_name": issue.get("rule_name", ""),
+                "is_auto_fixable": False,
+            }
+        )
 
     tier = await resolve_tier(payload.api_key)
-    all_issues = filter_issues_by_tier(all_issues, tier)
+    normalized = filter_issues_by_tier(normalized, tier)
 
-    files_scanned = len(parsed_graphs)
-    unit_count_total = sum(g["unit_count"] for g in parsed_graphs)
-
-    summary = _build_summary(
-        all_issues,
-        files_scanned=files_scanned,
-        tier=tier,
+    await _persist_result(
+        "code_validator_unity_graphs",
+        _build_summary(normalized, files_scanned=len(parsed_graphs), tier=tier),
+        normalized,
     )
-    summary["graphs_scanned"] = files_scanned
-    summary["unit_count_total"] = unit_count_total
-
-    await _persist_result("code_validator_unity_graphs", summary, all_issues)
 
     return {
-        "summary": summary,
-        "issues": all_issues,
-        "graphs": parsed_graphs,
-        "tier": tier,
+        "error": "",
+        "time": round(time.perf_counter() - t0, 4),
+        "files": normalized,
     }
 
 

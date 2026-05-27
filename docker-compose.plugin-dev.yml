@@ -1,0 +1,62 @@
+# docker-compose.plugin-dev.yml
+#
+# Para DESARROLLADORES DE PLUGIN (Unity / UE5) que necesitan levantar el
+# Core localmente sin pasar por el Launcher.
+#
+# Diferencias con docker-compose.yml:
+#   - LLM agent deshabilitado → sin descarga del modelo (~1.5 GB), arranque rápido
+#   - Monta shinttools.unity.config.json como configuración activa del Core
+#   - Nombres de contenedor distintos (evita conflictos con el Launcher)
+#
+# Uso:
+#   docker compose -f docker-compose.plugin-dev.yml up --build
+#
+# La primera vez tarda ~5 min mientras compila las dependencias.
+# Cuando veas "Application startup complete" el Core está listo.
+#
+# Verificar: GET http://localhost:18200/health
+# El plugin se conecta al Core en: http://localhost:18200
+
+services:
+  mongodb:
+    image: mongo:6.0
+    container_name: shinttools-mongo-plugindev
+    ports:
+      - "27017:27017"
+    volumes:
+      - shinttools_mongo_plugindev:/data/db
+    healthcheck:
+      test: mongosh --eval 'db.adminCommand("ping")'
+      interval: 5s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+  core:
+    build:
+      context: core/
+      dockerfile: Dockerfile
+    container_name: shinttools-core-plugindev
+    ports:
+      - "18200:18200"
+    environment:
+      MONGODB_URL: "mongodb://mongodb:27017/shinttools"
+      # LLM agent deshabilitado — no se descarga el modelo GGUF.
+      # El endpoint /validate/unity/scan funciona igual con las reglas built-in.
+      SHINTTOOLS_AGENT_ENABLED: "0"
+    volumes:
+      # El config de Unity se inyecta como shinttools.config.json activo.
+      # El Core lo detecta automáticamente al arrancar (busca hasta 5 niveles).
+      - ./shinttools.unity.config.json:/app/shinttools.config.json:ro
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: curl -f http://localhost:18200/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  shinttools_mongo_plugindev:
