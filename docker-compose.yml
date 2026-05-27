@@ -24,11 +24,12 @@ services:
       - "18200:18200"
     environment:
       MONGODB_URL: "mongodb://mongodb:27017/shinttools"
-      # Sprint C — LLM agent model configuration
+      # LLM agent — modelo Qwen2.5-Coder 1.5B (GitHub Releases, sin telemetría)
+      # Al actualizar el modelo: cambiar FILE, URL y SHA256 juntos.
       SHINTTOOLS_MODELS_DIR: "/app/core/models"
-      SHINTTOOLS_MODEL_FILE: "deepseek-coder-1.3b-instruct.Q4_K_M.gguf"
-      SHINTTOOLS_MODEL_URL: "https://github.com/Genesishg1509/ShintTools-Models/releases/download/v1.0-models/deepseek-coder-1.3b-instruct.Q4_K_M.gguf"
-      SHINTTOOLS_MODEL_SHA256: "04cebb6fafa40ae628cf6bfeb76032ec792852f54020c559ad0a56b9f2839118"
+      SHINTTOOLS_MODEL_FILE: "Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf"
+      SHINTTOOLS_MODEL_URL: "https://github.com/Genesishg1509/ShintTools-Models/releases/download/v2.0-models/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf"
+      SHINTTOOLS_MODEL_SHA256: "f530705d447660a4336c329981af164b471b60b974b1d808d57e8ec9fe23b239"
     depends_on:
       mongodb:
         condition: service_healthy
