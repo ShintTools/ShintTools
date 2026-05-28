@@ -104,7 +104,8 @@ def _scan_file(
             {
                 # ── Spec-required fields ──────────────────────────────────
                 "path": file_path,
-                "rule": -1,  # -1 = built-in rule (not in user rules[] array)
+                "genericRule": -1,
+                "namingRule": -1,
                 "line": line,
                 "contextLine": issue.get("context_line_start", line),
                 "contextBefore": issue.get("context_before", ""),
@@ -135,7 +136,8 @@ async def unity_scan(payload: UnityScanRequest):
 
     Output per issue:
         path          — script path
-        rule          — index in payload.rules (-1 = built-in)
+        genericRule   — index in payload.rules (-1 = built-in or naming rule)
+        namingRule    — always -1 for script scan (no naming rules here)
         line          — 1-based line number of the finding
         contextLine   — first line of the context window
         contextBefore — current code around the issue
@@ -190,7 +192,7 @@ async def unity_scan(payload: UnityScanRequest):
             )
 
     return {
-        "error": custom_rules_note,
+        "warning": custom_rules_note,
         "time": round(time.perf_counter() - t0, 4),
         "files": all_issues,
     }
