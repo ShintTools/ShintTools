@@ -335,7 +335,7 @@ async def unity_asset_scan(payload: UnityAssetScanRequest):
             )
 
     return {
-        "error": note,
+        "warning": note,
         "time": round(time.perf_counter() - t0, 4),
         "files": all_findings,
     }
