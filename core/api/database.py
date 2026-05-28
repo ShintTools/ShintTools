@@ -70,6 +70,7 @@ async def resolve_tier(api_key: str) -> str:
     Returns the tier name, or 'free' if the key is missing,
     inactive, or MongoDB is unreachable.
     """
+    api_key = api_key.strip()
     if not api_key:
         logger.warning(
             "resolve_tier: api_key is EMPTY — defaulting to 'free'. "
