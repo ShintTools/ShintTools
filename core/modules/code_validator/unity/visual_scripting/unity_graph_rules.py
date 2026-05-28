@@ -7,16 +7,16 @@ list of `Issue` records ready for the validate route to enrich.
 
 Rule IDs:
 
-  VSP001  Log in Update     — Debug.Log node inside an Update graph
-  VSP002  Unsafe Cast        — Cast node without null-check downstream
-  VSM001  Graph too large    — > 50 nodes
-  VSM002  Disconnected node  — Phase B placeholder (no connection list yet)
-  VSB001  Orphan custom event — CustomEvent unit with no inbound edges
-  VSB002  Empty graph        — 0 nodes
-  VSB003  Deep flow chain    — > 5 sequential nodes in one branch
-  VSS001  Hardcoded secret   — string literal w/ key-like prefix in any node
+  VSP001  Log in Update     - Debug.Log node inside an Update graph
+  VSP002  Unsafe Cast        - Cast node without null-check downstream
+  VSM001  Graph too large    - > 50 nodes
+  VSM002  Disconnected node  - Phase B placeholder (no connection list yet)
+  VSB001  Orphan custom event - CustomEvent unit with no inbound edges
+  VSB002  Empty graph        - 0 nodes
+  VSB003  Deep flow chain    - > 5 sequential nodes in one branch
+  VSS001  Hardcoded secret   - string literal w/ key-like prefix in any node
 
-For Phase B we use the unit list alone — connection introspection (the
+For Phase B we use the unit list alone - connection introspection (the
 graph's edges) isn't extracted by the parser yet. VSM002 / VSB001 /
 VSB003 fall back to type-counting heuristics until v1.4.5 adds an
 edge parser; the issues they emit are still actionable but may produce
@@ -96,7 +96,7 @@ _STATE_UNIT_TYPES = (
     "Unity.VisualScripting.StartState",
 )
 
-# Lifecycle event root suffixes — any unit type ending in one of these
+# Lifecycle event root suffixes - any unit type ending in one of these
 # is treated as an event root that triggers the graph.
 _EVENT_ROOT_SUFFIXES = (
     "OnStart",
@@ -181,17 +181,17 @@ def _emit(
         "rule_id": rule_id,
         "category": category,
         "message": message,
-        "snippet": "",  # VS has no source snippet — kept for shape parity
+        "snippet": "",  # VS has no source snippet - kept for shape parity
         "fix_suggestion": fix_suggestion,
         "is_auto_fixable": False,  # No auto-fix for graph YAML yet (deferred)
     }
 
 
-# ── VSP — Performance ──────────────────────────────────────────────
+# ── VSP - Performance ──────────────────────────────────────────────
 
 
 def detect_vsp001_log_in_update(graph: Graph) -> List[Issue]:
-    """VSP001 — Log / PrintToConsole inside a graph that runs every frame."""
+    """VSP001 - Log / PrintToConsole inside a graph that runs every frame."""
     if not graph.get("has_update_root"):
         return []
     out: List[Issue] = []
@@ -205,7 +205,7 @@ def detect_vsp001_log_in_update(graph: Graph) -> List[Issue]:
                     severity="warning",
                     message=(
                         f"{u['type'].rsplit('.', 1)[-1]} node sits inside an "
-                        "Update graph — the console serialises a string every "
+                        "Update graph - the console serialises a string every "
                         "frame which kills editor and runtime perf."
                     ),
                     fix_suggestion="Gate the Log behind a branch that fires only when state changes, or move it to a one-shot event.",  # noqa: E501
@@ -216,7 +216,7 @@ def detect_vsp001_log_in_update(graph: Graph) -> List[Issue]:
 
 
 def detect_vsp002_unsafe_cast(graph: Graph) -> List[Issue]:
-    """VSP002 — Cast node that may downstream a null without a Null Check.
+    """VSP002 - Cast node that may downstream a null without a Null Check.
 
     Phase B heuristic: every Cast unit emits the issue. False-positive
     rate is acceptable because Visual Scripting users almost never
@@ -232,7 +232,7 @@ def detect_vsp002_unsafe_cast(graph: Graph) -> List[Issue]:
                     category="Security",
                     severity="warning",
                     message=(
-                        "Cast node without explicit null-check downstream — "
+                        "Cast node without explicit null-check downstream - "
                         "Visual Scripting won't stop execution on a failed cast."
                     ),
                     fix_suggestion="Wire the cast's failure pin to a Null Check before using the result.",  # noqa: E501
@@ -242,11 +242,11 @@ def detect_vsp002_unsafe_cast(graph: Graph) -> List[Issue]:
     return out
 
 
-# ── VSM — Maintainability ──────────────────────────────────────────
+# ── VSM - Maintainability ──────────────────────────────────────────
 
 
 def detect_vsm001_graph_too_large(graph: Graph) -> List[Issue]:
-    """VSM001 — > 50 nodes is hard to read and slow to load in the editor."""
+    """VSM001 - > 50 nodes is hard to read and slow to load in the editor."""
     if graph.get("unit_count", 0) <= 50:
         return []
     return [
@@ -256,7 +256,7 @@ def detect_vsm001_graph_too_large(graph: Graph) -> List[Issue]:
             category="Maintainability",
             severity="warning",
             message=(
-                f"Graph has {graph['unit_count']} nodes — past 50 the editor "
+                f"Graph has {graph['unit_count']} nodes - past 50 the editor "
                 "stops fitting in a single screen and load time grows."
             ),
             fix_suggestion="Split into sub-graphs or move pure data flow into C# helper methods.",  # noqa: E501
@@ -265,15 +265,15 @@ def detect_vsm001_graph_too_large(graph: Graph) -> List[Issue]:
 
 
 def detect_vsm002_disconnected_node(graph: Graph) -> List[Issue]:
-    """VSM002 — Phase B placeholder. No-op until v1.4.5 edge parser."""
+    """VSM002 - Phase B placeholder. No-op until v1.4.5 edge parser."""
     return []
 
 
-# ── VSB — Best practices ───────────────────────────────────────────
+# ── VSB - Best practices ───────────────────────────────────────────
 
 
 def detect_vsb001_orphan_custom_event(graph: Graph) -> List[Issue]:
-    """VSB001 — CustomEvent declared but never triggered (or vice versa).
+    """VSB001 - CustomEvent declared but never triggered (or vice versa).
 
     Phase B heuristic: if the graph has CustomEvent definitions but no
     TriggerCustomEvent (or the other way around) we report the imbalance.
@@ -308,7 +308,7 @@ def detect_vsb001_orphan_custom_event(graph: Graph) -> List[Issue]:
 
 
 def detect_vsb002_empty_graph(graph: Graph) -> List[Issue]:
-    """VSB002 — 0-unit graph is dead weight."""
+    """VSB002 - 0-unit graph is dead weight."""
     if graph.get("unit_count", 0) != 0:
         return []
     return [
@@ -317,14 +317,14 @@ def detect_vsb002_empty_graph(graph: Graph) -> List[Issue]:
             rule_id="VSB002",
             category="BestPractices",
             severity="info",
-            message="Graph has zero nodes — it's a no-op kept around for nothing.",
+            message="Graph has zero nodes - it's a no-op kept around for nothing.",
             fix_suggestion="Delete the asset if it's no longer wired into a runner / state machine.",  # noqa: E501
         )
     ]
 
 
 def detect_vsb003_deep_flow_chain(graph: Graph) -> List[Issue]:
-    """VSB003 — long sequential chain in one path is hard to follow.
+    """VSB003 - long sequential chain in one path is hard to follow.
 
     Heuristic: a count of "Sequence" or "Flow" nodes paired with
     > 30 non-event units suggests the graph is one long script. The
@@ -344,7 +344,7 @@ def detect_vsb003_deep_flow_chain(graph: Graph) -> List[Issue]:
             severity="info",
             message=(
                 f"Graph has {graph['unit_count']} nodes plus Sequence/Branch "
-                "nodes — likely a single deep flow chain that reads like "
+                "nodes - likely a single deep flow chain that reads like "
                 "spaghetti."
             ),
             fix_suggestion="Refactor into sub-graphs or extract the deep portion into a C# behaviour.",  # noqa: E501
@@ -352,7 +352,7 @@ def detect_vsb003_deep_flow_chain(graph: Graph) -> List[Issue]:
     ]
 
 
-# ── VSS — Security ─────────────────────────────────────────────────
+# ── VSS - Security ─────────────────────────────────────────────────
 
 
 _SECRET_RE = re.compile(
@@ -362,7 +362,7 @@ _SECRET_RE = re.compile(
 
 
 def detect_vss001_hardcoded_secret(graph: Graph) -> List[Issue]:
-    """VSS001 — string literal inside any node whose name looks
+    """VSS001 - string literal inside any node whose name looks
     secret-ish (api_key, token, password). Visual Scripting literals
     live in the graph YAML as quoted values.
 
@@ -374,11 +374,11 @@ def detect_vss001_hardcoded_secret(graph: Graph) -> List[Issue]:
     return []  # active in v1.4.5
 
 
-# ── VSP — Performance (Batch 2) ────────────────────────────────────
+# ── VSP - Performance (Batch 2) ────────────────────────────────────
 
 
 def detect_vsp003_getcomponent_in_update(graph: Graph) -> List[Issue]:
-    """VSP003 — GetComponent call inside an Update graph — O(n) component lookup every frame."""  # noqa: E501
+    """VSP003 - GetComponent call inside an Update graph - O(n) component lookup every frame."""  # noqa: E501
     if not graph.get("has_update_root"):
         return []
     out: List[Issue] = []
@@ -392,7 +392,7 @@ def detect_vsp003_getcomponent_in_update(graph: Graph) -> List[Issue]:
                     category="Performance",
                     severity="warning",
                     message=(
-                        f"{short} node inside an Update graph — component lookup "
+                        f"{short} node inside an Update graph - component lookup "
                         "traverses the GameObject's component list every frame."
                     ),
                     fix_suggestion=(
@@ -406,7 +406,7 @@ def detect_vsp003_getcomponent_in_update(graph: Graph) -> List[Issue]:
 
 
 def detect_vsp004_find_in_update(graph: Graph) -> List[Issue]:
-    """VSP004 — FindObject / FindObjectOfType inside an Update graph — full scene scan every frame."""  # noqa: E501
+    """VSP004 - FindObject / FindObjectOfType inside an Update graph - full scene scan every frame."""  # noqa: E501
     if not graph.get("has_update_root"):
         return []
     out: List[Issue] = []
@@ -420,7 +420,7 @@ def detect_vsp004_find_in_update(graph: Graph) -> List[Issue]:
                     category="Performance",
                     severity="error",
                     message=(
-                        f"{short} node inside an Update graph — iterates all "
+                        f"{short} node inside an Update graph - iterates all "
                         "active GameObjects in the scene every frame."
                     ),
                     fix_suggestion=(
@@ -434,7 +434,7 @@ def detect_vsp004_find_in_update(graph: Graph) -> List[Issue]:
 
 
 def detect_vsp005_instantiate_destroy_in_update(graph: Graph) -> List[Issue]:
-    """VSP005 — Instantiate or Destroy node inside an Update graph — allocates/frees managed memory every frame."""  # noqa: E501
+    """VSP005 - Instantiate or Destroy node inside an Update graph - allocates/frees managed memory every frame."""  # noqa: E501
     if not graph.get("has_update_root"):
         return []
     out: List[Issue] = []
@@ -451,7 +451,7 @@ def detect_vsp005_instantiate_destroy_in_update(graph: Graph) -> List[Issue]:
                 category="Performance",
                 severity="error",
                 message=(
-                    f"{short} node inside an Update graph — spawning or "
+                    f"{short} node inside an Update graph - spawning or "
                     "destroying objects every frame causes GC pressure and "
                     "visible frame spikes."
                 ),
@@ -465,11 +465,11 @@ def detect_vsp005_instantiate_destroy_in_update(graph: Graph) -> List[Issue]:
     return out
 
 
-# ── VSM — Maintainability (Batch 2) ───────────────────────────────
+# ── VSM - Maintainability (Batch 2) ───────────────────────────────
 
 
 def detect_vsm003_variable_overload(graph: Graph) -> List[Issue]:
-    """VSM003 — More than 15 variable get/set nodes — bloated data flow."""
+    """VSM003 - More than 15 variable get/set nodes - bloated data flow."""
     var_nodes = [
         u
         for u in graph.get("units", [])
@@ -484,7 +484,7 @@ def detect_vsm003_variable_overload(graph: Graph) -> List[Issue]:
             category="Maintainability",
             severity="warning",
             message=(
-                f"Graph contains {len(var_nodes)} variable read/write nodes — "
+                f"Graph contains {len(var_nodes)} variable read/write nodes - "
                 "dense variable wiring makes data flow hard to trace and debug."
             ),
             fix_suggestion=(
@@ -496,7 +496,7 @@ def detect_vsm003_variable_overload(graph: Graph) -> List[Issue]:
 
 
 def detect_vsm004_state_machine_too_large(graph: Graph) -> List[Issue]:
-    """VSM004 — State machine graph with more than 12 state units."""
+    """VSM004 - State machine graph with more than 12 state units."""
     if graph.get("graph_type") != "state":
         return []
     state_nodes = [
@@ -513,7 +513,7 @@ def detect_vsm004_state_machine_too_large(graph: Graph) -> List[Issue]:
             category="Maintainability",
             severity="warning",
             message=(
-                f"State machine has {len(state_nodes)} states — past 12 states "
+                f"State machine has {len(state_nodes)} states - past 12 states "
                 "the graph becomes difficult to understand and extend."
             ),
             fix_suggestion=(
@@ -524,11 +524,11 @@ def detect_vsm004_state_machine_too_large(graph: Graph) -> List[Issue]:
     ]
 
 
-# ── VSB — Best Practices (Batch 2) ────────────────────────────────
+# ── VSB - Best Practices (Batch 2) ────────────────────────────────
 
 
 def detect_vsb004_multiple_event_roots(graph: Graph) -> List[Issue]:
-    """VSB004 — Graph responds to more than 3 lifecycle events — violates single-responsibility."""  # noqa: E501
+    """VSB004 - Graph responds to more than 3 lifecycle events - violates single-responsibility."""  # noqa: E501
     event_units = [
         u
         for u in graph.get("units", [])
@@ -543,7 +543,7 @@ def detect_vsb004_multiple_event_roots(graph: Graph) -> List[Issue]:
             category="BestPractices",
             severity="info",
             message=(
-                f"Graph has {len(event_units)} event root nodes — mixing too "
+                f"Graph has {len(event_units)} event root nodes - mixing too "
                 "many lifecycle hooks in one graph blurs responsibility."
             ),
             fix_suggestion=(
@@ -555,7 +555,7 @@ def detect_vsb004_multiple_event_roots(graph: Graph) -> List[Issue]:
 
 
 def detect_vsb005_getcomponent_no_null_check(graph: Graph) -> List[Issue]:
-    """VSB005 — GetComponent node present but no NullCheck in the same graph."""
+    """VSB005 - GetComponent node present but no NullCheck in the same graph."""
     units = graph.get("units", [])
     has_getcomp = any(
         any(u["type"].startswith(t) for t in _GETCOMPONENT_TYPES) for u in units
@@ -574,7 +574,7 @@ def detect_vsb005_getcomponent_no_null_check(graph: Graph) -> List[Issue]:
             category="BestPractices",
             severity="warning",
             message=(
-                "GetComponent node present but no NullCheck node found — "
+                "GetComponent node present but no NullCheck node found - "
                 "if the component is missing the graph will silently "
                 "propagate a null and crash downstream."
             ),
@@ -587,7 +587,7 @@ def detect_vsb005_getcomponent_no_null_check(graph: Graph) -> List[Issue]:
 
 
 def detect_vsb006_send_message(graph: Graph) -> List[Issue]:
-    """VSB006 — SendMessage or BroadcastMessage — string-dispatch is slow and breaks refactoring."""  # noqa: E501
+    """VSB006 - SendMessage or BroadcastMessage - string-dispatch is slow and breaks refactoring."""  # noqa: E501
     out: List[Issue] = []
     for u in graph.get("units", []):
         if any(u["type"].startswith(t) for t in _SEND_MESSAGE_TYPES):
@@ -599,7 +599,7 @@ def detect_vsb006_send_message(graph: Graph) -> List[Issue]:
                     category="BestPractices",
                     severity="warning",
                     message=(
-                        f"{short} uses string-based dispatch — Unity cannot "
+                        f"{short} uses string-based dispatch - Unity cannot "
                         "validate the method name at edit-time and incurs "
                         "reflection overhead at runtime."
                     ),
@@ -614,7 +614,7 @@ def detect_vsb006_send_message(graph: Graph) -> List[Issue]:
 
 
 def detect_vsb007_wait_for_seconds_in_update(graph: Graph) -> List[Issue]:
-    """VSB007 — WaitForSeconds inside an Update graph — allocates a new yield object every frame."""  # noqa: E501
+    """VSB007 - WaitForSeconds inside an Update graph - allocates a new yield object every frame."""  # noqa: E501
     if not graph.get("has_update_root"):
         return []
     out: List[Issue] = []
@@ -643,7 +643,7 @@ def detect_vsb007_wait_for_seconds_in_update(graph: Graph) -> List[Issue]:
 
 
 def detect_vsb008_script_graph_no_root(graph: Graph) -> List[Issue]:
-    """VSB008 — Script graph has nodes but no event root — the graph is never triggered."""  # noqa: E501
+    """VSB008 - Script graph has nodes but no event root - the graph is never triggered."""  # noqa: E501
     if graph.get("graph_type") != "script":
         return []
     if graph.get("unit_count", 0) == 0:
@@ -662,7 +662,7 @@ def detect_vsb008_script_graph_no_root(graph: Graph) -> List[Issue]:
             severity="warning",
             message=(
                 f"Script graph has {graph['unit_count']} node(s) but no event "
-                "root (OnStart, OnUpdate, OnEnable, etc.) — the graph never fires."
+                "root (OnStart, OnUpdate, OnEnable, etc.) - the graph never fires."
             ),
             fix_suggestion=(
                 "Add an event root node (e.g. OnStart) to trigger the graph, "
@@ -672,11 +672,11 @@ def detect_vsb008_script_graph_no_root(graph: Graph) -> List[Issue]:
     ]
 
 
-# ── VSS — Security (Batch 2) ──────────────────────────────────────
+# ── VSS - Security (Batch 2) ──────────────────────────────────────
 
 
 def detect_vss002_debug_break_in_graph(graph: Graph) -> List[Issue]:
-    """VSS002 — Debug.Break node — hard-pauses the editor; must not ship in production builds."""  # noqa: E501
+    """VSS002 - Debug.Break node - hard-pauses the editor; must not ship in production builds."""  # noqa: E501
     out: List[Issue] = []
     for u in graph.get("units", []):
         if any(u["type"].startswith(t) for t in _DEBUG_BREAK_TYPES):
@@ -687,7 +687,7 @@ def detect_vss002_debug_break_in_graph(graph: Graph) -> List[Issue]:
                     category="BestPractices",
                     severity="warning",
                     message=(
-                        "Debug.Break node found — this pauses the Unity Editor "
+                        "Debug.Break node found - this pauses the Unity Editor "
                         "when executed and will freeze the application in a "
                         "production build."
                     ),
@@ -702,7 +702,7 @@ def detect_vss002_debug_break_in_graph(graph: Graph) -> List[Issue]:
 
 
 def detect_vss003_player_prefs_set(graph: Graph) -> List[Issue]:
-    """VSS003 — PlayerPrefs.Set node — PlayerPrefs is plain-text on disk; do not store sensitive data."""  # noqa: E501
+    """VSS003 - PlayerPrefs.Set node - PlayerPrefs is plain-text on disk; do not store sensitive data."""  # noqa: E501
     out: List[Issue] = []
     for u in graph.get("units", []):
         if any(u["type"].startswith(t) for t in _PLAYER_PREFS_SET_TYPES):
@@ -714,7 +714,7 @@ def detect_vss003_player_prefs_set(graph: Graph) -> List[Issue]:
                     category="Security",
                     severity="info",
                     message=(
-                        f"{short} node stores data in PlayerPrefs — values are "
+                        f"{short} node stores data in PlayerPrefs - values are "
                         "saved as plain text on the user's disk and are trivially "
                         "readable or editable."
                     ),

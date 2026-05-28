@@ -1,6 +1,6 @@
 # core/modules/code_validator/rules/csharp/csharp_best_practices.py
 #
-# C# / Unity best-practice rule detectors — CSB001-CSB034 (14 implemented).
+# C# / Unity best-practice rule detectors - CSB001-CSB034 (14 implemented).
 #
 # CSB001  Empty catch block
 # CSB002  TODO / FIXME / HACK comment
@@ -35,7 +35,7 @@ def detect_empty_catch(content: str, file_path: str) -> List[Issue]:
     """CSB001: empty catch block swallows exceptions silently."""
     out: List[Issue] = []
     for m in re.finditer(r"\bcatch\b[^{]*\{(\s*)\}", content):
-        # Body is the captured whitespace — empty if it's only whitespace.
+        # Body is the captured whitespace - empty if it's only whitespace.
         if m.group(1).strip():
             continue
         line = _line_number(content, m.start())
@@ -55,7 +55,7 @@ def detect_empty_catch(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_todo_comment(content: str, file_path: str) -> List[Issue]:
-    """CSB002: TODO / FIXME / HACK markers in source — flag for review."""
+    """CSB002: TODO / FIXME / HACK markers in source - flag for review."""
     out: List[Issue] = []
     for m in re.finditer(r"//\s*(TODO|FIXME|HACK|XXX)\b[^\n]*", content):
         line = _line_number(content, m.start())
@@ -67,7 +67,7 @@ def detect_todo_comment(content: str, file_path: str) -> List[Issue]:
                 rule_id="CSB002",
                 category="BestPractices",
                 severity="info",
-                message=f"{m.group(1)} comment — flag for follow-up.",
+                message=f"{m.group(1)} comment - flag for follow-up.",
                 fix_suggestion="Convert to a tracked ticket or resolve before merging.",
             )
         )
@@ -75,7 +75,7 @@ def detect_todo_comment(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_catch_exception_broad(content: str, file_path: str) -> List[Issue]:
-    """CSB003: `catch (Exception)` without filter — swallows specific errors.
+    """CSB003: `catch (Exception)` without filter - swallows specific errors.
 
     Allowed when the catch body either rethrows (`throw;`) or logs the
     exception (`LogException` / `LogError` / `Console.WriteLine`). Anything
@@ -111,7 +111,7 @@ def detect_catch_exception_broad(content: str, file_path: str) -> List[Issue]:
                 rule_id="CSB003",
                 category="BestPractices",
                 severity="warning",
-                message="`catch (Exception)` without rethrow or logging — masks bugs.",
+                message="`catch (Exception)` without rethrow or logging - masks bugs.",
                 fix_suggestion="Catch a specific exception type, or `Debug.LogException(ex)` and rethrow.",  # noqa: E501
             )
         )
@@ -119,7 +119,7 @@ def detect_catch_exception_broad(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_infinite_loop(content: str, file_path: str) -> List[Issue]:
-    """CSB004: while(true) or for(;;) without break/return/goto — hangs the game thread."""  # noqa: E501
+    """CSB004: while(true) or for(;;) without break/return/goto - hangs the game thread."""  # noqa: E501
     out: List[Issue] = []
     loop_re = re.compile(r"\b(?:while\s*\(\s*true\s*\)|for\s*\(\s*;\s*;\s*\))\s*\{")
     for loop in loop_re.finditer(content):
@@ -145,7 +145,7 @@ def detect_infinite_loop(content: str, file_path: str) -> List[Issue]:
                 rule_id="CSB004",
                 category="BestPractices",
                 severity="error",
-                message="Infinite loop without break/return — will hang the game thread if reached on the main thread.",  # noqa: E501
+                message="Infinite loop without break/return - will hang the game thread if reached on the main thread.",  # noqa: E501
                 fix_suggestion="Add a termination condition, or convert to a Coroutine with a loop condition and `yield return null`.",  # noqa: E501
             )
         )
@@ -153,7 +153,7 @@ def detect_infinite_loop(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_async_void(content: str, file_path: str) -> List[Issue]:
-    """CSB005: `async void` method — exceptions crash the process.
+    """CSB005: `async void` method - exceptions crash the process.
 
     The single justified case is event handlers (signature ends in
     `(object sender, EventArgs e)` or names starting with `On…`). Plain
@@ -182,7 +182,7 @@ def detect_async_void(content: str, file_path: str) -> List[Issue]:
                 rule_id="CSB005",
                 category="BestPractices",
                 severity="warning",
-                message=f"async void method '{name}' — uncaught exceptions crash the process.",  # noqa: E501
+                message=f"async void method '{name}' - uncaught exceptions crash the process.",  # noqa: E501
                 fix_suggestion="Return `async Task` (or `async UniTask` in Unity) so callers can await and observe errors.",  # noqa: E501
             )
         )
@@ -231,7 +231,7 @@ def detect_magic_number(content: str, file_path: str) -> List[Issue]:
                 or "[" in preceding[-10:]
                 and "]" not in preceding[-10:]
             ):
-                # Inside brackets — small literal indices are typical
+                # Inside brackets - small literal indices are typical
                 if abs(f) < 10:
                     continue
             out.append(
@@ -242,7 +242,7 @@ def detect_magic_number(content: str, file_path: str) -> List[Issue]:
                     rule_id="CSB006",
                     category="BestPractices",
                     severity="info",
-                    message=f"Magic number {val} in expression — extract to a named constant.",  # noqa: E501
+                    message=f"Magic number {val} in expression - extract to a named constant.",  # noqa: E501
                     fix_suggestion=f"Replace with `private const float MyMeaningfulName = {val};` (or appropriate type).",  # noqa: E501
                 )
             )
@@ -251,7 +251,7 @@ def detect_magic_number(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_missing_override(content: str, file_path: str) -> List[Issue]:
-    """CSB009: Unity lifecycle method declared without override in a derived class — silently shadows the base."""  # noqa: E501
+    """CSB009: Unity lifecycle method declared without override in a derived class - silently shadows the base."""  # noqa: E501
     _LIFECYCLE = frozenset(
         {
             "Start",
@@ -292,7 +292,7 @@ def detect_missing_override(content: str, file_path: str) -> List[Issue]:
                     rule_id="CSB009",
                     category="BestPractices",
                     severity="warning",
-                    message=f"{m.group(1)}() shadows the base class implementation — add `override` to be explicit.",  # noqa: E501
+                    message=f"{m.group(1)}() shadows the base class implementation - add `override` to be explicit.",  # noqa: E501
                     fix_suggestion=f"Change to `protected override void {m.group(1)}()` and add `base.{m.group(1)}();`.",  # noqa: E501
                 )
             )
@@ -300,7 +300,7 @@ def detect_missing_override(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_hardcoded_path(content: str, file_path: str) -> List[Issue]:
-    """CSB010: hardcoded absolute file-system path — breaks on other machines and platforms."""  # noqa: E501
+    """CSB010: hardcoded absolute file-system path - breaks on other machines and platforms."""  # noqa: E501
     out: List[Issue] = []
     for m in re.finditer(
         r'"(?:[A-Za-z]:\\[^"\\]{3,}|/(?:home|Users|var|tmp|opt)/[^"]{3,})"',
@@ -315,7 +315,7 @@ def detect_hardcoded_path(content: str, file_path: str) -> List[Issue]:
                 rule_id="CSB010",
                 category="BestPractices",
                 severity="warning",
-                message="Hardcoded absolute path — will not work on other machines or platforms.",  # noqa: E501
+                message="Hardcoded absolute path - will not work on other machines or platforms.",  # noqa: E501
                 fix_suggestion="Use Application.dataPath, Application.persistentDataPath, or Path.Combine with relative segments.",  # noqa: E501
             )
         )
@@ -323,7 +323,7 @@ def detect_hardcoded_path(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_empty_if_body(content: str, file_path: str) -> List[Issue]:
-    """CSB011: empty if body {} — likely a logic error or unfinished branch."""
+    """CSB011: empty if body {} - likely a logic error or unfinished branch."""
     out: List[Issue] = []
     for m in re.finditer(r"\bif\s*\([^)]+\)\s*\{\s*\}", content):
         line = _line_number(content, m.start())
@@ -335,7 +335,7 @@ def detect_empty_if_body(content: str, file_path: str) -> List[Issue]:
                 rule_id="CSB011",
                 category="BestPractices",
                 severity="warning",
-                message="Empty if body — likely an unfinished branch or accidental semicolon.",  # noqa: E501
+                message="Empty if body - likely an unfinished branch or accidental semicolon.",  # noqa: E501
                 fix_suggestion="Add the intended code, invert the condition to remove dead branches, or delete the if block.",  # noqa: E501
             )
         )
@@ -343,7 +343,7 @@ def detect_empty_if_body(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_event_not_unsubscribed(content: str, file_path: str) -> List[Issue]:
-    """CSB012: event += subscription without matching -= in OnDestroy — listener memory leak."""  # noqa: E501
+    """CSB012: event += subscription without matching -= in OnDestroy - listener memory leak."""  # noqa: E501
     subscriptions: List[tuple] = []
     for m in re.finditer(r"(\w+)\s*\+=\s*\w+\s*;", content):
         event_name = m.group(1)
@@ -375,7 +375,7 @@ def detect_event_not_unsubscribed(content: str, file_path: str) -> List[Issue]:
                 rule_id="CSB012",
                 category="BestPractices",
                 severity="warning",
-                message=f"Event `{event_name} +=` has no matching `-=` in OnDestroy — listener leak.",  # noqa: E501
+                message=f"Event `{event_name} +=` has no matching `-=` in OnDestroy - listener leak.",  # noqa: E501
                 fix_suggestion=f"In OnDestroy: `{event_name} -= <HandlerName>;`",
             )
         )
@@ -383,7 +383,7 @@ def detect_event_not_unsubscribed(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_log_outside_editor_guard(content: str, file_path: str) -> List[Issue]:
-    """CSB013: Debug.Log outside #if UNITY_EDITOR guard — active in production builds."""  # noqa: E501
+    """CSB013: Debug.Log outside #if UNITY_EDITOR guard - active in production builds."""  # noqa: E501
     out: List[Issue] = []
     in_guard = False
     for idx, raw_line in enumerate(content.splitlines(), start=1):
@@ -406,7 +406,7 @@ def detect_log_outside_editor_guard(content: str, file_path: str) -> List[Issue]
                     rule_id="CSB013",
                     category="BestPractices",
                     severity="info",
-                    message="Debug.Log is active in production builds — wrap in #if UNITY_EDITOR or remove.",  # noqa: E501
+                    message="Debug.Log is active in production builds - wrap in #if UNITY_EDITOR or remove.",  # noqa: E501
                     fix_suggestion="#if UNITY_EDITOR\n    Debug.Log(...);\n#endif",
                 )
             )
@@ -414,7 +414,7 @@ def detect_log_outside_editor_guard(content: str, file_path: str) -> List[Issue]
 
 
 def detect_float_no_f_suffix(content: str, file_path: str) -> List[Issue]:
-    """CSB014: float variable assigned a double literal (missing f suffix) — implicit narrowing conversion."""  # noqa: E501
+    """CSB014: float variable assigned a double literal (missing f suffix) - implicit narrowing conversion."""  # noqa: E501
     out: List[Issue] = []
     for m in re.compile(
         r"\bfloat\s+\w+\s*=\s*-?\d+\.\d+(?![fFdDmM\d])", re.MULTILINE
@@ -428,7 +428,7 @@ def detect_float_no_f_suffix(content: str, file_path: str) -> List[Issue]:
                 rule_id="CSB014",
                 category="BestPractices",
                 severity="info",
-                message="Float assigned a double literal (missing `f` suffix) — implicit narrowing conversion.",  # noqa: E501
+                message="Float assigned a double literal (missing `f` suffix) - implicit narrowing conversion.",  # noqa: E501
                 fix_suggestion="Append `f` to the literal (e.g. `1.5` → `1.5f`).",
             )
         )
@@ -436,7 +436,7 @@ def detect_float_no_f_suffix(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_empty_destructor(content: str, file_path: str) -> List[Issue]:
-    """CSB015: empty destructor/finalizer — registers for GC finalization queue with no benefit."""  # noqa: E501
+    """CSB015: empty destructor/finalizer - registers for GC finalization queue with no benefit."""  # noqa: E501
     out: List[Issue] = []
     for m in re.finditer(r"~\s*\w+\s*\(\s*\)\s*\{(\s*)\}", content):
         if m.group(1).strip():
@@ -458,7 +458,7 @@ def detect_empty_destructor(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_commented_out_code(content: str, file_path: str) -> List[Issue]:
-    """CSB016: three or more consecutive commented-out code lines — dead code clutters the file."""  # noqa: E501
+    """CSB016: three or more consecutive commented-out code lines - dead code clutters the file."""  # noqa: E501
     out: List[Issue] = []
     lines = content.splitlines()
     code_re = re.compile(r"^\s*//\s*(?:[a-z_]|[A-Z].*[;{}()=])")
@@ -475,7 +475,7 @@ def detect_commented_out_code(content: str, file_path: str) -> List[Issue]:
                     rule_id="CSB016",
                     category="Maintainability",
                     severity="info",
-                    message=f"{count} consecutive commented-out code lines — remove dead code.",  # noqa: E501
+                    message=f"{count} consecutive commented-out code lines - remove dead code.",  # noqa: E501
                     fix_suggestion="Delete the commented block; use version control to recover old code.",  # noqa: E501
                 )
             )

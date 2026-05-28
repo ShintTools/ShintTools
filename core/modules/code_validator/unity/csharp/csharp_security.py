@@ -1,6 +1,6 @@
 # core/modules/code_validator/rules/csharp/csharp_security.py
 #
-# C# / Unity security rule detectors — CSS001-CSS013 (9 implemented).
+# C# / Unity security rule detectors - CSS001-CSS013 (9 implemented).
 #
 # CSS001  SQL command built by string concatenation
 # CSS002  Hardcoded secret literal
@@ -27,7 +27,7 @@ from code_validator.unity.csharp._csharp_helpers import (
 
 
 def detect_sql_concat(content: str, file_path: str) -> List[Issue]:
-    """CSS001: SQL command built by string concatenation — injection risk."""
+    """CSS001: SQL command built by string concatenation - injection risk."""
     out: List[Issue] = []
     pattern = re.compile(
         r"(?:SqlCommand|MySqlCommand|SqliteCommand|new\s+\w*Command)\s*\([^)]*\+[^)]*\)",  # noqa: E501
@@ -43,7 +43,7 @@ def detect_sql_concat(content: str, file_path: str) -> List[Issue]:
                 rule_id="CSS001",
                 category="Security",
                 severity="error",
-                message="SQL command built with string concatenation — SQL injection risk.",  # noqa: E501
+                message="SQL command built with string concatenation - SQL injection risk.",  # noqa: E501
                 fix_suggestion="Use parameterised queries with `cmd.Parameters.AddWithValue(...)`.",  # noqa: E501
             )
         )
@@ -75,11 +75,11 @@ def detect_hardcoded_secret(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_http_url(content: str, file_path: str) -> List[Issue]:
-    """CSS003: hardcoded `http://` URL literal — should be https."""
+    """CSS003: hardcoded `http://` URL literal - should be https."""
     out: List[Issue] = []
     for m in re.finditer(r"\"http://[^\"\\s]+\"", content):
         line = _line_number(content, m.start())
-        # Skip example/comment-ish localhost references — harmless and noisy.
+        # Skip example/comment-ish localhost references - harmless and noisy.
         snippet = m.group(0).lower()
         if "localhost" in snippet or "127.0.0.1" in snippet:
             continue
@@ -91,7 +91,7 @@ def detect_http_url(content: str, file_path: str) -> List[Issue]:
                 rule_id="CSS003",
                 category="Security",
                 severity="warning",
-                message="Hardcoded `http://` URL — traffic is unencrypted.",
+                message="Hardcoded `http://` URL - traffic is unencrypted.",
                 fix_suggestion="Switch to https://, or wire the base URL through configuration.",  # noqa: E501
             )
         )
@@ -128,7 +128,7 @@ def detect_playerprefs_secret(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_instantiate_no_check(content: str, file_path: str) -> List[Issue]:
-    """CSS005: Instantiate() result used without null check — crashes if prefab is missing."""  # noqa: E501
+    """CSS005: Instantiate() result used without null check - crashes if prefab is missing."""  # noqa: E501
     out: List[Issue] = []
     pattern = re.compile(
         r"\b(\w+)\s*=\s*(?:Object\.)?Instantiate\s*[<(][^;]+;\s*\n"
@@ -144,7 +144,7 @@ def detect_instantiate_no_check(content: str, file_path: str) -> List[Issue]:
                 rule_id="CSS005",
                 category="Security",
                 severity="warning",
-                message="Instantiate() result dereferenced without null check — NullReferenceException if prefab is unassigned.",  # noqa: E501
+                message="Instantiate() result dereferenced without null check - NullReferenceException if prefab is unassigned.",  # noqa: E501
                 fix_suggestion="Check `if (instance == null) { Debug.LogError(...); return; }` before use.",  # noqa: E501
             )
         )
@@ -152,7 +152,7 @@ def detect_instantiate_no_check(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_getcomponent_no_check(content: str, file_path: str) -> List[Issue]:
-    """CSS006: GetComponent result immediately dereferenced without null check — NullReferenceException risk."""  # noqa: E501
+    """CSS006: GetComponent result immediately dereferenced without null check - NullReferenceException risk."""  # noqa: E501
     out: List[Issue] = []
     pattern = re.compile(
         r"\b(\w+)\s*=\s*GetComponent(?:InChildren|InParent)?\s*<[^>]+>\s*\(\s*\)\s*;\s*\n"  # noqa: E501
@@ -168,7 +168,7 @@ def detect_getcomponent_no_check(content: str, file_path: str) -> List[Issue]:
                 rule_id="CSS006",
                 category="Security",
                 severity="warning",
-                message="GetComponent result dereferenced without null check — component may not be attached.",  # noqa: E501
+                message="GetComponent result dereferenced without null check - component may not be attached.",  # noqa: E501
                 fix_suggestion="Guard with `if (comp == null) { Debug.LogError(...); return; }` before use.",  # noqa: E501
             )
         )
@@ -176,7 +176,7 @@ def detect_getcomponent_no_check(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_direct_cast_no_check(content: str, file_path: str) -> List[Issue]:
-    """CSS007: direct C# cast (Type)obj without null check — InvalidCastException risk."""  # noqa: E501
+    """CSS007: direct C# cast (Type)obj without null check - InvalidCastException risk."""  # noqa: E501
     _PRIMITIVES = frozenset(
         {
             "int",
@@ -211,7 +211,7 @@ def detect_direct_cast_no_check(content: str, file_path: str) -> List[Issue]:
                 rule_id="CSS007",
                 category="Security",
                 severity="warning",
-                message=f"Direct cast ({cast_type}) without null/type check — use `as` + null guard or `is` pattern.",  # noqa: E501
+                message=f"Direct cast ({cast_type}) without null/type check - use `as` + null guard or `is` pattern.",  # noqa: E501
                 fix_suggestion=f"Replace with `var x = obj as {cast_type}; if (x == null) return;`",  # noqa: E501
             )
         )
@@ -219,7 +219,7 @@ def detect_direct_cast_no_check(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_division_no_zero_check(content: str, file_path: str) -> List[Issue]:
-    """CSS008: division by a variable without preceding zero check — DivideByZeroException risk."""  # noqa: E501
+    """CSS008: division by a variable without preceding zero check - DivideByZeroException risk."""  # noqa: E501
     out: List[Issue] = []
     _SAFE_VARS = frozenset({"i", "j", "k", "n", "t", "dt", "deltaTime"})
     for m in re.compile(r"\b\w+\s*/\s*(\w+)\b").finditer(content):
@@ -242,7 +242,7 @@ def detect_division_no_zero_check(content: str, file_path: str) -> List[Issue]:
                 rule_id="CSS008",
                 category="Security",
                 severity="warning",
-                message=f"Division by `{divisor}` without zero check — DivideByZeroException if {divisor} == 0.",  # noqa: E501
+                message=f"Division by `{divisor}` without zero check - DivideByZeroException if {divisor} == 0.",  # noqa: E501
                 fix_suggestion=f"Guard with `if ({divisor} == 0) return;` or `if ({divisor} != 0) {{ ... }}`.",  # noqa: E501
             )
         )
@@ -250,7 +250,7 @@ def detect_division_no_zero_check(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_collision_no_null_check(content: str, file_path: str) -> List[Issue]:
-    """CSS009: OnCollisionEnter/OnTriggerEnter uses parameter without null check — crash on destroyed objects."""  # noqa: E501
+    """CSS009: OnCollisionEnter/OnTriggerEnter uses parameter without null check - crash on destroyed objects."""  # noqa: E501
     out: List[Issue] = []
     sig_re = re.compile(
         r"void\s+(?:OnCollisionEnter|OnCollisionExit|OnCollisionStay"
@@ -280,7 +280,7 @@ def detect_collision_no_null_check(content: str, file_path: str) -> List[Issue]:
                 rule_id="CSS009",
                 category="Security",
                 severity="warning",
-                message=f"Collision/trigger handler uses `{param}` without null check — may crash if the object is destroyed mid-frame.",  # noqa: E501
+                message=f"Collision/trigger handler uses `{param}` without null check - may crash if the object is destroyed mid-frame.",  # noqa: E501
                 fix_suggestion=f"Guard with `if ({param} == null) return;` at the top of the handler.",  # noqa: E501
             )
         )
