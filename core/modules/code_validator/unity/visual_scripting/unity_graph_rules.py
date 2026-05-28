@@ -160,11 +160,14 @@ def _invoked_member(unit: Unit) -> Optional[Dict[str, Any]]:
     InvokeMember is how Unity VS stores most Unity API method calls
     (Debug.Log, GameObject.GetComponent, PlayerPrefs.SetString, ...).
     The `member` dict holds `name` (method) and `targetType` (class).
+
+    Real Unity VS assets store `member` as a top-level field on the node
+    (extracted by the parser into `unit["member"]`). Synthetic/test assets
+    may store it inside `defaultValues["member"]` — we check both.
     """
     if not unit["type"].endswith("InvokeMember"):
         return None
-    default_values = unit.get("default_values", {})
-    member = default_values.get("member")
+    member = unit.get("member") or unit.get("default_values", {}).get("member")
     return member if isinstance(member, dict) else None
 
 

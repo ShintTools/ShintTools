@@ -192,11 +192,29 @@ def parse_unity_graph(content: str, file_path: str) -> Optional[Dict]:
     variables: Dict[str, Dict[str, Any]] = {}
     has_update_root = False
 
-    raw_units = _pick_first_key(graph_root, _UNITS_CONTAINER_KEYS) or []
-    for raw_unit in raw_units:
-        if not isinstance(raw_unit, dict):
-            continue
+    # Real Unity VS assets mix nodes and connections in the same `elements`
+    # array. Connections carry a $type ending in "Connection"; nodes carry
+    # a numeric `$id` used as a cross-reference target. We split them here
+    # and build an id→guid map so we can resolve {"$ref": "13"} pointers.
+    raw_elements = _pick_first_key(graph_root, _UNITS_CONTAINER_KEYS) or []
+    id_to_guid: Dict[str, str] = {}
+    raw_connection_elements: List[Dict[str, Any]] = []
+    raw_node_elements: List[Dict[str, Any]] = []
 
+    for elem in raw_elements:
+        if not isinstance(elem, dict):
+            continue
+        elem_type = elem.get("$type", "")
+        if "Connection" in elem_type:
+            raw_connection_elements.append(elem)
+        else:
+            raw_node_elements.append(elem)
+            elem_id = elem.get("$id")
+            elem_guid = elem.get("guid", "")
+            if elem_id is not None and elem_guid:
+                id_to_guid[str(elem_id)] = elem_guid
+
+    for raw_unit in raw_node_elements:
         unit_type = raw_unit.get("$type", "")
         unit_guid = raw_unit.get("guid", "")
 
@@ -208,21 +226,42 @@ def parse_unity_graph(content: str, file_path: str) -> Optional[Dict]:
             "type": unit_type,
             "position": raw_unit.get("position", [0, 0]),
             "default_values": raw_unit.get("defaultValues", {}),
+            # Real Unity VS assets store `member` as a top-level field on
+            # InvokeMember nodes, not nested inside defaultValues.
+            "member": raw_unit.get("member"),
         }
         units.append(unit_record)
 
         if _is_update_event_type(unit_type):
             has_update_root = True
 
-    raw_connections = _pick_first_key(graph_root, _CONNECTIONS_CONTAINER_KEYS) or []
-    for raw_connection in raw_connections:
+    # Connections may come from a dedicated array (synthetic/test format)
+    # or from the mixed elements array (real Unity format).
+    raw_connections_dedicated = (
+        _pick_first_key(graph_root, _CONNECTIONS_CONTAINER_KEYS) or []
+    )
+
+    def _resolve_unit_ref(ref: Any) -> str:
+        """Resolve a raw sourceUnit/destinationUnit to a guid string.
+
+        Real Unity VS assets use {"$ref": "<id>"} cross-references; the
+        synthetic test format uses plain guid strings directly.
+        """
+        if isinstance(ref, dict):
+            return id_to_guid.get(str(ref.get("$ref", "")), "")
+        return str(ref) if ref else ""
+
+    all_raw_connections = list(raw_connections_dedicated) + raw_connection_elements
+    for raw_connection in all_raw_connections:
         if not isinstance(raw_connection, dict):
             continue
         connections.append(
             {
-                "source_unit": raw_connection.get("sourceUnit", ""),
+                "source_unit": _resolve_unit_ref(raw_connection.get("sourceUnit", "")),
                 "source_key": raw_connection.get("sourceKey", ""),
-                "destination_unit": raw_connection.get("destinationUnit", ""),
+                "destination_unit": _resolve_unit_ref(
+                    raw_connection.get("destinationUnit", "")
+                ),
                 "destination_key": raw_connection.get("destinationKey", ""),
             }
         )
