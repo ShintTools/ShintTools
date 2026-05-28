@@ -261,7 +261,6 @@ async def unity_asset_scan(payload: UnityAssetScanRequest):
     tier = await resolve_tier(payload.api_key)
 
     all_findings: list[dict] = []
-    note: str = ""
 
     asset_records = [
         {"asset_path": f.path, "asset_type": f.type or "Unknown"}
@@ -324,18 +323,12 @@ async def unity_asset_scan(payload: UnityAssetScanRequest):
                         }
                     )
             except ImportError:
-                note = (
-                    "Generic rules require the agent module"
-                    " (SHINTTOOLS_AGENT_ENABLED=1)."
-                )
+                pass
         else:
-            note = (
-                f"{len(payload.genericRules)} generic rule(s) received but "
-                "LLM agent is disabled (SHINTTOOLS_AGENT_ENABLED!=1)."
-            )
+            pass  # LLM disabled — generic rules silently skipped
 
     return {
-        "warning": note,
+        "error": "",
         "time": round(time.perf_counter() - t0, 4),
         "files": all_findings,
     }
