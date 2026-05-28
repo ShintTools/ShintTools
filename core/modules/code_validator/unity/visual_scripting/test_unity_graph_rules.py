@@ -610,6 +610,118 @@ class TestParserIntegration:
         graph = parse_unity_graph(broken, "test.asset")
         assert graph is None
 
+    def test_real_unity_format_ref_connections(self):
+        """Real Unity assets embed connections in elements with $ref/$id pointers.
+
+        This mirrors the actual on-disk format that Unity writes when Asset
+        Serialization Mode = ForceText. The parser must resolve $ref→guid and
+        extract top-level `member` from InvokeMember nodes.
+        """
+        real_graph = json.dumps(
+            {
+                "graph": {
+                    "elements": [
+                        {
+                            "$id": "9",
+                            "guid": "guid-update",
+                            "$type": "Unity.VisualScripting.Update",
+                            "position": {"x": 0, "y": 0},
+                            "defaultValues": {},
+                        },
+                        {
+                            "$id": "13",
+                            "guid": "guid-instantiate",
+                            "$type": "Unity.VisualScripting.InvokeMember",
+                            "position": {"x": 100, "y": 0},
+                            "member": {
+                                "name": "Instantiate",
+                                "targetType": "UnityEngine.Object",
+                            },
+                            "defaultValues": {},
+                        },
+                        {
+                            "$type": "Unity.VisualScripting.ControlConnection",
+                            "guid": "conn-guid",
+                            "sourceUnit": {"$ref": "9"},
+                            "sourceKey": "trigger",
+                            "destinationUnit": {"$ref": "13"},
+                            "destinationKey": "enter",
+                        },
+                    ]
+                }
+            }
+        )
+        escaped = real_graph.replace("'", "''")
+        yaml_content = (
+            "%YAML 1.1\n"
+            "--- !u!114 &11400000\n"
+            "MonoBehaviour:\n"
+            "  m_Name: Test\n"
+            "  _data:\n"
+            f"    _json: '{escaped}'\n"
+        )
+        graph = parse_unity_graph(yaml_content, "Assets/Test.asset")
+        assert graph is not None
+        assert graph["unit_count"] == 2
+        assert len(graph["connections"]) == 1
+        conn = graph["connections"][0]
+        assert conn["source_unit"] == "guid-update"
+        assert conn["destination_unit"] == "guid-instantiate"
+
+    def test_real_unity_format_member_at_toplevel(self):
+        """In real Unity VS assets, InvokeMember.member is a top-level field.
+
+        The rules must detect it even when it is NOT inside defaultValues.
+        """
+        real_graph = json.dumps(
+            {
+                "graph": {
+                    "elements": [
+                        {
+                            "$id": "1",
+                            "guid": "guid-update",
+                            "$type": "Unity.VisualScripting.Update",
+                            "position": {"x": 0, "y": 0},
+                            "defaultValues": {},
+                        },
+                        {
+                            "$id": "2",
+                            "guid": "guid-instantiate",
+                            "$type": "Unity.VisualScripting.InvokeMember",
+                            "position": {"x": 100, "y": 0},
+                            "member": {
+                                "name": "Instantiate",
+                                "targetType": "UnityEngine.Object",
+                            },
+                            "defaultValues": {},
+                        },
+                        {
+                            "$type": "Unity.VisualScripting.ControlConnection",
+                            "guid": "c1",
+                            "sourceUnit": {"$ref": "1"},
+                            "sourceKey": "trigger",
+                            "destinationUnit": {"$ref": "2"},
+                            "destinationKey": "enter",
+                        },
+                    ]
+                }
+            }
+        )
+        escaped = real_graph.replace("'", "''")
+        yaml_content = (
+            "%YAML 1.1\n"
+            "--- !u!114 &11400000\n"
+            "MonoBehaviour:\n"
+            "  m_Name: Test\n"
+            "  _data:\n"
+            f"    _json: '{escaped}'\n"
+        )
+        graph = parse_unity_graph(yaml_content, "Assets/Test.asset")
+        assert graph is not None
+        issues = rules.detect_vsp005_instantiate_destroy_in_update(graph)
+        assert len(issues) == 1
+        assert issues[0]["rule_id"] == "VSP005"
+
 
 class TestIssueShape:
     def test_issue_has_required_fields(self):
