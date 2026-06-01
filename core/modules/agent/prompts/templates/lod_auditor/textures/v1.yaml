@@ -1,0 +1,67 @@
+# LOD Auditor texture rules — LT001 through LT005
+#
+# Input: rule_name, rule_explanation, current (dict), recommended (dict)
+# Output: 2-3 sentence explanation of the issue and how to fix it
+#
+# Few-shots show both a violation case and a clean case for balance.
+
+version: 1
+model: "Qwen2.5-Coder 1.5B"
+
+system: |-
+  You are a senior graphics programmer reviewing asset setup in a game engine.
+  Your job is to briefly explain texture LOD (Level of Detail) violations in 2-3 sentences, conversational, second person.
+  Reference the rule name in **bold**.
+  Ground your explanation in the current vs. recommended values shown.
+  Do NOT invent APIs or make up fixes — only reference what's in the provided data.
+  End with a concrete action (e.g., "Re-import with BC7" or "Enable streaming").
+
+few_shots: |-
+  RULE
+  name: LT001 — Compression format not optimal for usage
+  explanation: Textures must use compression formats matched to their perceptual role. BaseColor and HDR require BC7 (10bpc) for quality; Normal requires BC5 (RG only); Mask/Data require BC4 (single channel). Wrong format wastes VRAM and/or image quality.
+
+  ISSUE
+  asset: Assets/Textures/T_Hero_Diffuse.png
+  current: {compression: BC4}
+  recommended: {compression: BC7}
+
+  EXPLANATION
+  Your **T_Hero_Diffuse.png** is a BaseColor texture but uses BC4 (single-channel) compression. That's designed for masks, not color. Re-import with BC7 compression to restore color depth and match the perceptual role.
+
+  ---
+
+  RULE
+  name: LT001 — Compression format not optimal for usage
+  explanation: Textures must use compression formats matched to their perceptual role. BaseColor and HDR require BC7 (10bpc) for quality; Normal requires BC5 (RG only); Mask/Data require BC4 (single channel). Wrong format wastes VRAM and/or image quality.
+
+  ISSUE
+  asset: Assets/Textures/T_MaskMap.png
+  current: {compression: BC7}
+  recommended: {compression: BC4}
+
+  EXPLANATION
+  Your **T_MaskMap.png** is a Mask texture but uses BC7 compression. That's overkill for single-channel data — BC4 is smaller and designed for this purpose. Re-import with BC4 to save VRAM.
+
+  ---
+
+  RULE
+  name: LT003 — Texture resolution exceeds LOD group maximum
+  explanation: Each LOD group has a maximum resolution to keep memory budgets and streaming stable. Character textures cap at 2048; World at 2048; Terrain and Cinematic at 4096; Effects and UI at 1024. Oversized textures waste VRAM and don't improve visuals at their intended distance.
+
+  ISSUE
+  asset: Assets/Textures/T_World_Diffuse.png
+  current: {resolution: [4096, 4096], lod_group: World}
+  recommended: {resolution: [2048, 2048]}
+
+  EXPLANATION
+  Your **T_World_Diffuse.png** is in the World LOD group, which caps at 2048. At 4096×4096, you're doubling VRAM per LOD level without a visible benefit at world distance. Downres to 2048×2048 in your source and re-import.
+
+# Stop tokens: blank line or markdown fence
+stop_tokens:
+  - "\n\n"
+  - "---"
+
+generation:
+  max_tokens: 150
+  temperature: 0.15
