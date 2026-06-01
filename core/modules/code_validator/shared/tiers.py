@@ -231,13 +231,21 @@ FREE_RULES: FrozenSet[str] = (
     | _FREE_VS
 )
 
-# Indie: everything — no filter applied
+# Indie: everything in code_validator — no filter applied
 INDIE_RULES: Optional[FrozenSet[str]] = None  # None = all rules
+
+# Studio: everything (superset of Indie).
+# LOD Auditor and Predictive Profiler are Studio-exclusive features —
+# they are never exposed to free or indie tier, regardless of rule IDs.
+# The rules field here still covers all code_validator rules so that
+# studio clients are not penalised when scanning code alongside assets.
+STUDIO_RULES: Optional[FrozenSet[str]] = None  # None = all rules
 
 # ── Asset limits ─────────────────────────────────────
 
 FREE_ASSET_LIMIT: int = 500
 INDIE_ASSET_LIMIT: Optional[int] = None  # None = unlimited
+STUDIO_ASSET_LIMIT: Optional[int] = None  # None = unlimited
 
 # ── Tier registry ───────────────────────────────────
 
@@ -249,6 +257,10 @@ TIERS: Dict[str, dict] = {
     "indie": {
         "rules": INDIE_RULES,
         "asset_limit": INDIE_ASSET_LIMIT,
+    },
+    "studio": {
+        "rules": STUDIO_RULES,
+        "asset_limit": STUDIO_ASSET_LIMIT,
     },
 }
 

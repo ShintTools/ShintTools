@@ -28,7 +28,7 @@ from typing import Any, Iterator, Mapping
 
 from .llm_backend import generate as _llm_generate
 from .llm_backend import generate_stream as _llm_generate_stream
-from .model_config import detect_config_from_env
+from .prompts import PromptTemplate, assemble, load_template, resolve_module_engine
 
 # Identifier of the LLM weights currently loaded. Goes into the cache
 # key so that swapping the GGUF (e.g. upgrading to a different
@@ -93,132 +93,13 @@ def _coerce_snippet(issue_dict: Mapping[str, Any]) -> str:
 # ── Prompt builder ─────────────────────────────────────────────────────────
 
 
-def _get_system_instruction() -> str:
-    """Get the system instruction for the currently configured model.
+def _build_issue_block(issue_dict: Mapping[str, Any]) -> str:
+    """Render the per-issue INPUT block (no system / few-shots).
 
-    This allows future model swaps to use prompts tuned for their
-    instruction style without code duplication.
-    """
-    config = detect_config_from_env()
-    return config.system_prompt
-
-
-# Five few-shots: C++ auto-fixable, Blueprint manual-fix, C# secret
-# manual-fix, UE5 naming auto-fixable, Unity naming auto-fixable.
-# Together they cover both closing-line variants (Auto-Fix / manual),
-# both snippet shapes (code vs asset path), and both naming engines
-# (UE5 /Game/ paths vs Unity Assets/ paths + bare .png extension).
-# Every claim in each EXPLANATION is rooted in its rule_explanation —
-# adding novel context here would teach the model to hallucinate.
-#
-# The label format is identical to the live issue block ("INPUT" /
-# "EXPLANATION") so the small model sees a single consistent pattern
-# instead of switching between "EXAMPLE N INPUT" and "INPUT".
-_FEW_SHOT_EXAMPLE = (
-    "INPUT\n"
-    "rule_name: GetWorld without null-check\n"
-    "rule_explanation: GetWorld() can return nullptr in editor "
-    "utilities, commandlets, or during shutdown. Always guard with "
-    "'if (UWorld* W = GetWorld())' before dereferencing.\n"
-    "is_auto_fixable: true\n"
-    "file: MyActor.cpp\n"
-    "line: 12\n"
-    "snippet:\n"
-    "    UWorld* World = GetWorld();\n"
-    "    AActor* Spawned = World->SpawnActor<AActor>(SpawnClass);\n"
-    "\n"
-    "EXPLANATION\n"
-    "Your `BeginPlay` grabs `GetWorld()` and uses the pointer straight "
-    "away without a null check. The world can come back null in editor "
-    "utilities, commandlets, or during shutdown, so dereferencing it "
-    "without a guard is unsafe. Capture and check it first with "
-    "`if (UWorld* W = GetWorld())`. "
-    "ShintTools' Auto-Fix can apply it for you.\n"
-    "\n"
-    "INPUT\n"
-    "rule_name: Missing authority check before action\n"
-    "rule_explanation: flag Blueprints that modify replicated "
-    "variables without a HasAuthority or SwitchHasAuthority guard. "
-    "In multiplayer, only the server should modify replicated state. "
-    "Clients writing replicated variables directly can cause desync, "
-    "cheating, or server rejection.\n"
-    "is_auto_fixable: false\n"
-    "file: /Game/Blueprints/BP_PlayerInventory\n"
-    "snippet:\n"
-    "    asset: /Game/Blueprints/BP_PlayerInventory\n"
-    "    graph: EventGraph\n"
-    "\n"
-    "EXPLANATION\n"
-    "Your `BP_PlayerInventory` modifies a replicated variable in "
-    "EventGraph without first checking authority. In multiplayer "
-    "only the server should modify replicated state; clients writing "
-    "to it directly can cause desync, cheating, or server rejection. "
-    "Gate the Set node behind a `HasAuthority` or `SwitchHasAuthority` "
-    "branch. You must fix this manually.\n"
-    "\n"
-    "INPUT\n"
-    "rule_name: Hard-coded secret in source\n"
-    "rule_explanation: Hard-coded secret literal found in source code. "
-    "Secrets committed to version control can be leaked via git history "
-    "even after deletion. Move them to environment variables or a "
-    "secrets manager.\n"
-    "is_auto_fixable: false\n"
-    "file: Assets/Scripts/Analytics/AnalyticsService.cs\n"
-    "line: 12\n"
-    "snippet:\n"
-    '    private const string api_key = "sk-prod-4f8a2c91b";\n'
-    "\n"
-    "EXPLANATION\n"
-    "Your `AnalyticsService.cs` stores the API key as a plain string "
-    "literal in source. Anyone who can read the git history can recover "
-    "that value even if you delete the line later, so it needs to leave "
-    "the source file entirely. Move it to an environment variable or a "
-    "secrets manager and read it at runtime. You must fix this manually.\n"
-    "\n"
-    "INPUT\n"
-    "rule_name: Asset missing type prefix\n"
-    "rule_explanation: UE5 conventions require every asset to start "
-    "with a short prefix identifying its class: SM_ for Static Meshes, "
-    "T_ for Textures, M_ for Materials, BP_ for Blueprints. Without a "
-    "prefix, assets are hard to find by type in the Content Browser "
-    "and risk colliding with other assets when referenced by name.\n"
-    "is_auto_fixable: true\n"
-    "snippet:\n"
-    "    asset: /Game/Characters/HeroSword\n"
-    "\n"
-    "EXPLANATION\n"
-    "Your `HeroSword` asset has no type prefix. UE5 conventions require "
-    "every asset to start with a short prefix so the Content Browser "
-    "stays navigable and assets don't collide when referenced by name "
-    "in code. Add `SM_` before the name to match its Static Mesh type. "
-    "ShintTools' Auto-Fix can apply it for you.\n"
-    "\n"
-    "INPUT\n"
-    "rule_name: Unity asset missing type prefix\n"
-    "rule_explanation: Unity assets should start with a type prefix that "
-    "matches their class: T_ for Texture2D, M_ for Material, P_ for "
-    "prefabs (GameObject), A_ for AnimationClip, AC_ for AnimatorController. "
-    "Without a prefix, assets are hard to identify by type in the Project "
-    "window and risk collisions when referenced by name from scripts or "
-    "Addressables.\n"
-    "is_auto_fixable: true\n"
-    "snippet:\n"
-    "    asset: Assets/Characters/HeroSword.png\n"
-    "\n"
-    "EXPLANATION\n"
-    "Your `HeroSword.png` Texture2D is missing its type prefix. Unity "
-    "conventions require Texture2D assets to start with `T_` so they are "
-    "easy to identify in the Project window and don't collide when "
-    "referenced by name from scripts or Addressables. Rename it to "
-    "`T_HeroSword.png`. ShintTools' Auto-Fix can apply it for you."
-)
-
-
-def build_explainer_prompt(issue_dict: Mapping[str, Any]) -> str:
-    """Assemble the prompt for a single explanation request.
-
-    Pure function: no I/O. Tests can call this directly to verify the
-    rendered prompt is grounded in the issue without invoking the LLM.
+    Pure function: no I/O. Kept separate from the registry so the
+    block layout (field order, snippet indent, label format) stays
+    versioned with the code that detects/enriches the issue, while
+    the surrounding system + few-shots travel via the YAML registry.
     """
     rule_name = str(issue_dict.get("rule_name") or "Unknown rule").strip()
     rule_explanation = str(issue_dict.get("rule_explanation") or "").strip()
@@ -251,17 +132,31 @@ def build_explainer_prompt(issue_dict: Mapping[str, Any]) -> str:
         issue_block_lines.append("snippet:")
         issue_block_lines.append(indented_snippet)
 
-    issue_block_text = "\n".join(issue_block_lines)
+    return "\n".join(issue_block_lines)
 
-    # The prompt ends with "EXPLANATION" on its own line so the model
-    # continues from there. Stop tokens cut off any follow-on noise
-    # (a second "INPUT" block, markdown headings, code fences).
-    return (
-        f"{_get_system_instruction()}\n\n"
-        f"{_FEW_SHOT_EXAMPLE}\n\n"
-        f"{issue_block_text}\n\n"
-        f"EXPLANATION\n"
-    )
+
+def _resolve_template(issue_dict: Mapping[str, Any]) -> PromptTemplate:
+    """Pick the registry template that applies to this issue.
+
+    Wrapped here so callers (build_explainer_prompt, explain_issue,
+    warmup) all go through the same resolution rule.
+    """
+    module, engine = resolve_module_engine(issue_dict)
+    return load_template(module, engine)
+
+
+def build_explainer_prompt(issue_dict: Mapping[str, Any]) -> str:
+    """Assemble the full prompt for a single explanation request.
+
+    Reads the (module, engine) template from the prompt registry,
+    renders the per-issue INPUT block, and glues them together. The
+    function stays pure modulo registry I/O — tests can call it
+    directly to verify a YAML edit changes the rendered output
+    without invoking the LLM.
+    """
+    template = _resolve_template(issue_dict)
+    issue_block_text = _build_issue_block(issue_dict)
+    return assemble(template, issue_block_text)
 
 
 # ── Warm-up ───────────────────────────────────────────────────────────────
@@ -282,10 +177,16 @@ def warmup() -> float:
     """Prime the KV cache by running one dummy inference.
 
     Call once after load_model() at server startup. The shared prompt
-    prefix (system instruction + 5 few-shots) is identical for every
+    prefix (system instruction + few-shots) is identical for every
     real request, so this single call amortises the cold-start cost:
     subsequent calls only process the short per-issue suffix (~50-100
     tokens) instead of the full ~1 100-token prompt.
+
+    The prompt is assembled from the registry — same code path
+    /agent/explain takes, so a YAML edit warms up the actual prefix
+    requests will hit. If a future change makes one engine's template
+    a hot-path, warm-up will pick it up automatically the next time
+    the server restarts.
 
     Returns elapsed seconds so the caller can log the warm-up time.
     """
@@ -317,11 +218,56 @@ _EXPLAINER_STOPS: list[str] = [
 ]
 
 
+def _resolve_generation_params(
+    issue_dict: Mapping[str, Any],
+    max_tokens: int | None,
+    temperature: float | None,
+) -> tuple[str, int, float, list[str]]:
+    """Render the prompt and pick max_tokens/temperature/stop_tokens.
+
+    Explicit overrides (when not None) win over the template; the
+    template values win over the legacy fallback. This is what lets a
+    YAML edit change generation behaviour with no Python change while
+    still letting callers (warm-up, tests) pin a value.
+    """
+    template = _resolve_template(issue_dict)
+    issue_block_text = _build_issue_block(issue_dict)
+    rendered_prompt = assemble(template, issue_block_text)
+    effective_max = max_tokens if max_tokens is not None else template.max_tokens
+    effective_temp = temperature if temperature is not None else template.temperature
+    effective_stop: list[str] = (
+        list(template.stop_tokens) if template.stop_tokens else list(_EXPLAINER_STOPS)
+    )
+    return rendered_prompt, effective_max, effective_temp, effective_stop
+
+
+def _trim_to_last_sentence(text: str) -> str:
+    """Return *text* stripped and truncated to the last complete sentence.
+
+    If the LLM hits max_tokens mid-sentence the raw completion ends
+    without terminal punctuation. We find the last '.', '!' or '?' and
+    cut there so the caller never receives a dangling fragment.
+    If no sentence boundary is found, return the stripped text as-is —
+    better a fragment than an empty string.
+    """
+    text = text.strip()
+    if not text:
+        return text
+    # Already ends with sentence-closing punctuation — nothing to trim.
+    if text[-1] in ".!?":
+        return text
+    # Find the rightmost sentence boundary.
+    last = max(text.rfind("."), text.rfind("!"), text.rfind("?"))
+    if last > 0:
+        return text[: last + 1]
+    return text
+
+
 def explain_issue(
     issue_dict: Mapping[str, Any],
     *,
-    max_tokens: int = 220,
-    temperature: float = 0.2,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
 ) -> str:
     """Generate a short customer-facing explanation for one issue.
 
@@ -329,29 +275,33 @@ def explain_issue(
         issue_dict: an enriched issue (must have at minimum `rule_name`
             and `rule_explanation`; everything else is optional and
             improves grounding when present).
-        max_tokens: cap on generated tokens. 220 fits ~3-4 sentences
-            comfortably; anything larger is the model rambling.
-        temperature: low default keeps the output stable and on-topic.
+        max_tokens: cap on generated tokens. ``None`` (default) reads
+            the value from the registry template. Pass an int to
+            override for one call.
+        temperature: sampling temperature. ``None`` (default) reads
+            the value from the registry template.
 
     Returns the trimmed explanation text. Never raises on a bad model
     output — at worst returns an empty string and the caller decides
     how to surface that to the user.
     """
-    rendered_prompt = build_explainer_prompt(issue_dict)
+    rendered_prompt, effective_max, effective_temp, effective_stop = (
+        _resolve_generation_params(issue_dict, max_tokens, temperature)
+    )
     raw_completion = _llm_generate(
         rendered_prompt,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        stop=_EXPLAINER_STOPS,
+        max_tokens=effective_max,
+        temperature=effective_temp,
+        stop=effective_stop,
     )
-    return raw_completion.strip()
+    return _trim_to_last_sentence(raw_completion)
 
 
 def explain_issue_stream(
     issue_dict: Mapping[str, Any],
     *,
-    max_tokens: int = 220,
-    temperature: float = 0.2,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
 ) -> Iterator[str]:
     """Stream a customer-facing explanation token-by-token.
 
@@ -365,11 +315,13 @@ def explain_issue_stream(
     needs the full text (e.g. to write to the MongoDB cache once the
     stream has finished).
     """
-    rendered_prompt = build_explainer_prompt(issue_dict)
+    rendered_prompt, effective_max, effective_temp, effective_stop = (
+        _resolve_generation_params(issue_dict, max_tokens, temperature)
+    )
     for chunk in _llm_generate_stream(
         rendered_prompt,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        stop=_EXPLAINER_STOPS,
+        max_tokens=effective_max,
+        temperature=effective_temp,
+        stop=effective_stop,
     ):
         yield chunk
