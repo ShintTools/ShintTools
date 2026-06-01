@@ -178,7 +178,6 @@ async def lod_audit(payload: LodAuditRequest):
             "category": f.category,
             "severity": f.severity,
             "message": f.message,
-            "auto_fixable": f.auto_fixable,
             "current": f.current,
             "recommended": f.recommended,
             "guidance": f.guidance,
