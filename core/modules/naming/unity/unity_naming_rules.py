@@ -33,23 +33,23 @@ AssetRecord = Dict[str, str]
 # ---------------------------------------------------------------------------
 
 _UNITY_TYPE_TO_PREFIX: Dict[str, str] = {
-    "AudioClip":             "A",
-    "AudioMixerController":  "AM",
-    "AnimationClip":         "AN",
-    "AnimationController":   "ANC",
-    "Font":                  "F",
-    "Material":              "M",
-    "GameObject":            "O",   # prefabs come through as GameObject
-    "PhysicsMaterial":       "PM",
-    "PhysicsMaterial2D":     "PM2",
-    "RenderTexture":         "RT",
-    "SceneAsset":            "S",
-    "ScriptGraphAsset":      "SG",  # Unity Visual Scripting
-    "Shader":                "SH",
-    "StateGraphAsset":       "STG", # Unity Visual Scripting
-    "Texture2D":             "T",
-    "StyleSheet":            "US",  # UI Toolkit
-    "VisualTreeAsset":       "UX",  # UI Toolkit
+    "AudioClip": "A",
+    "AudioMixerController": "AM",
+    "AnimationClip": "AN",
+    "AnimationController": "ANC",
+    "Font": "F",
+    "Material": "M",
+    "GameObject": "O",  # prefabs come through as GameObject
+    "PhysicsMaterial": "PM",
+    "PhysicsMaterial2D": "PM2",
+    "RenderTexture": "RT",
+    "SceneAsset": "S",
+    "ScriptGraphAsset": "SG",  # Unity Visual Scripting
+    "Shader": "SH",
+    "StateGraphAsset": "STG",  # Unity Visual Scripting
+    "Texture2D": "T",
+    "StyleSheet": "US",  # UI Toolkit
+    "VisualTreeAsset": "UX",  # UI Toolkit
 }
 
 
@@ -63,23 +63,23 @@ _UNITY_TYPE_TO_PREFIX: Dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 _UNITY_TYPE_TO_FOLDER: Dict[str, str] = {
-    "AudioClip":             "audio",
-    "AudioMixerController":  "audio",
-    "AnimationClip":         "animations",
-    "AnimationController":   "animators",
-    "Font":                  "fonts",
-    "Material":              "materials",
-    "GameObject":            "prefabs",
-    "PhysicsMaterial":       "physics",
-    "PhysicsMaterial2D":     "physics",
-    "RenderTexture":         "rendertextures",
-    "SceneAsset":            "scenes",
-    "ScriptGraphAsset":      "visualscripting",
-    "Shader":                "shaders",
-    "StateGraphAsset":       "visualscripting",
-    "Texture2D":             "textures",
-    "StyleSheet":            "ui",
-    "VisualTreeAsset":       "ui",
+    "AudioClip": "audio",
+    "AudioMixerController": "audio",
+    "AnimationClip": "animations",
+    "AnimationController": "animators",
+    "Font": "fonts",
+    "Material": "materials",
+    "GameObject": "prefabs",
+    "PhysicsMaterial": "physics",
+    "PhysicsMaterial2D": "physics",
+    "RenderTexture": "rendertextures",
+    "SceneAsset": "scenes",
+    "ScriptGraphAsset": "visualscripting",
+    "Shader": "shaders",
+    "StateGraphAsset": "visualscripting",
+    "Texture2D": "textures",
+    "StyleSheet": "ui",
+    "VisualTreeAsset": "ui",
 }
 
 
