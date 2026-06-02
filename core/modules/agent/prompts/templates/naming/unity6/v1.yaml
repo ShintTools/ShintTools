@@ -31,7 +31,7 @@ system: |-
 few_shots: |-
   INPUT
   rule_name: Unity asset missing type prefix
-  rule_explanation: Unity assets should start with a type prefix that matches their class: T_ for Texture2D, M_ for Material, P_ for prefabs (GameObject), A_ for AnimationClip, AC_ for AnimatorController. Without a prefix, assets are hard to identify by type in the Project window and risk collisions when referenced by name from scripts or Addressables.
+  rule_explanation: Unity assets should start with a type prefix that matches their class: T_ for Texture2D, M_ for Material, O_ for prefabs (GameObject), AN_ for AnimationClip, ANC_ for AnimationController, A_ for AudioClip, AM_ for AudioMixerController, SH_ for Shader, SG_ for ScriptGraphAsset, STG_ for StateGraphAsset, RT_ for RenderTexture, S_ for SceneAsset, PM_ for PhysicsMaterial, PM2_ for PhysicsMaterial2D, F_ for Font, US_ for StyleSheet, UX_ for VisualTreeAsset. Without a prefix, assets are hard to identify by type in the Project window and risk collisions when referenced by name from scripts or Addressables.
   is_auto_fixable: true
   snippet:
       asset: Assets/Textures/HeroDiffuse.png
@@ -41,7 +41,7 @@ few_shots: |-
 
   INPUT
   rule_name: Unity asset missing type prefix
-  rule_explanation: Unity assets should start with a type prefix that matches their class: T_ for Texture2D, M_ for Material, P_ for prefabs (GameObject), A_ for AnimationClip, AC_ for AnimatorController. Without a prefix, assets are hard to identify by type in the Project window and risk collisions when referenced by name from scripts or Addressables.
+  rule_explanation: Unity assets should start with a type prefix that matches their class: T_ for Texture2D, M_ for Material, O_ for prefabs (GameObject), AN_ for AnimationClip, ANC_ for AnimationController, A_ for AudioClip, AM_ for AudioMixerController, SH_ for Shader, SG_ for ScriptGraphAsset, STG_ for StateGraphAsset, RT_ for RenderTexture, S_ for SceneAsset, PM_ for PhysicsMaterial, PM2_ for PhysicsMaterial2D, F_ for Font, US_ for StyleSheet, UX_ for VisualTreeAsset. Without a prefix, assets are hard to identify by type in the Project window and risk collisions when referenced by name from scripts or Addressables.
   is_auto_fixable: true
   snippet:
       asset: Assets/Materials/RockSurface.mat

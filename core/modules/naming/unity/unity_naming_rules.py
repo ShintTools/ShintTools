@@ -33,32 +33,23 @@ AssetRecord = Dict[str, str]
 # ---------------------------------------------------------------------------
 
 _UNITY_TYPE_TO_PREFIX: Dict[str, str] = {
-    "Texture2D": "T",
-    "RenderTexture": "RT",
-    "Cubemap": "Cube",
-    "Sprite": "SP",
-    "Material": "M",
-    "Mesh": "SM",
-    "Model": "SM",
-    "GameObject": "P",  # prefabs come through as GameObject
-    "ScriptableObject": "SO",
-    "AnimationClip": "A",
-    "AnimatorController": "AC",
-    "AvatarMask": "AM",
-    "AudioClip": "Audio",
-    "AudioMixer": "MIX",
-    "Shader": "S",
-    "ShaderGraph": "SG",
-    "VisualEffectAsset": "VFX",
-    "SceneAsset": "Scene",
-    "TerrainData": "Terrain",
-    "PhysicMaterial": "PM",
-    "Font": "Font",
-    "TextAsset": "Text",
-    "TimelineAsset": "Timeline",
-    "ComputeShader": "CS",
-    "LightmapParameters": "LM",
-    "FlareTexture": "Flare",
+    "AudioClip":             "A",
+    "AudioMixerController":  "AM",
+    "AnimationClip":         "AN",
+    "AnimationController":   "ANC",
+    "Font":                  "F",
+    "Material":              "M",
+    "GameObject":            "O",   # prefabs come through as GameObject
+    "PhysicsMaterial":       "PM",
+    "PhysicsMaterial2D":     "PM2",
+    "RenderTexture":         "RT",
+    "SceneAsset":            "S",
+    "ScriptGraphAsset":      "SG",  # Unity Visual Scripting
+    "Shader":                "SH",
+    "StateGraphAsset":       "STG", # Unity Visual Scripting
+    "Texture2D":             "T",
+    "StyleSheet":            "US",  # UI Toolkit
+    "VisualTreeAsset":       "UX",  # UI Toolkit
 }
 
 
@@ -72,29 +63,23 @@ _UNITY_TYPE_TO_PREFIX: Dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 _UNITY_TYPE_TO_FOLDER: Dict[str, str] = {
-    "Texture2D": "textures",
-    "RenderTexture": "rendertextures",
-    "Cubemap": "cubemaps",
-    "Sprite": "sprites",
-    "Material": "materials",
-    "Mesh": "meshes",
-    "Model": "meshes",
-    "GameObject": "prefabs",
-    "ScriptableObject": "scriptableobjects",
-    "AnimationClip": "animations",
-    "AnimatorController": "animators",
-    "AudioClip": "audio",
-    "AudioMixer": "audio",
-    "Shader": "shaders",
-    "ShaderGraph": "shaders",
-    "VisualEffectAsset": "vfx",
-    "SceneAsset": "scenes",
-    "TerrainData": "terrains",
-    "PhysicMaterial": "physics",
-    "Font": "fonts",
-    "TextAsset": "data",
-    "TimelineAsset": "timelines",
-    "ComputeShader": "shaders",
+    "AudioClip":             "audio",
+    "AudioMixerController":  "audio",
+    "AnimationClip":         "animations",
+    "AnimationController":   "animators",
+    "Font":                  "fonts",
+    "Material":              "materials",
+    "GameObject":            "prefabs",
+    "PhysicsMaterial":       "physics",
+    "PhysicsMaterial2D":     "physics",
+    "RenderTexture":         "rendertextures",
+    "SceneAsset":            "scenes",
+    "ScriptGraphAsset":      "visualscripting",
+    "Shader":                "shaders",
+    "StateGraphAsset":       "visualscripting",
+    "Texture2D":             "textures",
+    "StyleSheet":            "ui",
+    "VisualTreeAsset":       "ui",
 }
 
 
