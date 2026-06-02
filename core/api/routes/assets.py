@@ -319,7 +319,6 @@ async def unity_asset_scan(payload: UnityAssetScanRequest):
                 "severity": issue.get("severity", "warning"),
                 "message": issue.get("message", ""),
                 "rule_name": issue.get("rule_name", ""),
-                "is_auto_fixable": issue.get("is_auto_fixable", False),
             }
         )
     logger.info("/assets/unity/scan: layer1=%d findings", len(all_findings))

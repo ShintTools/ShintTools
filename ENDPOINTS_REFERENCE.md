@@ -105,8 +105,7 @@ Cada finding incluye:
       "rule_id": "NM001",
       "severity": "warning",
       "message": "Material debe usar prefijo M_",
-      "rule_name": "Built-in Material Naming",
-      "is_auto_fixable": true
+      "rule_name": "Built-in Material Naming"
     },
     {
       "path": "Assets/Textures/Hero_Diffuse.png",
@@ -116,8 +115,7 @@ Cada finding incluye:
       "rule_id": "GR001",
       "severity": "warning",
       "message": "Texture sampled in Shader but mipmap disabled",
-      "rule_name": "Custom: Textura sin mipmap",
-      "is_auto_fixable": false
+      "rule_name": "Custom: Textura sin mipmap"
     }
   ]
 }
@@ -254,7 +252,6 @@ data: {"done":true,"full_text":"Materials in Unreal Engine follow...","cached":f
       "category": "Texture",
       "severity": "warning",
       "message": "Usage 'BaseColor' expects BC7 compression, but 'RGBA8' was found. Wrong format degrades quality or wastes VRAM.",
-      "auto_fixable": true,
       "current": {
         "compression": "RGBA8"
       },
@@ -274,7 +271,6 @@ data: {"done":true,"full_text":"Materials in Unreal Engine follow...","cached":f
       "category": "Texture",
       "severity": "info",
       "message": "4096×4096 texture has streaming disabled — it occupies 68.27 MB of VRAM permanently. Enable streaming so the engine unloads it when not visible.",
-      "auto_fixable": true,
       "current": {
         "streaming": false,
         "resident_vram_mb": 68.27
