@@ -4,15 +4,15 @@
 # Core localmente sin pasar por el Launcher.
 #
 # Diferencias con docker-compose.yml:
-#   - LLM agent deshabilitado → sin descarga del modelo (~1.5 GB), arranque rápido
+#   - Usa Dockerfile.dev (sin Cython, sin llama-cpp-python build) → build 2 min
+#   - LLM agent deshabilitado → sin descarga del modelo (~1.5 GB)
 #   - Monta shinttools.unity.config.json como configuración activa del Core
 #   - Nombres de contenedor distintos (evita conflictos con el Launcher)
 #
 # Uso:
 #   docker compose -f docker-compose.plugin-dev.yml up --build
 #
-# La primera vez tarda ~5 min mientras compila las dependencias.
-# Cuando veas "Application startup complete" el Core está listo.
+# La primera vez tarda ~2 min. Cuando veas "Application startup complete" está listo.
 #
 # Verificar: GET http://localhost:18200/health
 # El plugin se conecta al Core en: http://localhost:18200
@@ -35,7 +35,7 @@ services:
   core:
     build:
       context: core/
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     container_name: shinttools-core-plugindev
     ports:
       - "18200:18200"

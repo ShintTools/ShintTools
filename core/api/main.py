@@ -13,6 +13,7 @@ from api.routes import (
     dashboard,
     health,
     license,
+    lod_audit,
     metrics,
     unity,
     validate,
@@ -189,8 +190,11 @@ setup_middlewares(app)
 app.include_router(health.router)  # GET /health  GET /ping  GET /status
 app.include_router(config.router)  # GET/POST /config
 app.include_router(validate.router)  # POST /validate/*
-app.include_router(assets.router)  # POST /assets/scan  POST /assets/fix (NUEVO)
-app.include_router(dashboard.router)  # POST /dashboard/report (NUEVO)
+app.include_router(
+    assets.router
+)  # POST /assets/scan  POST /assets/fix  POST /assets/unity/scan
+app.include_router(lod_audit.router)  # POST /assets/lod/audit
+app.include_router(dashboard.router)  # POST /dashboard/report
 app.include_router(
     metrics.router
 )  # GET /metrics/score/latest  GET /metrics/score/history

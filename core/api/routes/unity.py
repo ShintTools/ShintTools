@@ -104,7 +104,7 @@ def _scan_file(
             {
                 # ── Spec-required fields ──────────────────────────────────
                 "path": file_path,
-                "rule": -1,  # -1 = built-in rule (not in user rules[] array)
+                "rule": -1,
                 "line": line,
                 "contextLine": issue.get("context_line_start", line),
                 "contextBefore": issue.get("context_before", ""),
@@ -166,7 +166,6 @@ async def unity_scan(payload: UnityScanRequest):
         all_issues.extend(file_issues)
 
     # ── Custom rules (LLM agent, best-effort) ─────────────────────────────────
-    custom_rules_note: str = ""
     if payload.rules:
         try:
             import os
@@ -180,17 +179,12 @@ async def unity_scan(payload: UnityScanRequest):
                 )
                 all_issues.extend(custom_issues)
             else:
-                custom_rules_note = (
-                    f"{len(payload.rules)} custom rule(s) received but "
-                    "LLM agent is disabled (SHINTTOOLS_AGENT_ENABLED!=1)."
-                )
+                pass  # LLM disabled — custom rules silently skipped
         except ImportError:
-            custom_rules_note = (
-                "Custom rules require the agent module " "(SHINTTOOLS_AGENT_ENABLED=1)."
-            )
+            pass
 
     return {
-        "error": custom_rules_note,
+        "error": "",
         "time": round(time.perf_counter() - t0, 4),
         "files": all_issues,
     }

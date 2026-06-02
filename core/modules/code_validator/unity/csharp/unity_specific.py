@@ -1,6 +1,6 @@
 # core/modules/code_validator/rules/csharp/unity_specific.py
 #
-# Unity-specific rule detectors — UN001-UN025 (16 implemented).
+# Unity-specific rule detectors - UN001-UN025 (16 implemented).
 #
 # UN001  FindObject in Update
 # UN002  GetComponent in Update
@@ -35,7 +35,7 @@ from code_validator.unity.csharp._csharp_helpers import (
 
 
 def detect_findobject_in_update(content: str, file_path: str) -> List[Issue]:
-    """UN001: GameObject.Find inside Update — O(scene) every frame."""
+    """UN001: GameObject.Find inside Update - O(scene) every frame."""
     body = _update_body(content)
     if not body:
         return []
@@ -52,14 +52,14 @@ def detect_findobject_in_update(content: str, file_path: str) -> List[Issue]:
             rule_id="UN001",
             category="Performance",
             severity="error",
-            message="GameObject.Find called inside Update — scans the entire scene every frame.",  # noqa: E501
+            message="GameObject.Find called inside Update - scans the entire scene every frame.",  # noqa: E501
             fix_suggestion="Cache the reference in Awake/Start; expose it as [SerializeField] when possible.",  # noqa: E501
         )
     ]
 
 
 def detect_getcomponent_in_update(content: str, file_path: str) -> List[Issue]:
-    """UN002: GetComponent inside Update — reflection per frame."""
+    """UN002: GetComponent inside Update - reflection per frame."""
     body = _update_body(content)
     if not body:
         return []
@@ -76,7 +76,7 @@ def detect_getcomponent_in_update(content: str, file_path: str) -> List[Issue]:
             rule_id="UN002",
             category="Performance",
             severity="error",
-            message="GetComponent called inside Update — cache the result in Awake/Start.",  # noqa: E501
+            message="GetComponent called inside Update - cache the result in Awake/Start.",  # noqa: E501
             fix_suggestion="Move GetComponent<T>() to Awake() and store in a private field.",  # noqa: E501
         )
     ]
@@ -103,14 +103,14 @@ def detect_findobjectoftype_in_update(content: str, file_path: str) -> List[Issu
             rule_id="UN003",
             category="Performance",
             severity="error",
-            message="FindObjectOfType called inside Update — scans every loaded object every frame.",  # noqa: E501
+            message="FindObjectOfType called inside Update - scans every loaded object every frame.",  # noqa: E501
             fix_suggestion="Cache the reference in Awake/Start.",
         )
     ]
 
 
 def detect_log_in_update(content: str, file_path: str) -> List[Issue]:
-    """UN004: Debug.Log inside Update — IO + string format every frame."""
+    """UN004: Debug.Log inside Update - IO + string format every frame."""
     body = _update_body(content)
     if not body:
         return []
@@ -134,7 +134,7 @@ def detect_log_in_update(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_sendmessage_use(content: str, file_path: str) -> List[Issue]:
-    """UN005: SendMessage / BroadcastMessage — reflection-based and slow."""
+    """UN005: SendMessage / BroadcastMessage - reflection-based and slow."""
     out: List[Issue] = []
     for m in re.finditer(
         r"\b(?:SendMessage|SendMessageUpwards|BroadcastMessage)\s*\(", content
@@ -148,7 +148,7 @@ def detect_sendmessage_use(content: str, file_path: str) -> List[Issue]:
                 rule_id="UN005",
                 category="Performance",
                 severity="warning",
-                message="SendMessage uses reflection at runtime — prefer typed events / interfaces.",  # noqa: E501
+                message="SendMessage uses reflection at runtime - prefer typed events / interfaces.",  # noqa: E501
                 fix_suggestion="Replace with a direct method call, UnityEvent, or C# event/delegate.",  # noqa: E501
             )
         )
@@ -156,7 +156,7 @@ def detect_sendmessage_use(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_public_field_monobehaviour(content: str, file_path: str) -> List[Issue]:
-    """UN006: public field on a MonoBehaviour — prefer [SerializeField] private.
+    """UN006: public field on a MonoBehaviour - prefer [SerializeField] private.
 
     Triggers when a class extends MonoBehaviour and exposes a non-static,
     non-property public field. Public fields are mutable from any caller
@@ -200,7 +200,7 @@ def detect_public_field_monobehaviour(content: str, file_path: str) -> List[Issu
                 rule_id="UN006",
                 category="BestPractices",
                 severity="warning",
-                message=f"Public field '{m.group(2)}' on MonoBehaviour — prefer [SerializeField] private for Inspector exposure without breaking encapsulation.",  # noqa: E501
+                message=f"Public field '{m.group(2)}' on MonoBehaviour - prefer [SerializeField] private for Inspector exposure without breaking encapsulation.",  # noqa: E501
                 fix_suggestion=f"[SerializeField] private {m.group(1).strip()} {m.group(2)};",  # noqa: E501
             )
         )
@@ -208,7 +208,7 @@ def detect_public_field_monobehaviour(content: str, file_path: str) -> List[Issu
 
 
 def detect_empty_update(content: str, file_path: str) -> List[Issue]:
-    """UN007: empty Update method — Unity still invokes it every frame."""
+    """UN007: empty Update method - Unity still invokes it every frame."""
     sig_re = r"\b(?:private|public|protected|internal)?\s*void\s+(?:Update|LateUpdate|FixedUpdate)\s*\(\s*\)"  # noqa: E501
     span = _find_method_body(content, sig_re)
     if not span:
@@ -230,7 +230,7 @@ def detect_empty_update(content: str, file_path: str) -> List[Issue]:
             rule_id="UN007",
             category="Performance",
             severity="warning",
-            message="Empty Update/LateUpdate/FixedUpdate — Unity still pays the native→managed call overhead each frame.",  # noqa: E501
+            message="Empty Update/LateUpdate/FixedUpdate - Unity still pays the native->managed call overhead each frame.",  # noqa: E501
             fix_suggestion="Delete the method; Unity skips the per-frame call entirely.",  # noqa: E501
         )
     ]
@@ -240,7 +240,7 @@ def detect_camera_main_in_update(content: str, file_path: str) -> List[Issue]:
     """UN008: Camera.main inside Update.
 
     Camera.main is `GameObject.FindGameObjectWithTag("MainCamera")` under
-    the hood — full scene tag scan every frame.
+    the hood - full scene tag scan every frame.
     """
     body = _update_body(content)
     if not body:
@@ -258,14 +258,14 @@ def detect_camera_main_in_update(content: str, file_path: str) -> List[Issue]:
             rule_id="UN008",
             category="Performance",
             severity="error",
-            message="Camera.main inside Update — does a full FindGameObjectWithTag scan every frame.",  # noqa: E501
+            message="Camera.main inside Update - does a full FindGameObjectWithTag scan every frame.",  # noqa: E501
             fix_suggestion="Cache the camera reference in Awake/Start (private Camera _mainCam = Camera.main).",  # noqa: E501
         )
     ]
 
 
 def detect_coroutine_leak(content: str, file_path: str) -> List[Issue]:
-    """UN009: StartCoroutine without StopCoroutine/StopAllCoroutines in OnDestroy — coroutine fires on destroyed object."""  # noqa: E501
+    """UN009: StartCoroutine without StopCoroutine/StopAllCoroutines in OnDestroy - coroutine fires on destroyed object."""  # noqa: E501
     if not re.search(r"\bStartCoroutine\s*\(", content):
         return []
     ondestroy_span = _find_method_body(
@@ -288,14 +288,14 @@ def detect_coroutine_leak(content: str, file_path: str) -> List[Issue]:
             rule_id="UN009",
             category="Performance",
             severity="warning",
-            message="StartCoroutine with no StopAllCoroutines in OnDestroy — Coroutine may fire callbacks on a destroyed MonoBehaviour.",  # noqa: E501
+            message="StartCoroutine with no StopAllCoroutines in OnDestroy - Coroutine may fire callbacks on a destroyed MonoBehaviour.",  # noqa: E501
             fix_suggestion="Add `StopAllCoroutines();` at the start of OnDestroy.",
         )
     ]
 
 
 def detect_physics_in_update(content: str, file_path: str) -> List[Issue]:
-    """UN010: Rigidbody physics applied in Update — causes frame-rate-dependent jitter."""  # noqa: E501
+    """UN010: Rigidbody physics applied in Update - causes frame-rate-dependent jitter."""  # noqa: E501
     sig_re = r"\b(?:private|public|protected|internal)?\s*void\s+(?:Update|LateUpdate)\s*\(\s*\)"  # noqa: E501
     span = _find_method_body(content, sig_re)
     if not span:
@@ -317,14 +317,14 @@ def detect_physics_in_update(content: str, file_path: str) -> List[Issue]:
             rule_id="UN010",
             category="Performance",
             severity="warning",
-            message="Rigidbody force/velocity set in Update — physics should run in FixedUpdate to avoid frame-rate jitter.",  # noqa: E501
+            message="Rigidbody force/velocity set in Update - physics should run in FixedUpdate to avoid frame-rate jitter.",  # noqa: E501
             fix_suggestion="Move Rigidbody modifications to FixedUpdate(); scale forces with Time.fixedDeltaTime.",  # noqa: E501
         )
     ]
 
 
 def detect_transform_in_loop(content: str, file_path: str) -> List[Issue]:
-    """UN011: transform.position/rotation written inside a loop — each write notifies the physics engine."""  # noqa: E501
+    """UN011: transform.position/rotation written inside a loop - each write notifies the physics engine."""  # noqa: E501
     out: List[Issue] = []
     loop_re = re.compile(r"\b(?:for|foreach|while)\s*\(")
     for loop in loop_re.finditer(content):
@@ -356,7 +356,7 @@ def detect_transform_in_loop(content: str, file_path: str) -> List[Issue]:
                 rule_id="UN011",
                 category="Performance",
                 severity="warning",
-                message="transform.position/rotation assigned inside a loop — each write triggers a physics sync notification.",  # noqa: E501
+                message="transform.position/rotation assigned inside a loop - each write triggers a physics sync notification.",  # noqa: E501
                 fix_suggestion="Compute the final transform outside the loop and assign once; batch with TransformPoint for arrays.",  # noqa: E501
             )
         )
@@ -364,7 +364,7 @@ def detect_transform_in_loop(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_tag_string_compare(content: str, file_path: str) -> List[Issue]:
-    """UN012: `obj.tag == "X"` — boxes a string each call. Use CompareTag.
+    """UN012: `obj.tag == "X"` - boxes a string each call. Use CompareTag.
 
     Unity's GameObject.tag getter allocates a new managed string every
     access; equality with a literal allocates again. CompareTag avoids
@@ -382,7 +382,7 @@ def detect_tag_string_compare(content: str, file_path: str) -> List[Issue]:
                 rule_id="UN012",
                 category="Performance",
                 severity="warning",
-                message="String comparison with .tag allocates per access — use CompareTag instead.",  # noqa: E501
+                message="String comparison with .tag allocates per access - use CompareTag instead.",  # noqa: E501
                 fix_suggestion='Replace `obj.tag == "X"` with `obj.CompareTag("X")`.',
             )
         )
@@ -390,7 +390,7 @@ def detect_tag_string_compare(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_missing_require_component(content: str, file_path: str) -> List[Issue]:
-    """UN013: GetComponent<T> in Awake without [RequireComponent(typeof(T))] — dependency unchecked at edit-time."""  # noqa: E501
+    """UN013: GetComponent<T> in Awake without [RequireComponent(typeof(T))] - dependency unchecked at edit-time."""  # noqa: E501
     awake_span = _find_method_body(
         content, r"\b(?:private|public|protected)?\s*void\s+Awake\s*\(\s*\)"
     )
@@ -414,7 +414,7 @@ def detect_missing_require_component(content: str, file_path: str) -> List[Issue
                 rule_id="UN013",
                 category="BestPractices",
                 severity="info",
-                message=f"GetComponent<{comp_type}>() in Awake without [RequireComponent] — missing component causes silent null.",  # noqa: E501
+                message=f"GetComponent<{comp_type}>() in Awake without [RequireComponent] - missing component causes silent null.",  # noqa: E501
                 fix_suggestion=f"Add `[RequireComponent(typeof({comp_type}))]` above the class declaration.",  # noqa: E501
             )
         )
@@ -422,7 +422,7 @@ def detect_missing_require_component(content: str, file_path: str) -> List[Issue
 
 
 def detect_dont_destroy_non_singleton(content: str, file_path: str) -> List[Issue]:
-    """UN014: DontDestroyOnLoad outside a singleton guard — duplicate instances accumulate on scene reload."""  # noqa: E501
+    """UN014: DontDestroyOnLoad outside a singleton guard - duplicate instances accumulate on scene reload."""  # noqa: E501
     out: List[Issue] = []
     for m in re.finditer(r"\bDontDestroyOnLoad\s*\(", content):
         preceding = content[max(0, m.start() - 300) : m.start()]
@@ -437,7 +437,7 @@ def detect_dont_destroy_non_singleton(content: str, file_path: str) -> List[Issu
                 rule_id="UN014",
                 category="BestPractices",
                 severity="warning",
-                message="DontDestroyOnLoad called without a singleton guard — duplicates accumulate across scene loads.",  # noqa: E501
+                message="DontDestroyOnLoad called without a singleton guard - duplicates accumulate across scene loads.",  # noqa: E501
                 fix_suggestion="Wrap in `if (instance == null) { instance = this; DontDestroyOnLoad(gameObject); } else { Destroy(gameObject); }`.",  # noqa: E501
             )
         )
@@ -445,7 +445,7 @@ def detect_dont_destroy_non_singleton(content: str, file_path: str) -> List[Issu
 
 
 def detect_resources_load(content: str, file_path: str) -> List[Issue]:
-    """UN015: Resources.Load usage — synchronous, loads assets into always-resident memory; prefer Addressables."""  # noqa: E501
+    """UN015: Resources.Load usage - synchronous, loads assets into always-resident memory; prefer Addressables."""  # noqa: E501
     out: List[Issue] = []
     for m in re.finditer(r"\bResources\.(?:Load|LoadAll|LoadAsync)\s*[<(]", content):
         line = _line_number(content, m.start())
@@ -457,7 +457,7 @@ def detect_resources_load(content: str, file_path: str) -> List[Issue]:
                 rule_id="UN015",
                 category="BestPractices",
                 severity="info",
-                message="Resources.Load bundles all assets unconditionally and loads synchronously — prefer Addressables for on-demand async loading.",  # noqa: E501
+                message="Resources.Load bundles all assets unconditionally and loads synchronously - prefer Addressables for on-demand async loading.",  # noqa: E501
                 fix_suggestion='Migrate to `Addressables.LoadAssetAsync<T>("key")` with `.Completed` callback or `await`.',  # noqa: E501
             )
         )
@@ -465,7 +465,7 @@ def detect_resources_load(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_scriptableobject_no_menu(content: str, file_path: str) -> List[Issue]:
-    """UN016: ScriptableObject subclass without [CreateAssetMenu] — cannot be created from the Unity Editor."""  # noqa: E501
+    """UN016: ScriptableObject subclass without [CreateAssetMenu] - cannot be created from the Unity Editor."""  # noqa: E501
     so_match = re.search(r"\bclass\s+(\w+)\s*:\s*ScriptableObject\b", content)
     if not so_match:
         return []
@@ -480,7 +480,7 @@ def detect_scriptableobject_no_menu(content: str, file_path: str) -> List[Issue]
             rule_id="UN016",
             category="BestPractices",
             severity="info",
-            message=f"ScriptableObject '{so_match.group(1)}' has no [CreateAssetMenu] — cannot be instantiated from Assets > Create.",  # noqa: E501
+            message=f"ScriptableObject '{so_match.group(1)}' has no [CreateAssetMenu] - cannot be instantiated from Assets > Create.",  # noqa: E501
             fix_suggestion=f'Add `[CreateAssetMenu(fileName = "{so_match.group(1)}", menuName = "ScriptableObjects/{so_match.group(1)}")]` above the class.',  # noqa: E501
         )
     ]

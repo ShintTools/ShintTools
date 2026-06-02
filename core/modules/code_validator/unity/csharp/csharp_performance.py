@@ -1,6 +1,6 @@
 # core/modules/code_validator/rules/csharp/csharp_performance.py
 #
-# C# / Unity performance rule detectors — CSP001-CSP016 (11 implemented).
+# C# / Unity performance rule detectors - CSP001-CSP016 (11 implemented).
 #
 # CSP001  LINQ chain inside Update
 # CSP002  String concatenation with += inside a loop
@@ -69,7 +69,7 @@ def _update_region(content: str):
 
 
 def detect_linq_in_update(content: str, file_path: str) -> List[Issue]:
-    """CSP001: LINQ chain inside Update — allocates enumerator+lambda each frame."""
+    """CSP001: LINQ chain inside Update - allocates enumerator+lambda each frame."""
     res = _update_region(content)
     if res is None:
         return []
@@ -86,14 +86,14 @@ def detect_linq_in_update(content: str, file_path: str) -> List[Issue]:
             rule_id="CSP001",
             category="Performance",
             severity="warning",
-            message="LINQ operator used inside Update — allocates enumerators/closures every frame.",  # noqa: E501
+            message="LINQ operator used inside Update - allocates enumerators/closures every frame.",  # noqa: E501
             fix_suggestion="Replace with a manual loop, or hoist the query result outside the per-frame path.",  # noqa: E501
         )
     ]
 
 
 def detect_string_concat_in_loop(content: str, file_path: str) -> List[Issue]:
-    """CSP002: `str += …` inside for/while/foreach body — O(n²) allocations.
+    """CSP002: `str += …` inside for/while/foreach body - O(n²) allocations.
 
     Detection: a `<var> +=` line whose RHS contains a string literal or
     `.ToString(`, located inside a brace-balanced loop body. Captures
@@ -132,7 +132,7 @@ def detect_string_concat_in_loop(content: str, file_path: str) -> List[Issue]:
                     rule_id="CSP002",
                     category="Performance",
                     severity="warning",
-                    message="String concatenation with += inside a loop — O(n²) allocations.",  # noqa: E501
+                    message="String concatenation with += inside a loop - O(n^2) allocations.",  # noqa: E501
                     fix_suggestion="Build the result with `StringBuilder.Append` and call `.ToString()` once after the loop.",  # noqa: E501
                 )
             )
@@ -140,7 +140,7 @@ def detect_string_concat_in_loop(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_heavy_math_in_update(content: str, file_path: str) -> List[Issue]:
-    """CSP003: expensive Mathf calls inside Update — CPU overhead every frame."""
+    """CSP003: expensive Mathf calls inside Update - CPU overhead every frame."""
     res = _update_region(content)
     if res is None:
         return []
@@ -162,14 +162,14 @@ def detect_heavy_math_in_update(content: str, file_path: str) -> List[Issue]:
             rule_id="CSP003",
             category="Performance",
             severity="warning",
-            message=f"Mathf.{fn_name} called inside Update — transcendental math is expensive every frame.",  # noqa: E501
+            message=f"Mathf.{fn_name} called inside Update - transcendental math is expensive every frame.",  # noqa: E501
             fix_suggestion="Cache the result when inputs don't change every frame, or precompute a lookup table.",  # noqa: E501
         )
     ]
 
 
 def detect_instantiate_in_update(content: str, file_path: str) -> List[Issue]:
-    """CSP004: Instantiate inside Update — per-frame GameObject allocation."""
+    """CSP004: Instantiate inside Update - per-frame GameObject allocation."""
     res = _update_region(content)
     if res is None:
         return []
@@ -186,14 +186,14 @@ def detect_instantiate_in_update(content: str, file_path: str) -> List[Issue]:
             rule_id="CSP004",
             category="Performance",
             severity="error",
-            message="Instantiate inside Update allocates a GameObject every frame — use object pooling.",  # noqa: E501
+            message="Instantiate inside Update allocates a GameObject every frame - use object pooling.",  # noqa: E501
             fix_suggestion="Pre-spawn instances at Start and pull from a Queue/Stack pool; Destroy → SetActive(false).",  # noqa: E501
         )
     ]
 
 
 def detect_new_waitforseconds(content: str, file_path: str) -> List[Issue]:
-    """CSP006: `yield return new WaitForSeconds(x)` — allocates each yield.
+    """CSP006: `yield return new WaitForSeconds(x)` - allocates each yield.
 
     Caching the WaitForSeconds in a private field reuses one instance
     across coroutine iterations and avoids GC pressure on long-running
@@ -218,7 +218,7 @@ def detect_new_waitforseconds(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_string_ops_in_update(content: str, file_path: str) -> List[Issue]:
-    """CSP007: string allocation inside Update — GC pressure every frame."""
+    """CSP007: string allocation inside Update - GC pressure every frame."""
     res = _update_region(content)
     if res is None:
         return []
@@ -246,13 +246,13 @@ def detect_string_ops_in_update(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_large_update_body(content: str, file_path: str) -> List[Issue]:
-    """CSP008: Update method body exceeds 50 lines — too much work per frame."""
+    """CSP008: Update method body exceeds 50 lines - too much work per frame."""
     try:
         parser = CsharpParser()
         tree = parser.parse(content)
         # CSP008 only flags Update / LateUpdate (NOT FixedUpdate), so we
         # scan method nodes in document order and take the first whose
-        # name is exactly Update or LateUpdate — the Update alias in
+        # name is exactly Update or LateUpdate - the Update alias in
         # find_function_body would also match FixedUpdate.
         body_node = None
         for _n in parser._traverse(tree):
@@ -300,14 +300,14 @@ def detect_large_update_body(content: str, file_path: str) -> List[Issue]:
             rule_id="CSP008",
             category="Performance",
             severity="warning",
-            message=f"Update/LateUpdate has {body_lines} lines — split heavy logic into helpers or move off the frame path.",  # noqa: E501
+            message=f"Update/LateUpdate has {body_lines} lines - split heavy logic into helpers or move off the frame path.",  # noqa: E501
             fix_suggestion="Extract sub-tasks into private methods; move work that doesn't need to run every frame into Coroutines.",  # noqa: E501
         )
     ]
 
 
 def detect_collection_copy_in_loop(content: str, file_path: str) -> List[Issue]:
-    """CSP009: new List<T>(existing) or .ToList()/.ToArray() inside a loop — O(n) allocation per iteration."""  # noqa: E501
+    """CSP009: new List<T>(existing) or .ToList()/.ToArray() inside a loop - O(n) allocation per iteration."""  # noqa: E501
     out: List[Issue] = []
     loop_re = re.compile(r"\b(?:for|foreach|while)\s*\(")
     for loop in loop_re.finditer(content):
@@ -343,7 +343,7 @@ def detect_collection_copy_in_loop(content: str, file_path: str) -> List[Issue]:
                 rule_id="CSP009",
                 category="Performance",
                 severity="warning",
-                message="Collection copy/allocation inside a loop — allocates on every iteration.",  # noqa: E501
+                message="Collection copy/allocation inside a loop - allocates on every iteration.",  # noqa: E501
                 fix_suggestion="Create the collection once outside the loop and Clear()/reuse inside.",  # noqa: E501
             )
         )
@@ -351,7 +351,7 @@ def detect_collection_copy_in_loop(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_new_object_in_loop(content: str, file_path: str) -> List[Issue]:
-    """CSP010: `new T()` for a reference type inside a loop — managed heap allocation per iteration."""  # noqa: E501
+    """CSP010: `new T()` for a reference type inside a loop - managed heap allocation per iteration."""  # noqa: E501
     out: List[Issue] = []
     _VALUE_TYPES = frozenset(
         {
@@ -411,7 +411,7 @@ def detect_new_object_in_loop(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_gc_collect(content: str, file_path: str) -> List[Issue]:
-    """CSP011: explicit GC.Collect() call — forces a stop-the-world GC pause."""
+    """CSP011: explicit GC.Collect() call - forces a stop-the-world GC pause."""
     out: List[Issue] = []
     for m in re.finditer(r"\bGC\.Collect\s*\(", content):
         line = _line_number(content, m.start())
@@ -423,7 +423,7 @@ def detect_gc_collect(content: str, file_path: str) -> List[Issue]:
                 rule_id="CSP011",
                 category="Performance",
                 severity="error",
-                message="GC.Collect() forces a synchronous garbage collection — causes visible frame spikes.",  # noqa: E501
+                message="GC.Collect() forces a synchronous garbage collection - causes visible frame spikes.",  # noqa: E501
                 fix_suggestion="Remove the call and let the GC run autonomously; profile with Unity Memory Profiler before forcing collection.",  # noqa: E501
             )
         )
@@ -431,7 +431,7 @@ def detect_gc_collect(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_debug_assert_in_update(content: str, file_path: str) -> List[Issue]:
-    """CSP012: Debug.Assert inside Update — evaluates condition and formats message every frame."""  # noqa: E501
+    """CSP012: Debug.Assert inside Update - evaluates condition and formats message every frame."""  # noqa: E501
     res = _update_region(content)
     if res is None:
         return []

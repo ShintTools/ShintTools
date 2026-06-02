@@ -1,0 +1,30 @@
+FROM python:3.11-slim-bookworm
+
+WORKDIR /app/core
+
+# curl needed for healthcheck; libgomp1 for llama-cpp-python at runtime
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl libgomp1 && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+
+# torch CPU-only wheel
+RUN pip install --no-cache-dir torch==2.3.0+cpu --index-url https://download.pytorch.org/whl/cpu
+
+# Install all remaining dependencies (no Cython, no llama-cpp-python build needed for dev)
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# No Cython compilation — source .py files are used directly.
+# This keeps the dev image fast to build (~2 min vs ~10 min for prod).
+
+RUN mkdir -p /app/core/models && chmod +x entrypoint.sh
+
+EXPOSE 18200
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:18200/health || exit 1
+
+ENTRYPOINT ["bash", "entrypoint.sh"]

@@ -1,0 +1,96 @@
+# Custom rule checker — LLM-based audit of user-defined rules.
+#
+# This template is structurally different from the explainer templates:
+#   - Input:  a natural-language rule + a batch of source files
+#   - Output: a JSON array of violations (or [] if none found)
+#
+# The prompt ends with "OUTPUT" (not "EXPLANATION") as the generation
+# cue. The model is trained to output ONLY the JSON array after that
+# cue and stop. Stop tokens + max_tokens cut off any extra prose.
+#
+# Few-shots:
+#   1. One violation found  — teaches the JSON schema and non-zero case
+#   2. No violations found  — teaches the [] case (equally important:
+#      the model must not hallucinate violations when there are none)
+#
+# JSON schema per violation item:
+#   {"file": "<path>", "line": <int|0>, "finding": "<str>", "fix": "<str>"}
+# "line" is 0 when the model cannot pinpoint an exact line.
+
+version: 1
+model: "Qwen2.5-Coder 1.5B"
+
+system: |-
+  You are a strict code auditor. You receive a rule and one or more source files. Your job is to find every place that violates the rule and output ONLY a JSON array.
+
+  Output format:
+    [{"file": "<file_path>", "line": <line_number_or_0>, "finding": "<what violates the rule>", "fix": "<concrete fix>"}]
+
+  If no violations are found, output exactly: []
+
+  Rules:
+    - Output ONLY the JSON array. No explanation, no prose before or after.
+    - Only report violations that are clearly present in the code shown.
+    - Do NOT invent violations that are not in the files.
+    - "line" must be the line number where the violation starts (use 0 when you cannot determine it).
+    - "fix" must be a concrete action, not a vague recommendation.
+
+few_shots: |-
+  RULE
+  name: No hardcoded database connection strings
+  description: Database connection strings must not be hardcoded in source files. They must be loaded from environment variables or a ScriptableObject config asset at runtime.
+
+  FILES
+  --- file: Assets/Scripts/Data/DatabaseManager.cs ---
+  using UnityEngine;
+  public class DatabaseManager : MonoBehaviour {
+      private string connectionString = "Server=prod-db.company.com;Database=GameDB;User Id=admin;Password=s3cr3t;";
+      void Start() { Connect(connectionString); }
+      void Connect(string cs) { /* ... */ }
+  }
+
+  --- file: Assets/Scripts/Player/PlayerStats.cs ---
+  using UnityEngine;
+  public class PlayerStats : MonoBehaviour {
+      public int health = 100;
+      public float speed = 5.0f;
+      void Update() { /* movement only */ }
+  }
+
+  OUTPUT
+  [{"file": "Assets/Scripts/Data/DatabaseManager.cs", "line": 3, "finding": "Connection string with credentials is hardcoded as a plain string literal.", "fix": "Load from Environment.GetEnvironmentVariable(\"DB_CONNECTION_STRING\") or inject via a ScriptableObject config asset."}]
+
+  RULE
+  name: No Debug.Log calls in non-debug scripts
+  description: Debug.Log calls outside of explicitly debug-only scripts waste allocation every frame and may leak sensitive state in production builds. Remove them or wrap them with a #if UNITY_EDITOR guard.
+
+  FILES
+  --- file: Assets/Scripts/Enemy/EnemyPatrol.cs ---
+  using UnityEngine;
+  public class EnemyPatrol : MonoBehaviour {
+      public float speed = 3f;
+      void Update() {
+          transform.Translate(Vector3.forward * speed * Time.deltaTime);
+      }
+  }
+
+  --- file: Assets/Scripts/UI/HealthBar.cs ---
+  using UnityEngine;
+  public class HealthBar : MonoBehaviour {
+      public Slider slider;
+      public void SetHealth(int hp) { slider.value = hp; }
+  }
+
+  OUTPUT
+  []
+
+# Stop tokens: blank line terminates the JSON array output.
+# max_tokens is intentionally small (300) — a valid violations array
+# for a 3-file batch fits in ~200 tokens.
+stop_tokens:
+  - "\n\n"
+  - "\n```"
+
+generation:
+  max_tokens: 300
+  temperature: 0.1

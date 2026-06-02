@@ -145,6 +145,10 @@ def detect_unity_missing_prefix(records: List[AssetRecord]) -> List[Issue]:
         name = _name_of(r.get("asset_path", ""))
         if not name:
             continue
+        # Skip names with no alphanumeric characters (e.g. "___") — the
+        # fix would produce a worse name like "T____" with no semantic value.
+        if not any(c.isalnum() for c in name):
+            continue
         # Already correctly prefixed?
         if name.startswith(prefix + "_"):
             continue

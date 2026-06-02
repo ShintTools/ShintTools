@@ -7,6 +7,7 @@
 # POST /assets/unity/scan    - Unity plugin: new contract from PDF spec
 #                              engine forced to "unity" — no default fallback bug
 
+import logging
 import os
 import sys
 import time
@@ -16,6 +17,23 @@ from pathlib import Path
 from api.database import analysis_results, resolve_tier
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger("shinttools.assets")
+
+# Optional: custom rule checker for layer-3 (LLM). Imported at module level
+# so tests can monkeypatch api.routes.assets.check_custom_rules directly.
+# Falls back gracefully when the agent module is not installed.
+try:
+    from modules.agent.custom_rule_checker import (  # noqa: E402
+        CustomRule as _CustomRule,
+    )
+    from modules.agent.custom_rule_checker import check_custom_rules
+
+    _CHECKER_AVAILABLE = True
+except ImportError:
+    _CHECKER_AVAILABLE = False
+    _CustomRule = None  # type: ignore[assignment]
+    check_custom_rules = None  # type: ignore[assignment]
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "modules"))
 
@@ -110,10 +128,11 @@ def _detect_engine(records: list[dict], declared: str) -> str:
         or Path(r.get("asset_path", "")).suffix.lower() in _UNITY_EXTENSIONS
     )
     if unity_hits == len(records):
-        print(
-            "WARNING /assets/scan: all assets look like Unity but "
-            f"engine='{declared}'. Auto-correcting to 'unity'. "
-            "Ask the plugin team to send engine='unity' explicitly."
+        logger.warning(
+            "/assets/scan: all assets look like Unity but engine='%s'. "
+            "Auto-correcting to 'unity'. "
+            "Ask the plugin team to send engine='unity' explicitly.",
+            declared,
         )
         return "unity"
     return declared
@@ -138,9 +157,15 @@ def _apply_naming_rule(
 
     if rule.prefix and not name.startswith(rule.prefix):
         violated = True
-        # Strip any existing wrong prefix (everything before first _)
+        # Strip any existing wrong prefix (everything before the first _).
         rest = name.split("_", 1)[1] if "_" in name else name
-        fixed = f"{rule.prefix}_{rest}"
+        # Fall back to the full name if the extracted rest is empty or
+        # starts with a non-alphanumeric character (e.g. name was "T_").
+        if not rest or not rest[0].isalnum():
+            rest = name
+        # Don't add an extra _ when the prefix already ends with one.
+        sep = "" if rule.prefix.endswith("_") else "_"
+        fixed = f"{rule.prefix}{sep}{rest}"
 
     if rule.suffix and not fixed.endswith(rule.suffix):
         violated = True
@@ -244,24 +269,33 @@ async def unity_asset_scan(payload: UnityAssetScanRequest):
     Three layers of checks run in order:
       1. Built-in naming rules (NMU001/NMU009/NMU016 + NM001-NM018)
          → finding: genericRule=-1, namingRule=-1
+         → available to all tiers
       2. User namingRules (prefix/suffix per asset type, deterministic)
          → finding: genericRule=-1, namingRule=<index>
+         → indie+ only
       3. User genericRules (LLM agent when SHINTTOOLS_AGENT_ENABLED=1)
          → finding: genericRule=<index>, namingRule=-1
+         → indie+ only; silently skipped when agent disabled
 
     Output per finding:
         path        — original asset path
         genericRule — index in payload.genericRules (-1 = not a generic rule)
         namingRule  — index in payload.namingRules  (-1 = not a naming rule)
-        fix         — corrected asset name (stem only, empty if no fix available)
+        fix         — corrected asset name (stem only, empty if unavailable)
     """
     from modules.naming import run_all_naming_rules
 
     t0 = time.perf_counter()
     tier = await resolve_tier(payload.api_key)
+    logger.info(
+        "/assets/unity/scan: tier=%s files=%d namingRules=%d genericRules=%d",
+        tier,
+        len(payload.files),
+        len(payload.namingRules),
+        len(payload.genericRules),
+    )
 
     all_findings: list[dict] = []
-    note: str = ""
 
     asset_records = [
         {"asset_path": f.path, "asset_type": f.type or "Unknown"}
@@ -269,7 +303,7 @@ async def unity_asset_scan(payload: UnityAssetScanRequest):
         if f.path
     ]
 
-    # 1. Built-in naming rules — engine always forced to "unity"
+    # ── Layer 1: built-in naming rules — all tiers ────────────────────────
     from code_validator.shared.tiers import filter_issues_by_tier  # noqa: E402
 
     raw_issues = run_all_naming_rules(asset_records, engine="unity")
@@ -285,57 +319,81 @@ async def unity_asset_scan(payload: UnityAssetScanRequest):
                 "severity": issue.get("severity", "warning"),
                 "message": issue.get("message", ""),
                 "rule_name": issue.get("rule_name", ""),
-                "is_auto_fixable": issue.get("is_auto_fixable", False),
             }
         )
+    logger.info("/assets/unity/scan: layer1=%d findings", len(all_findings))
 
-    # 2. User naming rules — deterministic prefix/suffix check
+    # Layers 2 and 3 are indie+ features.
+    if tier == "free":
+        return {
+            "error": "",
+            "time": round(time.perf_counter() - t0, 4),
+            "files": all_findings,
+        }
+
+    # ── Layer 2: user naming rules — deterministic prefix/suffix ─────────
+    layer2_count = 0
     for idx, naming_rule in enumerate(payload.namingRules):
         for file_entry in payload.files:
             finding = _apply_naming_rule(file_entry, naming_rule, idx)
             if finding:
                 all_findings.append(finding)
+                layer2_count += 1
+    logger.info("/assets/unity/scan: layer2=%d findings", layer2_count)
 
-    # 3. User generic rules — LLM agent, best-effort
+    # ── Layer 3: user generic rules — LLM, best-effort ───────────────────
+    layer3_count = 0
     if payload.genericRules:
         if os.getenv("SHINTTOOLS_AGENT_ENABLED") == "1":
-            try:
-                from modules.agent.custom_rule_checker import check_custom_rules
-
-                # Adapt: generic rules have same shape as Code Tool custom rules.
-                # Pass asset path as "content" so the LLM can reason about the name.
-                adapted_files = [
-                    {
-                        "path": f.path,
-                        "content": f"asset_type: {f.type}\npath: {f.path}",
-                        "lines": 0,
-                    }
-                    for f in payload.files
+            if not _CHECKER_AVAILABLE or check_custom_rules is None:
+                logger.warning(
+                    "/assets/unity/scan: custom_rule_checker not available — "
+                    "layer 3 skipped"
+                )
+            else:
+                # Map GenericRule → CustomRule (name=problem, description=solution).
+                adapted_rules = [
+                    _CustomRule(
+                        name=gr.problem,
+                        description=gr.solution,
+                    )
+                    for gr in payload.genericRules
                 ]
-                generic_issues = check_custom_rules(payload.genericRules, adapted_files)
-                for issue in generic_issues:
-                    rule_idx = issue.get("rule_index", 0)
+                # Map UnityAssetFile → (path, content) tuple.
+                adapted_files = [
+                    (f.path, f"asset_type: {f.type}\npath: {f.path}")
+                    for f in payload.files
+                    if f.path
+                ]
+                logger.debug(
+                    "/assets/unity/scan: layer3 calling LLM with %d rules, %d files",
+                    len(adapted_rules),
+                    len(adapted_files),
+                )
+                violations = check_custom_rules(adapted_rules, adapted_files)
+                # Map RuleViolation back to the (genericRule index, path, fix) shape.
+                rule_name_to_idx = {
+                    gr.problem: i for i, gr in enumerate(payload.genericRules)
+                }
+                for v in violations:
+                    rule_idx = rule_name_to_idx.get(v.rule_name, 0)
                     all_findings.append(
                         {
-                            "path": issue.get("path", ""),
+                            "path": v.file_path,
                             "genericRule": rule_idx,
                             "namingRule": -1,
-                            "fix": issue.get("fix", ""),
+                            "fix": v.fix_suggestion,
                         }
                     )
-            except ImportError:
-                note = (
-                    "Generic rules require the agent module"
-                    " (SHINTTOOLS_AGENT_ENABLED=1)."
-                )
+                    layer3_count += 1
         else:
-            note = (
-                f"{len(payload.genericRules)} generic rule(s) received but "
-                "LLM agent is disabled (SHINTTOOLS_AGENT_ENABLED!=1)."
+            logger.debug(
+                "/assets/unity/scan: SHINTTOOLS_AGENT_ENABLED!=1 — layer 3 skipped"
             )
+    logger.info("/assets/unity/scan: layer3=%d findings", layer3_count)
 
     return {
-        "error": note,
+        "error": "",
         "time": round(time.perf_counter() - t0, 4),
         "files": all_findings,
     }
