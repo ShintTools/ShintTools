@@ -1,6 +1,5 @@
 # core/modules/lod_auditor/tests/test_vram_model.py
 
-import pytest
 from lod_auditor.vram_model import estimate_texture_vram_mb, normalize_compression
 
 

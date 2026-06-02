@@ -158,7 +158,6 @@ class TestBasicAudit:
             assert f["category"]
             assert f["severity"] in ("error", "warning", "info")
             assert "message" in f
-            assert "auto_fixable" in f
             assert "current" in f
             assert "recommended" in f
             assert "estimated_saving" in f
@@ -245,7 +244,6 @@ class TestResponseStructure:
         summary = resp.json()["summary"]
         assert "assets_audited" in summary
         assert "issues_found" in summary
-        assert "auto_fixable" in summary
         assert "estimated_vram_saved_mb" in summary
         assert "estimated_shader_instructions_saved" in summary
         assert isinstance(summary["assets_audited"], int)

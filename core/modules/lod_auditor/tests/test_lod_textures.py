@@ -1,6 +1,5 @@
 # core/modules/lod_auditor/tests/test_lod_textures.py
 
-import pytest
 from lod_auditor.rules.lod_textures import (
     check_lt001,
     check_lt002,
