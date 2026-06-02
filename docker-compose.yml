@@ -23,7 +23,7 @@ services:
     ports:
       - "18200:18200"
     environment:
-      MONGODB_URL: "mongodb://mongodb:27017/shinttools"
+      MONGO_URL: "mongodb://mongodb:27017/shinttools"
       # LLM agent — modelo Qwen2.5-Coder 1.5B (GitHub Releases, sin telemetría)
       # Al actualizar el modelo: cambiar FILE, URL y SHA256 juntos.
       SHINTTOOLS_MODELS_DIR: "/app/core/models"
