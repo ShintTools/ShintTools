@@ -14,6 +14,16 @@ line_length = 88
 [tool.mypy]
 ignore_missing_imports = true
 explicit_package_bases = true
+# Match flake8's excludes: throwaway dev scripts (_dbg_, _test_, _add_,
+# benchmark_*, examples_*, scripts/_smoke_*, scripts/demo_*) should not
+# gate CI. Same rationale as in setup.cfg.
+exclude = [
+    "core/benchmark_.*\\.py$",
+    "core/examples_.*\\.py$",
+    "core/scripts/_smoke_.*\\.py$",
+    "core/scripts/demo_.*\\.py$",
+    "core/_.*\\.py$",
+]
 
 [tool.flake8]
 max-line-length = 88
