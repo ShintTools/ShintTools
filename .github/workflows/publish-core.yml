@@ -1,0 +1,113 @@
+# Publish the Core Engine Docker image to GitHub Container Registry.
+#
+# Triggered on:
+#   * Tag push matching v*.*.* (production release)
+#   * workflow_dispatch (manual smoke runs from the Actions tab)
+#
+# Output:
+#   ghcr.io/genesishg1509/shinttools-core:<semver tag>   (immutable)
+#   ghcr.io/genesishg1509/shinttools-core:latest         (mutable, points to last)
+#
+# The image is PUBLIC and pulled anonymously by the ShintTools marketplace
+# plugin (UE5 Fab + Unity AS) on first install via FShintCoreInstaller.
+# ghcr.io public images have no per-puller rate limit -- this scales to
+# hundreds / thousands of users without falling into Docker Hub's
+# 100-pulls-per-6h-per-IP throttle.
+#
+# Why not Docker Hub: Docker Hub free tier throttles anonymous pulls per
+# IP, which breaks customers behind shared NAT (corporate / school).
+# Paid Docker Hub Pro fixes our side but does NOT lift the puller IP
+# limit. ghcr.io lifts both.
+#
+# Why not push from Raúl's laptop: that ties the supply chain to one
+# developer's environment and credentials. Actions uses the repo's
+# automatic GITHUB_TOKEN (scoped to packages:write) and runs from a
+# clean Ubuntu image -- reproducible and audit-logged.
+
+name: Publish Core image to ghcr.io
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch: {}
+
+# Concurrency: cancel in-flight publishes if a newer tag lands while one
+# is still building. We never want two builds racing to push the same
+# :latest tag.
+concurrency:
+  group: publish-core-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build & push core image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The image name must be lowercased (ghcr.io requirement). We pin
+      # to the repo owner's namespace so the image is co-located with
+      # the source repo's Packages tab -- no extra org admin needed.
+      - name: Derive image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/genesishg1509/shinttools-core
+          # Semver tag (v1.2.3 -> 1.2.3) for immutable refs + latest for
+          # the mutable convenience tag the marketplace plugin pulls.
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=ShintTools Core
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.licenses=Proprietary
+
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./core
+          file: ./core/Dockerfile
+          push: true
+          # amd64 only for now -- UE5/Unity editors on macOS arm64 will
+          # use Rosetta or skip Docker via the native fallback that
+          # the marketplace plugin's installer falls back to.
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # GitHub Actions cache reduces rebuild time from ~6 min to
+          # ~90 s when the Dockerfile layers haven't changed.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Make the package public on first publish. This is idempotent --
+      # subsequent runs noop. Without this step the first published
+      # version lands as PRIVATE and anonymous pulls fail.
+      - name: Mark package public
+        if: github.event_name != 'pull_request'
+        run: |
+          gh api -X PATCH \
+            "/user/packages/container/shinttools-core/visibility" \
+            -f visibility=public \
+            || echo "Package may already be public, continuing."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

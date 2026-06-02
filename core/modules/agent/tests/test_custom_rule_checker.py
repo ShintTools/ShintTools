@@ -54,7 +54,7 @@ FILES_5 = [
         "Assets/Scripts/Player/PlayerController.cs",
         "using UnityEngine;\npublic class PlayerController : MonoBehaviour {\n"
         "    public float speed = 5f;\n"
-        "    void Update() { transform.Translate(Vector3.forward * speed * Time.deltaTime); }\n}",
+        "    void Update() { transform.Translate(Vector3.forward * speed * Time.deltaTime); }\n}",  # noqa: E501
     ),
     (
         "Assets/Scripts/UI/HealthBar.cs",
@@ -237,7 +237,7 @@ class TestParseViolations:
     def test_leading_prose_before_array_is_tolerated(self):
         # The model sometimes prepends "Here are the violations:" before the JSON.
         batch = [("Assets/foo.cs", "content")]
-        raw = 'Sure, here are the results:\n[{"file": "Assets/foo.cs", "line": 5, "finding": "X", "fix": "Y"}]'
+        raw = 'Sure, here are the results:\n[{"file": "Assets/foo.cs", "line": 5, "finding": "X", "fix": "Y"}]'  # noqa: E501
         violations = _parse_violations(raw, "TestRule", batch)
         assert len(violations) == 1
 
@@ -248,7 +248,7 @@ class TestParseViolations:
             ("Assets/bar.cs", "content"),
         ]
         # Only the first item is complete; second is cut off.
-        raw = '[{"file": "Assets/foo.cs", "line": 2, "finding": "X", "fix": "Y"}, {"file":'
+        raw = '[{"file": "Assets/foo.cs", "line": 2, "finding": "X", "fix": "Y"}, {"file":'  # noqa: E501
         violations = _parse_violations(raw, "TestRule", batch)
         # Should recover the first complete item.
         assert len(violations) == 1

@@ -193,7 +193,8 @@ async def lod_audit(payload: LodAuditRequest):
                 issue_dict = {
                     "rule_id": f.rule_id,
                     "rule_name": f"{f.rule_id} — {f.message[:60]}",
-                    "rule_explanation": "",  # The explainer registry will fill this from YAML
+                    # The explainer registry will fill this from YAML.
+                    "rule_explanation": "",
                     "asset_path": f.asset_path,
                     "message": f.message,
                     "severity": f.severity,

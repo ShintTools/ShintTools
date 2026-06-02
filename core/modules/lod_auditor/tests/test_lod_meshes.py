@@ -1,6 +1,5 @@
 # core/modules/lod_auditor/tests/test_lod_meshes.py
 
-import pytest
 from lod_auditor.rules.lod_meshes import check_ld001, check_ld002, check_ld003
 
 # ── Base fixture ──────────────────────────────────────────────────────────────

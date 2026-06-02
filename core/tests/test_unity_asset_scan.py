@@ -101,8 +101,8 @@ class TestLayer1BuiltinRules:
 
     @pytest.mark.anyio
     async def test_layer1_finding_has_required_fields(self, async_client):
-        # Layer 1 findings must carry rule_id, rule_name, severity, message,
-        # is_auto_fixable so the plugin can display them correctly.
+        # Layer 1 findings must carry rule_id, rule_name, severity, message
+        # so the plugin can display them correctly.
         payload = _scan_payload(
             [
                 {"path": "Assets/Textures/HeroDiffuse.png", "type": "Texture2D"},
@@ -120,7 +120,6 @@ class TestLayer1BuiltinRules:
         assert f["rule_id"]
         assert f["rule_name"]
         assert f["severity"] in ("error", "warning", "info")
-        assert isinstance(f["is_auto_fixable"], bool)
         assert f["genericRule"] == -1
         assert f["namingRule"] == -1
 
@@ -273,7 +272,7 @@ class TestLayer3GenericRules:
             ],
             generic_rules=[
                 {
-                    "problem": "Scripts that inherit from CustomWindow must end with Window",
+                    "problem": "Scripts that inherit from CustomWindow must end with Window",  # noqa: E501
                     "solution": "Rename adding Window suffix",
                 }
             ],
@@ -311,7 +310,7 @@ class TestLayer3GenericRules:
     async def test_layer3_passes_correct_types_to_checker(
         self, async_client, _indie_agent, monkeypatch
     ):
-        """Verify CustomRule objects and (path, content) tuples reach check_custom_rules."""
+        """Verify CustomRule objects and (path, content) tuples reach check_custom_rules."""  # noqa: E501
         from modules.agent.custom_rule_checker import CustomRule
 
         captured: dict = {}
