@@ -81,7 +81,7 @@ ShintTools/
 │   │   ├── naming/                    # Asset Naming Bot
 │   │   │   ├── unreal/                # UE5 naming (NM001-NM018: 18 reglas)
 │   │   │   └── unity/                 # Unity naming (NMU001, NMU009, NMU016 + 18 compartidas)
-│   │   ├── agent/                     # LLM local (DeepSeek Coder 1.3B)
+│   │   ├── agent/                     # LLM local (Qwen2.5-Coder 1.5B)
 │   │   │   ├── llm_backend.py         # Carga y ejecución del modelo GGUF
 │   │   │   ├── explainer.py           # Generación de explicaciones por issue
 │   │   │   ├── prefab_explanations.py # Cache de explicaciones Opus 4.7
@@ -105,7 +105,7 @@ ShintTools/
 ├── data/
 │   └── prefabricated_explanations.json  # Cache de explicaciones Opus 4.7 (~158 KB)
 ├── models/
-│   └── deepseek-coder-1.3b-instruct.Q4_K_M.gguf  # Modelo LLM local (873 MB)
+│   └── Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf  # Modelo LLM local (~940 MB)
 ├── tools/
 │   └── _add_noqa_e501.py
 ├── .github/workflows/
@@ -179,7 +179,7 @@ Tipos mapeados: Texture2D, Material, Mesh, GameObject/Prefab, AudioClip, Shader,
 
 Explicaciones en lenguaje natural para cada issue detectado. Funciona 100% offline — no sale ningún dato de la máquina del usuario.
 
-- **Modelo:** DeepSeek Coder 1.3B Instruct (Q4_K_M GGUF, 873 MB)
+- **Modelo:** Qwen2.5-Coder 1.5B Instruct (Q4_K_M GGUF, ~940 MB)
 - **Runtime:** llama-cpp-python (CPU, ~20–40 s por explicación en hardware modesto)
 - **Cache prefabricada:** ~158 KB de explicaciones generadas con Opus 4.7 para las reglas más comunes — respuesta instantánea sin inferencia LLM
 - **Custom rules:** El usuario puede definir sus propias reglas (problema + solución en lenguaje natural) y el modelo las evalúa contra el código
@@ -270,7 +270,7 @@ El Core Engine expone estos endpoints (FastAPI, puerto `18200`):
 | Base de datos | MongoDB 6.0 (Motor async, pymongo) |
 | Análisis C++ | Tree-sitter 0.21 (`tree-sitter-cpp`) |
 | Análisis C# | Parser propio (regex + AST manual) |
-| LLM local | llama-cpp-python 0.3.2, DeepSeek Coder 1.3B Q4_K_M |
+| LLM local | llama-cpp-python 0.3.2, Qwen2.5-Coder 1.5B Q4_K_M |
 | Compilación | Cython (módulos propietarios → `.so`) |
 | Testing | pytest 8.2, httpx 0.27 |
 | CI | GitHub Actions (pytest + flake8 + mypy) |
@@ -340,7 +340,7 @@ mongod --dbpath /data/db
 
 ```bash
 cd core
-MONGODB_URL=mongodb://localhost:27017/shinttools uvicorn api.main:app --host 0.0.0.0 --port 18200 --reload
+MONGO_URL=mongodb://localhost:27017/shinttools uvicorn api.main:app --host 0.0.0.0 --port 18200 --reload
 ```
 
 ---
@@ -387,7 +387,7 @@ GitHub Actions se ejecuta en cada push a `main` y `develop`:
 docker compose up --build
 ```
 
-Incluye MongoDB + Core + descarga del modelo DeepSeek Coder (~873 MB la primera vez).
+Incluye MongoDB + Core + descarga del modelo Qwen2.5-Coder 1.5B (~940 MB la primera vez).
 
 ### Stack para desarrolladores de plugin (sin LLM, arranque rápido)
 
