@@ -171,7 +171,10 @@ Valida convenciones de naming de assets (prefijos, sufijos, PascalCase, folder c
 
 #### Unity 6 (21 conceptos: NMU001, NMU009, NMU016 + 18 compartidas)
 
-Tipos mapeados: Texture2D, Material, Mesh, GameObject/Prefab, AudioClip, Shader, ScriptableObject, Script, Scene, Animation, entre otros.
+17 tipos oficiales con prefijo: `T_` Texture2D, `M_` Material, `O_` GameObject/Prefab,
+`A_` AudioClip, `AN_` AnimationClip, `ANC_` AnimationController, `SH_` Shader,
+`S_` SceneAsset, entre otros. Tabla completa en
+`core/modules/naming/unity/unity_naming_rules.py`.
 
 ---
 
@@ -179,7 +182,7 @@ Tipos mapeados: Texture2D, Material, Mesh, GameObject/Prefab, AudioClip, Shader,
 
 Explicaciones en lenguaje natural para cada issue detectado. Funciona 100% offline — no sale ningún dato de la máquina del usuario.
 
-- **Modelo:** Qwen2.5-Coder 1.5B Instruct (Q4_K_M GGUF, ~940 MB)
+- **Modelo:** DeepSeek Coder 1.3B Instruct (Q4_K_M GGUF, 873 MB)
 - **Runtime:** llama-cpp-python (CPU, ~20–40 s por explicación en hardware modesto)
 - **Cache prefabricada:** ~158 KB de explicaciones generadas con Opus 4.7 para las reglas más comunes — respuesta instantánea sin inferencia LLM
 - **Custom rules:** El usuario puede definir sus propias reglas (problema + solución en lenguaje natural) y el modelo las evalúa contra el código
@@ -270,7 +273,7 @@ El Core Engine expone estos endpoints (FastAPI, puerto `18200`):
 | Base de datos | MongoDB 6.0 (Motor async, pymongo) |
 | Análisis C++ | Tree-sitter 0.21 (`tree-sitter-cpp`) |
 | Análisis C# | Parser propio (regex + AST manual) |
-| LLM local | llama-cpp-python 0.3.2, Qwen2.5-Coder 1.5B Q4_K_M |
+| LLM local | llama-cpp-python 0.3.2, DeepSeek Coder 1.3B Q4_K_M |
 | Compilación | Cython (módulos propietarios → `.so`) |
 | Testing | pytest 8.2, httpx 0.27 |
 | CI | GitHub Actions (pytest + flake8 + mypy) |
@@ -340,7 +343,7 @@ mongod --dbpath /data/db
 
 ```bash
 cd core
-MONGO_URL=mongodb://localhost:27017/shinttools uvicorn api.main:app --host 0.0.0.0 --port 18200 --reload
+MONGODB_URL=mongodb://localhost:27017/shinttools uvicorn api.main:app --host 0.0.0.0 --port 18200 --reload
 ```
 
 ---
@@ -387,7 +390,7 @@ GitHub Actions se ejecuta en cada push a `main` y `develop`:
 docker compose up --build
 ```
 
-Incluye MongoDB + Core + descarga del modelo Qwen2.5-Coder 1.5B (~940 MB la primera vez).
+Incluye MongoDB + Core + descarga del modelo DeepSeek Coder (~873 MB la primera vez).
 
 ### Stack para desarrolladores de plugin (sin LLM, arranque rápido)
 
