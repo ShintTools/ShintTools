@@ -1,5 +1,6 @@
 # core/api/main.py
 
+import asyncio
 import os
 import sys
 from contextlib import asynccontextmanager
@@ -18,6 +19,7 @@ from api.routes import (
     unity,
     validate,
 )
+from api.version import CORE_VERSION
 
 # (NUEVO: assets, dashboard)
 from fastapi import FastAPI
@@ -83,10 +85,84 @@ def get_commit_sha() -> str:
     return "unknown"
 
 
+async def _load_llm_in_background(app: FastAPI) -> None:
+    """Download + load + warm up the LLM model without blocking the lifespan.
+
+    The marketplace UE5 wizard times out the Core's first-boot health check at
+    60 s. The Qwen 1.5B GGUF is ~940 MB — on a slow connection that download
+    alone exceeds the budget, never mind warm-up. Doing this work after
+    `yield` means /health responds 200 immediately while the model is still
+    arriving; the agent endpoints (/agent/explain, /agent/plan) check
+    is_loaded() themselves and report 'not available' until the task finishes.
+
+    State machine (exposed via /health.llm_status and /status.llm.status):
+        loading           — download or load in progress
+        ready             — model loaded, warm-up done
+        loaded_no_warmup  — loaded but warm-up failed (still usable)
+        unavailable       — download failed (offline / 404 / hash mismatch)
+        load_failed       — download ok but load_model() threw
+        not_installed     — agent module missing entirely (free-tier image)
+    """
+    app.state.llm_status = "loading"
+    try:
+        from modules.agent.llm_backend import is_loaded, load_model
+        from modules.agent.model_downloader import download_model
+    except ImportError:
+        print("INFO: Agent module not available (develop branch only)")
+        app.state.llm_status = "not_installed"
+        return
+
+    if is_loaded():
+        app.state.llm_status = "ready"
+        return
+
+    print("LLM model not loaded. Checking for GGUF file...")
+    try:
+        model_path = download_model()
+        print(f"Model ready at: {model_path}")
+    except FileNotFoundError as e:
+        print(
+            f"WARNING: LLM model unavailable (offline?). "
+            f"Agent endpoints will report 'not available'. Error: {e}"
+        )
+        app.state.llm_status = "unavailable"
+        return
+    except Exception as e:
+        print(
+            f"WARNING: Failed to prepare LLM model: {e}. "
+            f"Agent endpoints will report 'not available'."
+        )
+        app.state.llm_status = "unavailable"
+        return
+
+    try:
+        load_model()
+        print("✓ LLM model loaded successfully")
+    except Exception as e:
+        print(f"WARNING: Failed to load LLM model: {e}")
+        app.state.llm_status = "load_failed"
+        return
+
+    try:
+        from modules.agent.explainer import warmup as _warmup
+
+        elapsed = _warmup()
+        print(f"✓ LLM warm-up done ({elapsed:.1f}s) — KV cache primed")
+        app.state.llm_status = "ready"
+    except Exception as e:
+        print(f"WARNING: LLM warm-up failed: {e}")
+        app.state.llm_status = "loaded_no_warmup"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     Manages server startup and shutdown lifecycle.
+
+    Anything that can take more than a couple of seconds (LLM model
+    download, warm-up) is dispatched to a background task — the marketplace
+    wizard times out /health at 60 s, so the lifespan body itself must
+    finish well under that.
     """
     config_path = find_config_path()
     app.state.config_path = config_path
@@ -115,59 +191,34 @@ async def lifespan(app: FastAPI):
     else:
         print("WARNING: MongoDB not available")
 
-    # Sprint C: Load LLM agent model at startup. Gated by
-    # SHINTTOOLS_AGENT_ENABLED (default off): the LLM agent is an
-    # Indie-tier feature, so we don't pull the ~3 GB model for free users
-    # — the launcher only flips this env var to "1" when the signed-in
-    # account resolves to a paying tier.
+    # Sprint C: LLM agent. Gated by SHINTTOOLS_AGENT_ENABLED (default off):
+    # the LLM agent is an Indie-tier feature, so we don't pull the ~940 MB
+    # model for free users — the launcher only flips this env var to "1"
+    # when the signed-in account resolves to a paying tier.
+    #
+    # When enabled, the download + load + warm-up runs in a background
+    # task so /health stays responsive during first boot (marketplace
+    # wizard times out at 60 s).
+    llm_task: asyncio.Task | None = None
     if os.getenv("SHINTTOOLS_AGENT_ENABLED") != "1":
         print(
             "LLM agent disabled (SHINTTOOLS_AGENT_ENABLED!=1). "
             "Skipping model load. Agent endpoints will report 'not available'."
         )
+        app.state.llm_status = "disabled"
     else:
-        try:
-            from modules.agent.llm_backend import is_loaded, load_model
-            from modules.agent.model_downloader import download_model
-
-            if not is_loaded():
-                print("LLM model not loaded. Checking for GGUF file...")
-                try:
-                    model_path = download_model()
-                    print(f"Model ready at: {model_path}")
-                except FileNotFoundError as e:
-                    print(
-                        f"WARNING: LLM model unavailable (offline?). "
-                        f"Agent endpoints will report 'not available'. "
-                        f"Error: {e}"
-                    )
-                except Exception as e:
-                    print(
-                        f"WARNING: Failed to prepare LLM model: {e}. "
-                        f"Agent endpoints will report 'not available'."
-                    )
-                else:
-                    try:
-                        load_model()
-                        print("✓ LLM model loaded successfully")
-                    except Exception as e:
-                        print(f"WARNING: Failed to load LLM model: {e}")
-                    else:
-                        try:
-                            from modules.agent.explainer import warmup as _warmup
-
-                            elapsed = _warmup()
-                            print(
-                                f"✓ LLM warm-up done ({elapsed:.1f}s) — KV cache primed"
-                            )
-                        except Exception as e:
-                            print(f"WARNING: LLM warm-up failed: {e}")
-        except ImportError:
-            print("INFO: Agent module not available (develop branch only)")
+        llm_task = asyncio.create_task(_load_llm_in_background(app))
 
     yield
 
-    # Cleanup: unload LLM model on shutdown
+    # Cleanup: cancel any pending LLM load, then unload the model.
+    if llm_task is not None and not llm_task.done():
+        llm_task.cancel()
+        try:
+            await llm_task
+        except (asyncio.CancelledError, Exception):
+            pass
+
     try:
         from modules.agent.llm_backend import unload_model
 
@@ -179,7 +230,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="ShintTools Core",
-    version="2.0.0",  # (ACTUALIZADO)
+    version=CORE_VERSION,
     lifespan=lifespan,
 )
 

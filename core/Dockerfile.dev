@@ -24,7 +24,9 @@ RUN mkdir -p /app/core/models && chmod +x entrypoint.sh
 
 EXPOSE 18200
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+# start-period=60s — same as the prod Dockerfile so dev behaviour matches
+# the image marketplace customers actually pull.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:18200/health || exit 1
 
 ENTRYPOINT ["bash", "entrypoint.sh"]

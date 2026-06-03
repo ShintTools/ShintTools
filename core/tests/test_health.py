@@ -1,4 +1,5 @@
 import pytest
+from api.version import CORE_VERSION
 
 
 @pytest.mark.anyio
@@ -9,10 +10,13 @@ async def test_status_returns_ok(async_client):
     response = await async_client.get("/status")
 
     assert response.status_code == 200
-    assert response.json()["status"] == "ok"
-    assert response.json()["version"] == "0.1.0"
-    assert "modules" in response.json()
-    assert "commit" in response.json()
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["version"] == CORE_VERSION
+    assert "modules" in body
+    assert "commit" in body
+    # LLM status surfaces the background-load state machine.
+    assert "llm" in body and "status" in body["llm"]
 
 
 @pytest.mark.anyio
@@ -34,9 +38,13 @@ async def test_health_returns_ok(async_client):
     response = await async_client.get("/health")
 
     assert response.status_code == 200
-    assert response.json()["status"] == "ok"
-    assert response.json()["version"] == "0.1.0"
-    assert "commit" in response.json()
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["version"] == CORE_VERSION
+    assert "commit" in body
     assert (
-        response.json()["commit"] in ("unknown",) or len(response.json()["commit"]) == 7
+        body["commit"] in ("unknown",) or len(body["commit"]) == 7
     )  # short SHA is 7 chars
+    # llm_status MUST be present so the wizard can render it without a
+    # KeyError fallback path.
+    assert "llm_status" in body

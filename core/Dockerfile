@@ -66,7 +66,11 @@ RUN mkdir -p /app/core/models && chmod +x entrypoint.sh
 
 EXPOSE 18200
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+# start-period=60s — matches the marketplace UE5 wizard timeout. The
+# lifespan itself is fast (LLM model load runs in a background task,
+# see api/main.py::_load_llm_in_background), so 60s is a generous
+# margin for Mongo ping + module detection on slow hardware.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:18200/health || exit 1
 
 ENTRYPOINT ["bash", "entrypoint.sh"]
