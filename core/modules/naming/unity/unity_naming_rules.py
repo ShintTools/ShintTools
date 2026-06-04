@@ -86,7 +86,13 @@ _UNITY_TYPE_TO_FOLDER: Dict[str, str] = {
 # Cached reverse lookup: every prefix value that's a legitimate prefix
 # for SOME type. Used by detect_unity_wrong_prefix_for_type to tell apart
 # "no prefix" from "valid prefix but for a different type".
-_KNOWN_PREFIXES: set = {p for p in _UNITY_TYPE_TO_PREFIX.values()}
+_KNOWN_PREFIXES: set = {prefix for prefix in _UNITY_TYPE_TO_PREFIX.values()}
+
+# AssetDatabase.GetMainAssetTypeAtPath() returns "GameObject" for both
+# Prefabs (.prefab) and imported meshes (.obj, .fbx, .blend, etc.).
+# Only .prefab files are actual Unity Prefabs — mesh files must be
+# silently skipped so we don't flag them with O_ prefix or wrong-folder.
+_PREFAB_EXTENSION = ".prefab"
 
 
 def _name_of(asset_path: str) -> str:
@@ -120,34 +126,45 @@ def detect_unity_missing_prefix(records: List[AssetRecord]) -> List[Issue]:
     e.g. a Texture2D named `Hero.png` should be `T_Hero.png`. Skipped
     when asset_type is not in _UNITY_TYPE_TO_PREFIX (unknown / first-party
     asset types we don't map).
+
+    Special case — GameObject: AssetDatabase.GetMainAssetTypeAtPath()
+    returns "GameObject" for both Prefabs (.prefab) and imported meshes
+    (.obj, .fbx, .blend, …). Only .prefab files are real Prefabs and
+    should be flagged with O_; mesh files are silently skipped.
     """
-    out: List[Issue] = []
-    for r in records:
-        t = (r.get("asset_type") or "").strip()
-        prefix = _UNITY_TYPE_TO_PREFIX.get(t)
-        if not prefix:
+    issues: List[Issue] = []
+    for record in records:
+        type_name = (record.get("asset_type") or "").strip()
+        required_prefix = _UNITY_TYPE_TO_PREFIX.get(type_name)
+        if not required_prefix:
             continue
-        name = _name_of(r.get("asset_path", ""))
-        if not name:
+        asset_path = record.get("asset_path", "")
+        # Skip non-prefab GameObjects (e.g. .obj, .fbx imported meshes).
+        if type_name == "GameObject" and not asset_path.lower().endswith(
+            _PREFAB_EXTENSION
+        ):
+            continue
+        asset_name = _name_of(asset_path)
+        if not asset_name:
             continue
         # Skip names with no alphanumeric characters (e.g. "___") — the
         # fix would produce a worse name like "T____" with no semantic value.
-        if not any(c.isalnum() for c in name):
+        if not any(char.isalnum() for char in asset_name):
             continue
         # Already correctly prefixed?
-        if name.startswith(prefix + "_"):
+        if asset_name.startswith(required_prefix + "_"):
             continue
-        # Suggest the prefix-prepended name.
-        out.append(
+        issues.append(
             _emit(
                 "NMU001",
-                r["asset_path"],
-                t,
-                f"{t} should start with `{prefix}_` (got `{name}`).",
-                fix_suggestion=f"{prefix}_{name}",
+                record["asset_path"],
+                type_name,
+                f"{type_name} should start with `{required_prefix}_`"
+                f" (got `{asset_name}`).",
+                fix_suggestion=f"{required_prefix}_{asset_name}",
             )
         )
-    return out
+    return issues
 
 
 # ── NMU009 ──────────────────────────────────────────────────────────────────
@@ -162,16 +179,22 @@ def detect_unity_wrong_folder(records: List[AssetRecord]) -> List[Issue]:
     enforce exact depth — `Assets/Game/Heroes/Textures/T_Hero.png` is
     fine for a Texture2D.
     """
-    out: List[Issue] = []
-    for r in records:
-        t = (r.get("asset_type") or "").strip()
-        expected = _UNITY_TYPE_TO_FOLDER.get(t)
-        if not expected:
+    issues: List[Issue] = []
+    for record in records:
+        type_name = (record.get("asset_type") or "").strip()
+        expected_folder = _UNITY_TYPE_TO_FOLDER.get(type_name)
+        if not expected_folder:
             continue
-        path = (r.get("asset_path") or "").lower().replace("\\", "/")
-        segments = [s for s in path.split("/") if s]
+        asset_path = record.get("asset_path") or ""
+        # Skip non-prefab GameObjects — mesh files share the same type.
+        if type_name == "GameObject" and not asset_path.lower().endswith(
+            _PREFAB_EXTENSION
+        ):
+            continue
+        normalised_path = asset_path.lower().replace("\\", "/")
+        path_segments = [segment for segment in normalised_path.split("/") if segment]
         # Skip the file name itself.
-        if segments and segments[-1].endswith(
+        if path_segments and path_segments[-1].endswith(
             (
                 ".meta",
                 ".asset",
@@ -193,18 +216,18 @@ def detect_unity_wrong_folder(records: List[AssetRecord]) -> List[Issue]:
                 ".unity",
             )
         ):
-            segments = segments[:-1]
-        if expected in segments:
+            path_segments = path_segments[:-1]
+        if expected_folder in path_segments:
             continue
-        out.append(
+        issues.append(
             _emit(
                 "NMU009",
-                r["asset_path"],
-                t,
-                f"{t} is not stored under a `{expected}` folder.",
+                record["asset_path"],
+                type_name,
+                f"{type_name} is not stored under a `{expected_folder}` folder.",
             )
         )
-    return out
+    return issues
 
 
 # ── NMU002 ──────────────────────────────────────────────────────────────────
@@ -217,21 +240,21 @@ def detect_unity_path_outside_assets(records: List[AssetRecord]) -> List[Issue]:
     Paths that don't start with Assets/ indicate an incorrect root, which
     causes AssetDatabase errors and platform builds to fail.
     """
-    out: List[Issue] = []
-    for r in records:
-        path = (r.get("asset_path") or "").replace("\\", "/")
-        if not path:
+    issues: List[Issue] = []
+    for record in records:
+        asset_path = (record.get("asset_path") or "").replace("\\", "/")
+        if not asset_path:
             continue
-        if not (path.startswith("Assets/") or path == "Assets"):
-            out.append(
+        if not (asset_path.startswith("Assets/") or asset_path == "Assets"):
+            issues.append(
                 _emit(
                     "NMU002",
-                    r["asset_path"],
-                    r.get("asset_type", ""),
-                    f"Asset path must start with `Assets/` (got `{path}`).",
+                    record["asset_path"],
+                    record.get("asset_type", ""),
+                    f"Asset path must start with `Assets/` (got `{asset_path}`).",
                 )
             )
-    return out
+    return issues
 
 
 # ── NMU003 ──────────────────────────────────────────────────────────────────
@@ -244,21 +267,21 @@ def detect_unity_backslash_in_path(records: List[AssetRecord]) -> List[Issue]:
     path resolution failures on macOS/Linux CI and in package builds.
     Replace every `\` with `/`.
     """
-    out: List[Issue] = []
-    for r in records:
-        path = r.get("asset_path") or ""
-        if "\\" in path:
-            fixed = path.replace("\\", "/")
-            out.append(
+    issues: List[Issue] = []
+    for record in records:
+        asset_path = record.get("asset_path") or ""
+        if "\\" in asset_path:
+            fixed_path = asset_path.replace("\\", "/")
+            issues.append(
                 _emit(
                     "NMU003",
-                    r["asset_path"],
-                    r.get("asset_type", ""),
+                    record["asset_path"],
+                    record.get("asset_type", ""),
                     "Path contains backslashes; use forward slashes.",
-                    fix_suggestion=fixed,
+                    fix_suggestion=fixed_path,
                 )
             )
-    return out
+    return issues
 
 
 # ── NMU004 ──────────────────────────────────────────────────────────────────
@@ -273,23 +296,26 @@ def detect_unity_script_misplaced(records: List[AssetRecord]) -> List[Issue]:
     Assembly Definition boundaries and make compile order unpredictable.
     Move the script to the appropriate folder for its role.
     """
-    out: List[Issue] = []
-    for r in records:
-        path = (r.get("asset_path") or "").replace("\\", "/")
-        if not path.lower().endswith(".cs"):
+    issues: List[Issue] = []
+    for record in records:
+        asset_path = (record.get("asset_path") or "").replace("\\", "/")
+        if not asset_path.lower().endswith(".cs"):
             continue
-        folder_segments = [s.lower() for s in path.split("/")[:-1]]
-        if any(seg in _VALID_SCRIPT_FOLDERS for seg in folder_segments):
+        folder_segments = [segment.lower() for segment in asset_path.split("/")[:-1]]
+        if any(
+            folder_segment in _VALID_SCRIPT_FOLDERS
+            for folder_segment in folder_segments
+        ):
             continue
-        out.append(
+        issues.append(
             _emit(
                 "NMU004",
-                r["asset_path"],
-                r.get("asset_type", ""),
+                record["asset_path"],
+                record.get("asset_type", ""),
                 "C# script is outside Scripts/, Editor/, Plugins/, or Runtime/.",
             )
         )
-    return out
+    return issues
 
 
 # ── NMU005 ──────────────────────────────────────────────────────────────────
@@ -303,21 +329,21 @@ def detect_unity_resources_folder(records: List[AssetRecord]) -> List[Issue]:
     Addressables or direct asset references to avoid bloating build size
     and memory usage.
     """
-    out: List[Issue] = []
-    for r in records:
-        path = (r.get("asset_path") or "").replace("\\", "/")
-        folder_segments = [s.lower() for s in path.split("/")[:-1]]
+    issues: List[Issue] = []
+    for record in records:
+        asset_path = (record.get("asset_path") or "").replace("\\", "/")
+        folder_segments = [segment.lower() for segment in asset_path.split("/")[:-1]]
         if "resources" in folder_segments:
-            out.append(
+            issues.append(
                 _emit(
                     "NMU005",
-                    r["asset_path"],
-                    r.get("asset_type", ""),
+                    record["asset_path"],
+                    record.get("asset_type", ""),
                     "Asset is under Resources/; prefer Addressables or"
                     " direct references.",
                 )
             )
-    return out
+    return issues
 
 
 # ── NMU006 ──────────────────────────────────────────────────────────────────
@@ -332,20 +358,20 @@ def detect_unity_streaming_assets(records: List[AssetRecord]) -> List[Issue]:
     runtime (videos, external config). Everything else belongs under
     Assets/.
     """
-    out: List[Issue] = []
-    for r in records:
-        path = (r.get("asset_path") or "").replace("\\", "/")
-        folder_segments = [s.lower() for s in path.split("/")[:-1]]
+    issues: List[Issue] = []
+    for record in records:
+        asset_path = (record.get("asset_path") or "").replace("\\", "/")
+        folder_segments = [segment.lower() for segment in asset_path.split("/")[:-1]]
         if "streamingassets" in folder_segments:
-            out.append(
+            issues.append(
                 _emit(
                     "NMU006",
-                    r["asset_path"],
-                    r.get("asset_type", ""),
+                    record["asset_path"],
+                    record.get("asset_type", ""),
                     "Asset is under StreamingAssets/; verify this is intentional.",
                 )
             )
-    return out
+    return issues
 
 
 # ── NMU007 ──────────────────────────────────────────────────────────────────
@@ -366,27 +392,27 @@ def detect_unity_editor_folder_misuse(records: List[AssetRecord]) -> List[Issue]
     placed here will be missing at runtime. Only .cs editor scripts and
     editor-specific asset types belong under Editor/.
     """
-    out: List[Issue] = []
-    for r in records:
-        path = (r.get("asset_path") or "").replace("\\", "/")
-        folder_segments = [s.lower() for s in path.split("/")[:-1]]
+    issues: List[Issue] = []
+    for record in records:
+        asset_path = (record.get("asset_path") or "").replace("\\", "/")
+        folder_segments = [segment.lower() for segment in asset_path.split("/")[:-1]]
         if "editor" not in folder_segments:
             continue
-        t = (r.get("asset_type") or "").strip()
-        if t in _EDITOR_ONLY_TYPES:
+        type_name = (record.get("asset_type") or "").strip()
+        if type_name in _EDITOR_ONLY_TYPES:
             continue
-        if path.lower().endswith(".cs"):
+        if asset_path.lower().endswith(".cs"):
             continue
-        out.append(
+        issues.append(
             _emit(
                 "NMU007",
-                r["asset_path"],
-                t,
-                f"{t or 'Asset'} is under Editor/ and will be stripped"
+                record["asset_path"],
+                type_name,
+                f"{type_name or 'Asset'} is under Editor/ and will be stripped"
                 " from runtime builds.",
             )
         )
-    return out
+    return issues
 
 
 # ── NMU008 ──────────────────────────────────────────────────────────────────
@@ -399,24 +425,24 @@ def detect_unity_scene_misplaced(records: List[AssetRecord]) -> List[Issue]:
     break the standard Unity project layout expected by source-control
     and team workflows. Move the scene to Assets/Scenes/ or a subfolder.
     """
-    out: List[Issue] = []
-    for r in records:
-        t = (r.get("asset_type") or "").strip()
-        if t != "SceneAsset":
+    issues: List[Issue] = []
+    for record in records:
+        type_name = (record.get("asset_type") or "").strip()
+        if type_name != "SceneAsset":
             continue
-        path = (r.get("asset_path") or "").replace("\\", "/")
-        folder_segments = [s.lower() for s in path.split("/")[:-1]]
+        asset_path = (record.get("asset_path") or "").replace("\\", "/")
+        folder_segments = [segment.lower() for segment in asset_path.split("/")[:-1]]
         if "scenes" in folder_segments:
             continue
-        out.append(
+        issues.append(
             _emit(
                 "NMU008",
-                r["asset_path"],
-                t,
+                record["asset_path"],
+                type_name,
                 "Scene is not under a Scenes/ folder.",
             )
         )
-    return out
+    return issues
 
 
 # ── NMU010 ──────────────────────────────────────────────────────────────────
@@ -432,27 +458,27 @@ def detect_unity_scriptableobject_suffix(records: List[AssetRecord]) -> List[Iss
     their purpose immediately clear and avoids confusion with other asset
     types in the same folder.
     """
-    out: List[Issue] = []
-    for r in records:
-        t = (r.get("asset_type") or "").strip()
-        if t != "ScriptableObject":
+    issues: List[Issue] = []
+    for record in records:
+        type_name = (record.get("asset_type") or "").strip()
+        if type_name != "ScriptableObject":
             continue
-        name = _name_of(r.get("asset_path", ""))
-        if not name:
+        asset_name = _name_of(record.get("asset_path", ""))
+        if not asset_name:
             continue
-        if any(name.endswith(suf) for suf in _SO_VALID_SUFFIXES):
+        if any(asset_name.endswith(suffix) for suffix in _SO_VALID_SUFFIXES):
             continue
-        suffix_list = ", ".join(f"`{s}`" for s in _SO_VALID_SUFFIXES[:3])
-        out.append(
+        suffix_list = ", ".join(f"`{suffix}`" for suffix in _SO_VALID_SUFFIXES[:3])
+        issues.append(
             _emit(
                 "NMU010",
-                r["asset_path"],
-                t,
-                f"ScriptableObject `{name}` should end with {suffix_list}, etc.",
-                fix_suggestion=f"{name}_Data",
+                record["asset_path"],
+                type_name,
+                f"ScriptableObject `{asset_name}` should end with {suffix_list}, etc.",
+                fix_suggestion=f"{asset_name}_Data",
             )
         )
-    return out
+    return issues
 
 
 # ── NMU011 ──────────────────────────────────────────────────────────────────
@@ -477,27 +503,27 @@ def detect_unity_texture_pbr_suffix(records: List[AssetRecord]) -> List[Issue]:
     Add a suffix matching the texture's role (_Albedo/_BaseColor,
     _Normal, _Metallic, _Roughness, _AO, _MaskMap, _Emissive).
     """
-    out: List[Issue] = []
-    for r in records:
-        t = (r.get("asset_type") or "").strip()
-        if t != "Texture2D":
+    issues: List[Issue] = []
+    for record in records:
+        type_name = (record.get("asset_type") or "").strip()
+        if type_name != "Texture2D":
             continue
-        name = _name_of(r.get("asset_path", ""))
-        if not name:
+        asset_name = _name_of(record.get("asset_path", ""))
+        if not asset_name:
             continue
-        if any(name.endswith(suf) for suf in _PBR_SUFFIXES):
+        if any(asset_name.endswith(suffix) for suffix in _PBR_SUFFIXES):
             continue
-        suffix_list = ", ".join(f"`{s}`" for s in _PBR_SUFFIXES[:4])
-        out.append(
+        suffix_list = ", ".join(f"`{suffix}`" for suffix in _PBR_SUFFIXES[:4])
+        issues.append(
             _emit(
                 "NMU011",
-                r["asset_path"],
-                t,
-                f"Texture `{name}` is missing a PBR channel suffix"
+                record["asset_path"],
+                type_name,
+                f"Texture `{asset_name}` is missing a PBR channel suffix"
                 f" ({suffix_list}, …).",
             )
         )
-    return out
+    return issues
 
 
 # ── NMU012 ──────────────────────────────────────────────────────────────────
@@ -511,26 +537,28 @@ def detect_unity_uppercase_extension(records: List[AssetRecord]) -> List[Issue]:
     but different on Linux, so this causes import failures that only
     show up in CI. Use a lowercase extension.
     """
-    out: List[Issue] = []
-    for r in records:
-        path = r.get("asset_path") or ""
-        ext = Path(path).suffix
-        if not ext:
+    issues: List[Issue] = []
+    for record in records:
+        asset_path = record.get("asset_path") or ""
+        extension = Path(asset_path).suffix
+        if not extension:
             continue
-        if ext == ext.lower():
+        if extension == extension.lower():
             continue
-        fixed_path = str(Path(path).with_suffix(ext.lower())).replace("\\", "/")
-        out.append(
+        fixed_path = str(Path(asset_path).with_suffix(extension.lower())).replace(
+            "\\", "/"
+        )
+        issues.append(
             _emit(
                 "NMU012",
-                r["asset_path"],
-                r.get("asset_type", ""),
-                f"Extension `{ext}` should be lowercase"
-                f" `{ext.lower()}` (Linux/CI safety).",
+                record["asset_path"],
+                record.get("asset_type", ""),
+                f"Extension `{extension}` should be lowercase"
+                f" `{extension.lower()}` (Linux/CI safety).",
                 fix_suggestion=fixed_path,
             )
         )
-    return out
+    return issues
 
 
 # ── NMU013 ──────────────────────────────────────────────────────────────────
@@ -544,20 +572,20 @@ def detect_unity_parent_dir_in_path(records: List[AssetRecord]) -> List[Issue]:
     groups, and cross-platform builds. Normalise the path to remove all
     `..` segments.
     """
-    out: List[Issue] = []
-    for r in records:
-        path = (r.get("asset_path") or "").replace("\\", "/")
-        if ".." in path.split("/"):
-            out.append(
+    issues: List[Issue] = []
+    for record in records:
+        asset_path = (record.get("asset_path") or "").replace("\\", "/")
+        if ".." in asset_path.split("/"):
+            issues.append(
                 _emit(
                     "NMU013",
-                    r["asset_path"],
-                    r.get("asset_type", ""),
+                    record["asset_path"],
+                    record.get("asset_type", ""),
                     "Path contains `..` traversal segments;"
                     " use the canonical absolute path.",
                 )
             )
-    return out
+    return issues
 
 
 # ── NMU014 ──────────────────────────────────────────────────────────────────
@@ -571,23 +599,23 @@ def detect_unity_double_slash(records: List[AssetRecord]) -> List[Issue]:
     results from incorrect string concatenation when building paths
     programmatically. Collapse every `//` to a single `/`.
     """
-    out: List[Issue] = []
-    for r in records:
-        path = (r.get("asset_path") or "").replace("\\", "/")
-        if "//" in path:
-            fixed = path
-            while "//" in fixed:
-                fixed = fixed.replace("//", "/")
-            out.append(
+    issues: List[Issue] = []
+    for record in records:
+        asset_path = (record.get("asset_path") or "").replace("\\", "/")
+        if "//" in asset_path:
+            fixed_path = asset_path
+            while "//" in fixed_path:
+                fixed_path = fixed_path.replace("//", "/")
+            issues.append(
                 _emit(
                     "NMU014",
-                    r["asset_path"],
-                    r.get("asset_type", ""),
+                    record["asset_path"],
+                    record.get("asset_type", ""),
                     "Path contains `//`; collapse to a single `/`.",
-                    fix_suggestion=fixed,
+                    fix_suggestion=fixed_path,
                 )
             )
-    return out
+    return issues
 
 
 # ── NMU015 ──────────────────────────────────────────────────────────────────
@@ -602,27 +630,27 @@ def detect_unity_audio_missing_suffix(records: List[AssetRecord]) -> List[Issue]
     (environment loops), _VO (voice-over), _UI (interface feedback) —
     so the wrong clip doesn't get assigned to the wrong source.
     """
-    out: List[Issue] = []
-    for r in records:
-        t = (r.get("asset_type") or "").strip()
-        if t != "AudioClip":
+    issues: List[Issue] = []
+    for record in records:
+        type_name = (record.get("asset_type") or "").strip()
+        if type_name != "AudioClip":
             continue
-        name = _name_of(r.get("asset_path", ""))
-        if not name:
+        asset_name = _name_of(record.get("asset_path", ""))
+        if not asset_name:
             continue
-        if any(name.endswith(suf) for suf in _AUDIO_VALID_SUFFIXES):
+        if any(asset_name.endswith(suffix) for suffix in _AUDIO_VALID_SUFFIXES):
             continue
-        suffix_list = ", ".join(f"`{s}`" for s in _AUDIO_VALID_SUFFIXES[:4])
-        out.append(
+        suffix_list = ", ".join(f"`{suffix}`" for suffix in _AUDIO_VALID_SUFFIXES[:4])
+        issues.append(
             _emit(
                 "NMU015",
-                r["asset_path"],
-                t,
-                f"AudioClip `{name}` is missing a category suffix"
+                record["asset_path"],
+                type_name,
+                f"AudioClip `{asset_name}` is missing a category suffix"
                 f" ({suffix_list}, …).",
             )
         )
-    return out
+    return issues
 
 
 # ── NMU016 ──────────────────────────────────────────────────────────────────
@@ -636,28 +664,35 @@ def detect_unity_wrong_prefix_for_type(records: List[AssetRecord]) -> List[Issue
     Skips assets with no prefix at all (NMU001 covers that) and
     asset_types we don't map.
     """
-    out: List[Issue] = []
-    for r in records:
-        t = (r.get("asset_type") or "").strip()
-        expected_prefix = _UNITY_TYPE_TO_PREFIX.get(t)
+    issues: List[Issue] = []
+    for record in records:
+        type_name = (record.get("asset_type") or "").strip()
+        expected_prefix = _UNITY_TYPE_TO_PREFIX.get(type_name)
         if not expected_prefix:
             continue
-        name = _name_of(r.get("asset_path", ""))
-        if "_" not in name:
-            continue  # no prefix at all — NMU001 handles this case
-        current = name.split("_", 1)[0]
-        if current == expected_prefix:
+        asset_path = record.get("asset_path", "")
+        # Skip non-prefab GameObjects — mesh files share the same type.
+        if type_name == "GameObject" and not asset_path.lower().endswith(
+            _PREFAB_EXTENSION
+        ):
             continue
-        if current not in _KNOWN_PREFIXES:
+        asset_name = _name_of(asset_path)
+        if "_" not in asset_name:
+            continue  # no prefix at all — NMU001 handles this case
+        current_prefix = asset_name.split("_", 1)[0]
+        if current_prefix == expected_prefix:
+            continue
+        if current_prefix not in _KNOWN_PREFIXES:
             continue  # not a recognised prefix; NMU001 will flag missing
-        rest = name.split("_", 1)[1]
-        out.append(
+        name_body = asset_name.split("_", 1)[1]
+        issues.append(
             _emit(
                 "NMU016",
-                r["asset_path"],
-                t,
-                f"{t} uses prefix `{current}_` but should use `{expected_prefix}_`.",
-                fix_suggestion=f"{expected_prefix}_{rest}",
+                record["asset_path"],
+                type_name,
+                f"{type_name} uses prefix `{current_prefix}_`"
+                f" but should use `{expected_prefix}_`.",
+                fix_suggestion=f"{expected_prefix}_{name_body}",
             )
         )
-    return out
+    return issues
