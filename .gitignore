@@ -16,6 +16,9 @@ models/
 # Fine-tuning logs (generated locally, not committed)
 core/finetuning_logs/
 
+# Dev / scratch / smoke-test scripts (local only, not part of the circuit)
+core/dev/
+
 # Claude Code workspace (memoria local + settings personales)
 .claude/
 

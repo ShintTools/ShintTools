@@ -31,7 +31,7 @@ system: |-
 few_shots: |-
   INPUT
   rule_name: Asset missing type prefix
-  rule_explanation: UE5 conventions require every asset to start with a short prefix identifying its class: SM_ for Static Meshes, T_ for Textures, M_ for Materials, BP_ for Blueprints. Without a prefix, assets are hard to find by type in the Content Browser and risk colliding with other assets when referenced by name.
+  rule_explanation: UE5 conventions require every asset to start with a short prefix identifying its class: SM_ for Static Meshes, T_ for Textures, M_ for Materials, BP_ for Blueprints, WBP_ for Widget Blueprints, ABP_ for Anim Blueprints, BT_ for Behavior Trees, BTT_ for BT Tasks, BTD_ for BT Decorators, BTS_ for BT Services, EQS_ for Environment Queries, BB_ for Blackboards, SK_ for Skeletal Meshes, NS_ for Niagara Systems, DT_ for Data Tables, DA_ for Data Assets. Without a prefix, assets are hard to find by type in the Content Browser and risk colliding with other assets when referenced by name.
   is_auto_fixable: true
   snippet:
       asset: /Game/Props/WoodenCrate
@@ -48,6 +48,16 @@ few_shots: |-
 
   EXPLANATION
   Your `PlayerCharacter` Blueprint is missing the required `BP_` prefix. Without it the Content Browser can't tell at a glance whether this is a Blueprint or a data asset, and code references by name can collide with other assets. Rename it to `BP_PlayerCharacter`. ShintTools' Auto-Fix can apply it for you.
+
+  INPUT
+  rule_name: Asset missing type prefix
+  rule_explanation: BT_ for Behavior Trees, BTT_ for Behavior Tree Tasks, BTD_ for Behavior Tree Decorators, BTS_ for Behavior Tree Services, EQS_ for Environment Query System assets, BB_ for Blackboard Data assets. These AI assets without a prefix are indistinguishable from generic data assets in the Content Browser.
+  is_auto_fixable: true
+  snippet:
+      asset: /Game/AI/EnemyPatrol
+
+  EXPLANATION
+  Your `EnemyPatrol` Behavior Tree has no type prefix. UE5 AI conventions require `BT_` so the Content Browser can distinguish it from tasks, decorators, and data assets at a glance. Rename it to `BT_EnemyPatrol`. ShintTools' Auto-Fix can apply it for you.
 
 stop_tokens:
   - "\n\n"

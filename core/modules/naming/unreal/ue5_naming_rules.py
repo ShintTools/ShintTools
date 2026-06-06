@@ -384,6 +384,8 @@ _NM_SEVERITY: str = "warning"
 #   VFX        : ParticleSystem, NiagaraSystem, NiagaraEmitter
 #   Data       : DataTable, DataAsset, CurveFloat, CurveVector,
 #                CurveLinearColor
+#   AI         : BehaviorTree, BehaviorTreeTask, BehaviorTreeDecorator,
+#                BehaviorTreeService, EnvQuery, BlackboardData
 #   Misc       : UserDefinedEnum, UserDefinedStruct, LevelSequence
 # ---------------------------------------------------------------------------
 
@@ -413,6 +415,12 @@ _FOLDER_RULES: List[Dict[str, str]] = [
         "prefix": "MF_",
         "type": "MaterialFunction",
     },
+    {
+        "folder": "materialparametercollections",
+        "prefix": "MPC_",
+        "type": "MaterialParameterCollection",
+    },
+    {"folder": "mpc", "prefix": "MPC_", "type": "MaterialParameterCollection"},
     # Blueprints
     {"folder": "blueprints", "prefix": "BP_", "type": "Blueprint"},
     {"folder": "blueprint", "prefix": "BP_", "type": "Blueprint"},
@@ -422,6 +430,9 @@ _FOLDER_RULES: List[Dict[str, str]] = [
         "type": "AnimBlueprint",
     },
     {"folder": "abp", "prefix": "ABP_", "type": "AnimBlueprint"},
+    {"folder": "interfaces", "prefix": "BPI_", "type": "BlueprintInterface"},
+    {"folder": "interface", "prefix": "BPI_", "type": "BlueprintInterface"},
+    {"folder": "macros", "prefix": "BPML_", "type": "BlueprintMacroLibrary"},
     # UI / Widgets
     {"folder": "widgets", "prefix": "WBP_", "type": "WidgetBlueprint"},
     {"folder": "ui", "prefix": "WBP_", "type": "WidgetBlueprint"},
@@ -432,12 +443,18 @@ _FOLDER_RULES: List[Dict[str, str]] = [
     {"folder": "audio", "prefix": "SW_", "type": "SoundWave"},
     {"folder": "soundwaves", "prefix": "SW_", "type": "SoundWave"},
     {"folder": "music", "prefix": "SW_", "type": "SoundWave"},
+    {"folder": "soundclasses", "prefix": "SCL_", "type": "SoundClass"},
+    {"folder": "soundmix", "prefix": "SMX_", "type": "SoundMix"},
+    {"folder": "attenuation", "prefix": "ATT_", "type": "SoundAttenuation"},
     # Animations
     {"folder": "animations", "prefix": "AS_", "type": "AnimSequence"},
     {"folder": "animation", "prefix": "AS_", "type": "AnimSequence"},
     {"folder": "anim", "prefix": "AS_", "type": "AnimSequence"},
     {"folder": "montages", "prefix": "AM_", "type": "AnimMontage"},
     {"folder": "blendspaces", "prefix": "BS_", "type": "BlendSpace"},
+    {"folder": "aimoffsets", "prefix": "AO_", "type": "AimOffsetBlendSpace"},
+    {"folder": "composites", "prefix": "AC_", "type": "AnimComposite"},
+    {"folder": "poses", "prefix": "PO_", "type": "PoseAsset"},
     # Physics
     {"folder": "physics", "prefix": "PA_", "type": "PhysicsAsset"},
     {
@@ -451,16 +468,34 @@ _FOLDER_RULES: List[Dict[str, str]] = [
     {"folder": "vfx", "prefix": "NS_", "type": "NiagaraSystem"},
     {"folder": "niagara", "prefix": "NS_", "type": "NiagaraSystem"},
     {"folder": "effects", "prefix": "NS_", "type": "NiagaraSystem"},
+    {"folder": "emitters", "prefix": "NE_", "type": "NiagaraEmitter"},
     # Data
     {"folder": "datatables", "prefix": "DT_", "type": "DataTable"},
     {"folder": "datatable", "prefix": "DT_", "type": "DataTable"},
     {"folder": "dataassets", "prefix": "DA_", "type": "DataAsset"},
     {"folder": "dataasset", "prefix": "DA_", "type": "DataAsset"},
     {"folder": "curves", "prefix": "CF_", "type": "CurveFloat"},
+    # AI / Behavior Trees
+    {"folder": "behaviortrees", "prefix": "BT_", "type": "BehaviorTree"},
+    {"folder": "behaviourtrees", "prefix": "BT_", "type": "BehaviorTree"},
+    {"folder": "ai", "prefix": "BT_", "type": "BehaviorTree"},
+    {"folder": "bttasks", "prefix": "BTT_", "type": "BehaviorTreeTask"},
+    {"folder": "tasks", "prefix": "BTT_", "type": "BehaviorTreeTask"},
+    {"folder": "btdecorators", "prefix": "BTD_", "type": "BehaviorTreeDecorator"},
+    {"folder": "decorators", "prefix": "BTD_", "type": "BehaviorTreeDecorator"},
+    {"folder": "btservices", "prefix": "BTS_", "type": "BehaviorTreeService"},
+    {"folder": "services", "prefix": "BTS_", "type": "BehaviorTreeService"},
+    {"folder": "envqueries", "prefix": "EQS_", "type": "EnvQuery"},
+    {"folder": "eqs", "prefix": "EQS_", "type": "EnvQuery"},
+    {"folder": "blackboards", "prefix": "BB_", "type": "BlackboardData"},
+    {"folder": "blackboard", "prefix": "BB_", "type": "BlackboardData"},
     # Misc
     {"folder": "enums", "prefix": "E_", "type": "UserDefinedEnum"},
     {"folder": "structs", "prefix": "F_", "type": "UserDefinedStruct"},
     {"folder": "sequences", "prefix": "LS_", "type": "LevelSequence"},
+    {"folder": "fonts", "prefix": "Font_", "type": "Font"},
+    {"folder": "levels", "prefix": "LVL_", "type": "World"},
+    {"folder": "maps", "prefix": "LVL_", "type": "World"},
 ]
 
 # All valid prefixes — any asset already using one of these is conformant.
