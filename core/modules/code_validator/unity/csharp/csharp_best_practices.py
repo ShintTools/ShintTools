@@ -82,9 +82,13 @@ def detect_catch_exception_broad(content: str, file_path: str) -> List[Issue]:
     else is considered overly broad and worth flagging.
     """
     out: List[Issue] = []
-    pattern = re.compile(r"\bcatch\s*\(\s*(?:System\.)?Exception\s+(\w+)\s*\)\s*\{")
+    # No \{ at end — use find() so inline comments between ) and { don't
+    # break the match (e.g. `catch (Exception e) // note\n{`).
+    pattern = re.compile(r"\bcatch\s*\(\s*(?:System\.)?Exception\s+(\w+)\s*\)")
     for m in pattern.finditer(content):
-        brace = m.end() - 1
+        brace = content.find("{", m.end())
+        if brace < 0:
+            continue
         depth = 1
         end = brace
         for i in range(brace + 1, len(content)):
@@ -121,9 +125,13 @@ def detect_catch_exception_broad(content: str, file_path: str) -> List[Issue]:
 def detect_infinite_loop(content: str, file_path: str) -> List[Issue]:
     """CSB004: while(true) or for(;;) without break/return/goto - hangs the game thread."""  # noqa: E501
     out: List[Issue] = []
-    loop_re = re.compile(r"\b(?:while\s*\(\s*true\s*\)|for\s*\(\s*;\s*;\s*\))\s*\{")
+    # No \{ at end — use find() so inline comments between ) and { don't
+    # break the match (e.g. `while (true) // note\n{`).
+    loop_re = re.compile(r"\b(?:while\s*\(\s*true\s*\)|for\s*\(\s*;\s*;\s*\))")
     for loop in loop_re.finditer(content):
-        brace_open = content.rfind("{", loop.start(), loop.end())
+        brace_open = content.find("{", loop.end())
+        if brace_open < 0:
+            continue
         depth, end = 1, brace_open
         for i in range(brace_open + 1, len(content)):
             if content[i] == "{":
@@ -303,7 +311,11 @@ def detect_hardcoded_path(content: str, file_path: str) -> List[Issue]:
     """CSB010: hardcoded absolute file-system path - breaks on other machines and platforms."""  # noqa: E501
     out: List[Issue] = []
     for m in re.finditer(
-        r'"(?:[A-Za-z]:\\[^"\\]{3,}|/(?:home|Users|var|tmp|opt)/[^"]{3,})"',
+        r'"(?:'
+        r'[A-Za-z]:\\[^"\\]{3,}'  # Windows absolute: C:\...
+        r'|/(?:home|Users|var|tmp|opt)/[^"]{3,}'  # Unix absolute: /home/...
+        r'|Assets/[^"]{3,}'  # Unity project-relative: Assets/...
+        r')"',
         content,
     ):
         line = _line_number(content, m.start())
@@ -325,7 +337,19 @@ def detect_hardcoded_path(content: str, file_path: str) -> List[Issue]:
 def detect_empty_if_body(content: str, file_path: str) -> List[Issue]:
     """CSB011: empty if body {} - likely a logic error or unfinished branch."""
     out: List[Issue] = []
-    for m in re.finditer(r"\bif\s*\([^)]+\)\s*\{\s*\}", content):
+    # Use find() for { so inline comments between ) and { don't break the
+    # match (e.g. `if (cond) // note\n{\n}`). Then scan for empty body.
+    cond_re = re.compile(r"\bif\s*\([^)]+\)")
+    for m in cond_re.finditer(content):
+        brace_open = content.find("{", m.end())
+        if brace_open < 0:
+            continue
+        brace_close = content.find("}", brace_open + 1)
+        if brace_close < 0:
+            continue
+        body = content[brace_open + 1 : brace_close]
+        if body.strip():
+            continue
         line = _line_number(content, m.start())
         out.append(
             _emit(

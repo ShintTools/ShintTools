@@ -7,6 +7,7 @@
 #   POST /validate/blueprints  — full Blueprint export from UE5 plugin
 #   POST /validate/fix         — apply auto-fixes with Tree-sitter
 
+import logging
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,6 +16,8 @@ from typing import Optional
 from api.database import analysis_results, get_latest_score, persist_score, resolve_tier
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 # Add modules path to import code_validator rules
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "modules"))
@@ -440,6 +443,41 @@ class ValidateUnityGraphsRequest(BaseModel):
     graphs: list[UnityGraphFile] = Field(default_factory=list)
 
 
+def _graph_parse_failure_reason(content: str, path: str) -> str:
+    """Return a short reason string explaining why parse_unity_graph returned None."""
+    if not content or not content.strip():
+        return "content is empty — the plugin sent an empty string for this file"
+    from code_validator.unity.parsers.unity_vs_parser import (
+        _VS_EMBEDDED_JSON_HINT,
+        _VS_HEAD_SCAN_BYTES,
+        _VS_MARKERS,
+        _VS_TYPE_PREFIX,
+        _extract_json_string,
+    )
+
+    head = content[:_VS_HEAD_SCAN_BYTES]
+    has_class_marker = any(m in head for m in _VS_MARKERS)
+    has_json_field = _VS_EMBEDDED_JSON_HINT in head
+    has_type_prefix = _VS_TYPE_PREFIX in head
+    if not has_class_marker and not has_json_field:
+        return (
+            "not recognised as a Visual Scripting asset — "
+            "missing '_json:' field and Unity.VisualScripting.* class markers. "
+            "Make sure Asset Serialization Mode is set to ForceText in Unity."
+        )
+    if has_json_field and not has_type_prefix:
+        return (
+            "_json: field found but no Unity.VisualScripting.* type names inside — "
+            "the embedded JSON may be from a different asset type."
+        )
+    if _extract_json_string(content) is None:
+        return (
+            "VS asset detected but could not extract the embedded JSON blob — "
+            "the _json: field may be malformed or exceed the 16 KB scan window."
+        )
+    return "JSON extracted but failed to parse — the embedded JSON may be malformed."
+
+
 @router.post("/validate/unity-graphs")
 async def validate_unity_graphs(payload: ValidateUnityGraphsRequest):
     """Validate Unity Visual Scripting (com.unity.visualscripting) graph assets.
@@ -473,11 +511,25 @@ async def validate_unity_graphs(payload: ValidateUnityGraphsRequest):
     # Unified contract: prefer `files`, fall back to legacy `graphs`
     entries = payload.files if payload.files else payload.graphs
 
+    graphs_received = len(entries)
+    parse_failures: list[str] = []
     parsed_graphs: list[dict] = []
     for entry in entries:
         g = parse_unity_graph(entry.content, entry.path)
         if g is not None:
             parsed_graphs.append(g)
+        else:
+            reason = _graph_parse_failure_reason(entry.content, entry.path)
+            parse_failures.append(f"{entry.path}: {reason}")
+            logger.warning(
+                "validate_unity_graphs: skipped '%s' — %s", entry.path, reason
+            )
+
+    if graphs_received == 0:
+        logger.warning(
+            "validate_unity_graphs: received 0 files — "
+            "check that the plugin is sending 'files' (not 'graphs') in the payload."
+        )
 
     # Run built-in Visual Scripting rules
     all_issues = run_all_unity_graph_rules(parsed_graphs)
@@ -515,6 +567,34 @@ async def validate_unity_graphs(payload: ValidateUnityGraphsRequest):
         "error": "",
         "time": round(time.perf_counter() - t0, 4),
         "files": normalized,
+        "graphs_received": graphs_received,
+        "graphs_parsed": len(parsed_graphs),
+        "parse_failures": parse_failures,
+    }
+
+
+@router.post("/validate/unity-graphs/debug")
+async def validate_unity_graphs_debug(payload: ValidateUnityGraphsRequest):
+    """Diagnostic endpoint — echoes back what the plugin sent without parsing.
+
+    Daniel can call this instead of /validate/unity-graphs to verify that
+    the payload is arriving correctly before debugging the parser.
+    """
+    entries = payload.files if payload.files else payload.graphs
+    return {
+        "graphs_received": len(entries),
+        "using_field": (
+            "files" if payload.files else ("graphs" if payload.graphs else "none")
+        ),
+        "entries": [
+            {
+                "path": e.path,
+                "content_length": len(e.content),
+                "content_preview": e.content[:200] if e.content else "",
+                "content_empty": not bool(e.content and e.content.strip()),
+            }
+            for e in entries
+        ],
     }
 
 

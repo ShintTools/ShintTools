@@ -29,8 +29,16 @@ from code_validator.unity.csharp._csharp_helpers import (
 def detect_sql_concat(content: str, file_path: str) -> List[Issue]:
     """CSS001: SQL command built by string concatenation - injection risk."""
     out: List[Issue] = []
+    # Require two SQL structural keywords so UI strings like
+    # "SELECT a player" + name don't fire false positives.
     pattern = re.compile(
-        r"(?:SqlCommand|MySqlCommand|SqliteCommand|new\s+\w*Command)\s*\([^)]*\+[^)]*\)",  # noqa: E501
+        r'"[^"]*\b(?:'
+        r'SELECT\b[^"]*\bFROM'  # SELECT ... FROM
+        r"|INSERT\s+INTO"  # INSERT INTO
+        r"|DELETE\s+FROM"  # DELETE FROM
+        r'|UPDATE\b[^"]*\bSET'  # UPDATE ... SET
+        r'|WHERE\b[^"]*=\s*[\'"]'  # WHERE col = '  (classic injection pattern)
+        r')[^"]*"\s*\+',
         re.IGNORECASE,
     )
     for m in pattern.finditer(content):
@@ -77,7 +85,7 @@ def detect_hardcoded_secret(content: str, file_path: str) -> List[Issue]:
 def detect_http_url(content: str, file_path: str) -> List[Issue]:
     """CSS003: hardcoded `http://` URL literal - should be https."""
     out: List[Issue] = []
-    for m in re.finditer(r"\"http://[^\"\\s]+\"", content):
+    for m in re.finditer(r"\"http://[^\"]+\"", content):
         line = _line_number(content, m.start())
         # Skip example/comment-ish localhost references - harmless and noisy.
         snippet = m.group(0).lower()

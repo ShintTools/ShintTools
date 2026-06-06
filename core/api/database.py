@@ -70,13 +70,31 @@ async def resolve_tier(api_key: str) -> str:
     Returns the tier name, or 'free' if the key is missing,
     inactive, or MongoDB is unreachable.
     """
+    tier, _ = await resolve_tier_detailed(api_key)
+    return tier
+
+
+async def resolve_tier_detailed(api_key: str) -> tuple[str, str]:
+    """Like resolve_tier but also returns a machine-readable reason code.
+
+    Returns (tier, reason) so callers that gate features can surface
+    a specific error message in the HTTP response instead of the
+    generic 'X is an Indie-tier feature.' — helping developers
+    diagnose config problems without opening Docker logs.
+
+    Reason codes:
+        ""               — resolved successfully
+        "empty_key"      — api_key field is blank in shinttools.config.json
+        "key_not_found"  — key absent or inactive in 'licenses' collection
+        "db_unavailable" — MongoDB unreachable
+    """
     api_key = api_key.strip()
     if not api_key:
         logger.warning(
             "resolve_tier: api_key is EMPTY — defaulting to 'free'. "
             "Set 'api_key' in shinttools.config.json and restart the core."
         )
-        return _DEFAULT_TIER
+        return _DEFAULT_TIER, "empty_key"
 
     try:
         doc = await licenses.find_one(
@@ -86,7 +104,7 @@ async def resolve_tier(api_key: str) -> str:
         if doc and doc.get("tier"):
             tier = doc["tier"]
             logger.info("resolve_tier: key=...%s → tier='%s'", api_key[-6:], tier)
-            return tier
+            return tier, ""
         else:
             logger.warning(
                 "resolve_tier: api_key='...%s' not found in 'licenses' collection "
@@ -95,6 +113,7 @@ async def resolve_tier(api_key: str) -> str:
                 "--key <your-key> to create it.",
                 api_key[-6:],
             )
+            return _DEFAULT_TIER, "key_not_found"
     except Exception as exc:
         logger.error(
             "resolve_tier: MongoDB query FAILED (%s). Defaulting to 'free'. "
@@ -103,7 +122,7 @@ async def resolve_tier(api_key: str) -> str:
             os.getenv("MONGO_URL", "mongodb://localhost:27017"),
         )
 
-    return _DEFAULT_TIER
+    return _DEFAULT_TIER, "db_unavailable"
 
 
 async def persist_score(score_doc: dict) -> None:

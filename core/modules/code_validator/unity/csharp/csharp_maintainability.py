@@ -21,7 +21,7 @@ def detect_long_method(content: str, file_path: str) -> List[Issue]:
     """CSM001: method body exceeds 50 lines."""
     out: List[Issue] = []
     method_re = re.compile(
-        r"\b(?:public|private|protected|internal)\s+(?:static\s+|virtual\s+|override\s+|async\s+|sealed\s+)*"  # noqa: E501
+        r"\b(?:(?:public|private|protected|internal)\s+)?(?:static\s+|virtual\s+|override\s+|async\s+|sealed\s+)*"  # noqa: E501
         r"[\w<>,\s\[\]?]+?\s+(\w+)\s*\([^)]*\)\s*\{",
     )
     for m in method_re.finditer(content):

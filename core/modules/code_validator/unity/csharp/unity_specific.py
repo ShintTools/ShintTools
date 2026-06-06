@@ -181,7 +181,7 @@ def detect_public_field_monobehaviour(content: str, file_path: str) -> List[Issu
     region = content[body_start:end]
     out: List[Issue] = []
     field_re = re.compile(
-        r"^\s*public\s+(?!class\b|struct\b|enum\b|interface\b|static\b|const\b|override\b|virtual\b|abstract\b|event\b)"  # noqa: E501
+        r"^[ \t]*public\s+(?!class\b|struct\b|enum\b|interface\b|static\b|const\b|override\b|virtual\b|abstract\b|event\b)"  # noqa: E501
         r"([\w<>,\s\[\]?]+?)\s+(\w+)\s*(?:=\s*[^;{]+)?;",
         re.MULTILINE,
     )
@@ -371,7 +371,9 @@ def detect_tag_string_compare(content: str, file_path: str) -> List[Issue]:
     both allocations and is recommended by Unity's own profiler docs.
     """
     out: List[Issue] = []
-    pattern = re.compile(r"\.\s*tag\s*(?:==|!=)\s*\"[^\"]+\"")
+    # \b matches after a `.` (non-word char) so `obj.tag == "X"` and
+    # bare `tag == "X"` (implicit `this.tag`) are both caught.
+    pattern = re.compile(r"\btag\s*(?:==|!=)\s*\"[^\"]+\"")
     for m in pattern.finditer(content):
         line = _line_number(content, m.start())
         out.append(

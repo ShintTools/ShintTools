@@ -26,7 +26,7 @@ from __future__ import annotations
 import json
 from typing import AsyncIterator
 
-from api.database import resolve_tier
+from api.database import resolve_tier_detailed
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -299,16 +299,39 @@ def _rationale_for(issue: _PlanIssue) -> str:
 # ── Endpoint ───────────────────────────────────────────────────────────────
 
 
+_TIER_GATE_MESSAGES = {
+    "empty_key": (
+        "api_key is empty in shinttools.config.json — "
+        "set it to your license key and restart the core."
+    ),
+    "key_not_found": (
+        "api_key not recognised — the key was not found in the license database. "
+        "Contact support or re-run the Launcher to reseed your license."
+    ),
+    "db_unavailable": (
+        "License database is unreachable — MongoDB may not be running. "
+        "Check Docker and restart the core."
+    ),
+}
+
+
+def _tier_gate_detail(reason: str, feature: str) -> str:
+    """Build a 403 detail message that tells developers exactly why the gate fired."""
+    if reason in _TIER_GATE_MESSAGES:
+        return _TIER_GATE_MESSAGES[reason]
+    return f"{feature} requires Indie tier or higher."
+
+
 @router.post("/plan", response_model=AgentPlanResponse)
 async def plan(payload: AgentPlanRequest) -> AgentPlanResponse:
-    tier = await resolve_tier(payload.api_key)
+    tier, reason = await resolve_tier_detailed(payload.api_key)
     if tier == "free":
         # Defense in depth — the free plugin shouldn't even render the
         # Auto-Fix Plan button, but if someone reverse-engineers the call
         # this fails closed.
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Auto-Fix Plan is an Indie-tier feature.",
+            detail=_tier_gate_detail(reason, "Auto-Fix Plan"),
         )
 
     if not payload.issues:
@@ -382,11 +405,11 @@ async def explain(payload: AgentExplainRequest) -> AgentExplainResponse:
     from modules.agent.explainer import explain_issue
     from modules.agent.llm_backend import is_loaded
 
-    tier = await resolve_tier(payload.api_key)
+    tier, reason = await resolve_tier_detailed(payload.api_key)
     if tier == "free":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="AI explanations are an Indie-tier feature.",
+            detail=_tier_gate_detail(reason, "AI explanations"),
         )
 
     # Pydantic strips unknown fields by default. We pass the issue as a
@@ -579,11 +602,11 @@ async def explain_stream(payload: AgentExplainRequest) -> StreamingResponse:
     is even opened, so the plugin never sees a half-open SSE on a
     license-gated endpoint.
     """
-    tier = await resolve_tier(payload.api_key)
+    tier, reason = await resolve_tier_detailed(payload.api_key)
     if tier == "free":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="AI explanations are an Indie-tier feature.",
+            detail=_tier_gate_detail(reason, "AI explanations"),
         )
 
     return StreamingResponse(
