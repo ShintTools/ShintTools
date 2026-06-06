@@ -1291,7 +1291,7 @@ def detect_generic_name(asset_records: List[AssetRecord]) -> List[Issue]:
                     rule_id="NM014",
                     asset_path=asset_path,
                     current_name=asset_name,
-                    fix_suggestion=asset_name,
+                    fix_suggestion="",
                     asset_type=asset_type,
                     message=(
                         f"'{asset_name}' uses only digits after "
@@ -1318,7 +1318,7 @@ def detect_generic_name(asset_records: List[AssetRecord]) -> List[Issue]:
                 rule_id="NM014",
                 asset_path=asset_path,
                 current_name=asset_name,
-                fix_suggestion=asset_name,
+                fix_suggestion="",
                 asset_type=asset_type,
                 message=(
                     f"'{asset_name}' is a generic placeholder "

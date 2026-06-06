@@ -39,7 +39,8 @@ _UNITY_TYPE_TO_PREFIX: Dict[str, str] = {
     "AnimationController": "ANC",
     "Font": "F",
     "Material": "M",
-    "GameObject": "O",  # prefabs come through as GameObject
+    "GameObject": "P",  # prefabs come through as GameObject
+    "Mesh": "SM",  # imported 3D models (.obj, .fbx, .blend, etc.)
     "PhysicsMaterial": "PM",
     "PhysicsMaterial2D": "PM2",
     "RenderTexture": "RT",
@@ -69,7 +70,8 @@ _UNITY_TYPE_TO_FOLDER: Dict[str, str] = {
     "AnimationController": "animators",
     "Font": "fonts",
     "Material": "materials",
-    "GameObject": "prefabs",
+    "GameObject": "prefabs",  # .prefab files
+    "Mesh": "meshes",  # imported 3D models
     "PhysicsMaterial": "physics",
     "PhysicsMaterial2D": "physics",
     "RenderTexture": "rendertextures",
@@ -89,10 +91,33 @@ _UNITY_TYPE_TO_FOLDER: Dict[str, str] = {
 _KNOWN_PREFIXES: set = {prefix for prefix in _UNITY_TYPE_TO_PREFIX.values()}
 
 # AssetDatabase.GetMainAssetTypeAtPath() returns "GameObject" for both
-# Prefabs (.prefab) and imported meshes (.obj, .fbx, .blend, etc.).
-# Only .prefab files are actual Unity Prefabs — mesh files must be
-# silently skipped so we don't flag them with O_ prefix or wrong-folder.
+# Prefabs (.prefab) and imported 3D mesh files (.obj, .fbx, .blend, etc.).
+# The core disambiguates via the file extension so each gets the right prefix:
+#   .prefab              → GameObject (O_)
+#   mesh extensions below → Mesh (SM_)
 _PREFAB_EXTENSION = ".prefab"
+_MESH_EXTENSIONS: frozenset = frozenset(
+    {".obj", ".fbx", ".blend", ".dae", ".3ds", ".dxf", ".max", ".mb", ".ma"}
+)
+
+
+def _resolve_gameobject_type(asset_path: str) -> str:
+    """Disambiguate the 'GameObject' asset_type using the file extension.
+
+    AssetDatabase.GetMainAssetTypeAtPath() returns 'GameObject' for both
+    Prefabs and imported 3D mesh files. This helper returns the effective
+    logical type so the naming rules can apply the correct prefix:
+
+        .prefab          → 'GameObject'  (prefix O_)
+        mesh extension   → 'Mesh'        (prefix SM_)
+        anything else    → ''            (skip — unknown sub-type)
+    """
+    extension = Path(asset_path).suffix.lower()
+    if extension == _PREFAB_EXTENSION:
+        return "GameObject"
+    if extension in _MESH_EXTENSIONS:
+        return "Mesh"
+    return ""
 
 
 def _name_of(asset_path: str) -> str:
@@ -135,14 +160,14 @@ def detect_unity_missing_prefix(records: List[AssetRecord]) -> List[Issue]:
     issues: List[Issue] = []
     for record in records:
         type_name = (record.get("asset_type") or "").strip()
+        asset_path = record.get("asset_path", "")
+        # GameObject is ambiguous — resolve to actual logical type via extension.
+        if type_name == "GameObject":
+            type_name = _resolve_gameobject_type(asset_path)
+            if not type_name:
+                continue
         required_prefix = _UNITY_TYPE_TO_PREFIX.get(type_name)
         if not required_prefix:
-            continue
-        asset_path = record.get("asset_path", "")
-        # Skip non-prefab GameObjects (e.g. .obj, .fbx imported meshes).
-        if type_name == "GameObject" and not asset_path.lower().endswith(
-            _PREFAB_EXTENSION
-        ):
             continue
         asset_name = _name_of(asset_path)
         if not asset_name:
@@ -182,14 +207,14 @@ def detect_unity_wrong_folder(records: List[AssetRecord]) -> List[Issue]:
     issues: List[Issue] = []
     for record in records:
         type_name = (record.get("asset_type") or "").strip()
+        asset_path = record.get("asset_path") or ""
+        # GameObject is ambiguous — resolve to actual logical type via extension.
+        if type_name == "GameObject":
+            type_name = _resolve_gameobject_type(asset_path)
+            if not type_name:
+                continue
         expected_folder = _UNITY_TYPE_TO_FOLDER.get(type_name)
         if not expected_folder:
-            continue
-        asset_path = record.get("asset_path") or ""
-        # Skip non-prefab GameObjects — mesh files share the same type.
-        if type_name == "GameObject" and not asset_path.lower().endswith(
-            _PREFAB_EXTENSION
-        ):
             continue
         normalised_path = asset_path.lower().replace("\\", "/")
         path_segments = [segment for segment in normalised_path.split("/") if segment]
@@ -667,14 +692,14 @@ def detect_unity_wrong_prefix_for_type(records: List[AssetRecord]) -> List[Issue
     issues: List[Issue] = []
     for record in records:
         type_name = (record.get("asset_type") or "").strip()
+        asset_path = record.get("asset_path", "")
+        # GameObject is ambiguous — resolve to actual logical type via extension.
+        if type_name == "GameObject":
+            type_name = _resolve_gameobject_type(asset_path)
+            if not type_name:
+                continue
         expected_prefix = _UNITY_TYPE_TO_PREFIX.get(type_name)
         if not expected_prefix:
-            continue
-        asset_path = record.get("asset_path", "")
-        # Skip non-prefab GameObjects — mesh files share the same type.
-        if type_name == "GameObject" and not asset_path.lower().endswith(
-            _PREFAB_EXTENSION
-        ):
             continue
         asset_name = _name_of(asset_path)
         if "_" not in asset_name:

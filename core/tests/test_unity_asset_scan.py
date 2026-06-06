@@ -138,10 +138,9 @@ class TestLayer1BuiltinRules:
         assert isinstance(body["time"], float)
 
     @pytest.mark.anyio
-    async def test_gameobject_mesh_not_flagged(self, async_client):
-        # A .obj file sent as asset_type="GameObject" must NOT get an O_ warning.
-        # Unity's AssetDatabase returns "GameObject" for both prefabs and imported
-        # meshes — the core disambiguates via file extension.
+    async def test_gameobject_obj_flagged_as_mesh(self, async_client):
+        # A .obj file sent as asset_type="GameObject" must be treated as Mesh
+        # and flagged with SM_ prefix, not O_.
         payload = _scan_payload(
             [{"path": "Assets/Test/Meshes/Mesh.obj", "type": "GameObject"}]
         )
@@ -149,7 +148,21 @@ class TestLayer1BuiltinRules:
         assert resp.status_code == 200
         findings = resp.json()["files"]
         nmu001 = [f for f in findings if f.get("rule_id") == "NMU001"]
-        assert nmu001 == [], "Non-prefab GameObjects (.obj) must not fire NMU001"
+        assert len(nmu001) == 1, ".obj GameObject must fire NMU001 with SM_ prefix"
+        assert nmu001[0]["fix"] == "SM_Mesh"
+
+    @pytest.mark.anyio
+    async def test_gameobject_fbx_flagged_as_mesh(self, async_client):
+        # .fbx imported mesh must also be treated as Mesh (SM_ prefix).
+        payload = _scan_payload(
+            [{"path": "Assets/Test/Meshes/HeroCharacter.fbx", "type": "GameObject"}]
+        )
+        resp = await async_client.post("/assets/unity/scan", json=payload)
+        assert resp.status_code == 200
+        findings = resp.json()["files"]
+        nmu001 = [f for f in findings if f.get("rule_id") == "NMU001"]
+        assert len(nmu001) == 1, ".fbx GameObject must fire NMU001 with SM_ prefix"
+        assert nmu001[0]["fix"] == "SM_HeroCharacter"
 
     @pytest.mark.anyio
     async def test_gameobject_prefab_is_flagged(self, async_client):
@@ -161,20 +174,20 @@ class TestLayer1BuiltinRules:
         assert resp.status_code == 200
         findings = resp.json()["files"]
         nmu001 = [f for f in findings if f.get("rule_id") == "NMU001"]
-        assert len(nmu001) == 1, "Prefab GameObject without O_ must fire NMU001"
-        assert nmu001[0]["fix"] == "O_Prefab"
+        assert len(nmu001) == 1, "Prefab GameObject without P_ must fire NMU001"
+        assert nmu001[0]["fix"] == "P_Prefab"
 
     @pytest.mark.anyio
-    async def test_gameobject_fbx_not_flagged(self, async_client):
-        # .fbx imported mesh must also be silently skipped.
+    async def test_gameobject_mesh_correctly_prefixed(self, async_client):
+        # A .fbx already named SM_Hero must NOT fire NMU001.
         payload = _scan_payload(
-            [{"path": "Assets/Test/Meshes/HeroCharacter.fbx", "type": "GameObject"}]
+            [{"path": "Assets/Test/Meshes/SM_Hero.fbx", "type": "GameObject"}]
         )
         resp = await async_client.post("/assets/unity/scan", json=payload)
         assert resp.status_code == 200
         findings = resp.json()["files"]
         nmu001 = [f for f in findings if f.get("rule_id") == "NMU001"]
-        assert nmu001 == [], "Non-prefab GameObjects (.fbx) must not fire NMU001"
+        assert nmu001 == [], "SM_ prefixed mesh must not fire NMU001"
 
 
 # ── Layer 2: user naming rules ────────────────────────────────────────────
