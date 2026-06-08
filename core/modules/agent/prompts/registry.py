@@ -225,10 +225,16 @@ _PREFIX_TO_MODULE_ENGINE: dict[str, tuple[str, str]] = {
     "BPP": ("unreal_blueprint", "ue5"),
     "BPM": ("unreal_blueprint", "ue5"),
     "BPS": ("unreal_blueprint", "ue5"),
-    # LOD auditor rules
+    # LOD auditor rules — all families route to the same template
     "LD": ("lod_auditor", "ue5"),
     "LM": ("lod_auditor", "ue5"),
     "LT": ("lod_auditor", "ue5"),
+    "LA": ("lod_auditor", "ue5"),
+    "LV": ("lod_auditor", "ue5"),
+    "LU": ("lod_auditor", "ue5"),
+    "LL": ("lod_auditor", "ue5"),
+    "LX": ("lod_auditor", "ue5"),
+    "LMB": ("lod_auditor", "ue5"),
     # Naming rules apply to both engines; default to UE5 here.
     # The orchestrator can override with issue["engine"] = "unity6".
     "NM": ("naming", "ue5"),

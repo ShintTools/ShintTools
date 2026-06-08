@@ -249,7 +249,7 @@ async def lod_audit(payload: LodAuditRequest):
 
         # Optional LLM-generated guidance (currently scoped to indie, kept
         # for forward-compat; Studio tier sees deterministic guidance).
-        if _EXPLAINER_AVAILABLE and _explain_issue and tier == "indie":
+        if _EXPLAINER_AVAILABLE and _explain_issue and tier == "studio":
             try:
                 issue_dict = {
                     "rule_id": f.rule_id,

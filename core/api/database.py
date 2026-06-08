@@ -74,6 +74,73 @@ async def resolve_tier(api_key: str) -> str:
     return tier
 
 
+async def _resolve_tier_via_dashboard(api_key: str) -> tuple[str, str]:
+    """Fallback: validate the key against the remote dashboard and seed locally.
+
+    Called automatically by resolve_tier_detailed when the key is absent
+    from the local 'licenses' collection — covers the case where the
+    Launcher seed never ran (container not started, wrong container name,
+    key added after installation, etc.).
+
+    Passes machine_id="" because the Core runs inside Docker and cannot
+    read the host machine fingerprint. The dashboard validates by key
+    validity alone in that case; binding is enforced only when the
+    plugin explicitly calls /license/activate with the real machine_id.
+    """
+    from api.dashboard_license import activate  # lazy import — avoids circular dep
+
+    try:
+        result = await activate(api_key, machine_id="")
+    except Exception as exc:
+        logger.error("_resolve_tier_via_dashboard: unexpected error — %s", exc)
+        return _DEFAULT_TIER, "db_unavailable"
+
+    if not result.get("valid"):
+        logger.warning(
+            "_resolve_tier_via_dashboard: key=...%s not valid — %s",
+            api_key[-6:],
+            result.get("error", ""),
+        )
+        return _DEFAULT_TIER, "key_not_found"
+
+    tier = str(result.get("tier") or "free").lower()
+    studio = str(result.get("studio") or "")
+    await seed_license(api_key, tier, studio)
+    logger.info(
+        "_resolve_tier_via_dashboard: auto-healed key=...%s → tier='%s'",
+        api_key[-6:],
+        tier,
+    )
+    return tier, ""
+
+
+async def seed_license(api_key: str, tier: str, studio: str = "") -> None:
+    """Upsert a license document into the local 'licenses' collection.
+
+    Best-effort: logs and swallows any MongoDB error so that a write
+    failure never blocks an activation that already succeeded against
+    the remote dashboard.
+    """
+    if not api_key:
+        return
+    try:
+        await licenses.update_one(
+            {"api_key": api_key},
+            {
+                "$set": {
+                    "api_key": api_key,
+                    "tier": (tier or "free").lower(),
+                    "studio": studio or "",
+                    "active": True,
+                }
+            },
+            upsert=True,
+        )
+        logger.info("seed_license: upserted key=...%s tier='%s'", api_key[-6:], tier)
+    except Exception as exc:
+        logger.error("seed_license: upsert FAILED key=...%s (%s)", api_key[-6:], exc)
+
+
 async def resolve_tier_detailed(api_key: str) -> tuple[str, str]:
     """Like resolve_tier but also returns a machine-readable reason code.
 
@@ -107,13 +174,11 @@ async def resolve_tier_detailed(api_key: str) -> tuple[str, str]:
             return tier, ""
         else:
             logger.warning(
-                "resolve_tier: api_key='...%s' not found in 'licenses' collection "
-                "(or 'active' is false). Defaulting to 'free'. "
-                "Run: python core/scripts/seed_license.py "
-                "--key <your-key> to create it.",
+                "resolve_tier: api_key='...%s' not found locally — "
+                "attempting dashboard fallback to auto-heal.",
                 api_key[-6:],
             )
-            return _DEFAULT_TIER, "key_not_found"
+            return await _resolve_tier_via_dashboard(api_key)
     except Exception as exc:
         logger.error(
             "resolve_tier: MongoDB query FAILED (%s). Defaulting to 'free'. "

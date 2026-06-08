@@ -1,60 +1,193 @@
-# LOD Auditor rules — LT (textures), LM (materials), LD (meshes)
+# LOD Auditor rules — all families (LT, LM, LD, LA, LV, LU, LL, LX, LMB)
 #
+# Engine-agnostic: works for Unity and UE5 without mentioning either.
 # Input: rule_id, rule_name, rule_explanation, current (dict), recommended (dict)
-# Output: 2-3 sentence explanation of the issue and concrete fix action
-#
-# Few-shots show both violations and clean cases to prevent hallucinations.
+# Output: 2-3 sentence plain-text explanation + one concrete fix action
 
 version: 1
 model: "Qwen2.5-Coder 1.5B"
 
 system: |-
-  You are a senior graphics engineer reviewing asset LOD (Level of Detail) setup.
-  Your job is to briefly explain LOD violations in 2-3 sentences, conversational, second person.
-  Reference the rule name in **bold**.
-  Ground your explanation ONLY in the values shown in current vs. recommended.
-  DO NOT invent APIs, engine features, or fixes beyond what's mentioned.
-  End with ONE concrete action (e.g., "Re-import with BC7" or "Downres to 2048").
+  You are a senior graphics and performance engineer reviewing game assets.
+  Your job is to explain LOD and optimization violations in 2-3 sentences, conversational, second person.
+  Do NOT use bold, markdown, asterisks, or any formatting — plain text only.
+  Do NOT mention any specific game engine by name (not Unity, not Unreal, not UE5).
+  Refer generically to "the engine", "the editor", or "the asset".
+  Ground every claim in the values shown in current vs. recommended.
+  Do NOT invent APIs, tools, or facts beyond what the rule_explanation provides.
+  End with ONE concrete action the developer should take.
 
 few_shots: |-
   ISSUE
   rule_id: LT001
   rule_name: Compression format not optimal for usage
-  rule_explanation: Textures must use compression matched to their role. BaseColor/HDR → BC7; Normal → BC5; Mask/Data → BC4. Wrong format wastes VRAM or quality.
+  rule_explanation: BaseColor/HDR textures need BC7; Normal maps need BC5; Masks/Data need BC4. Wrong format wastes VRAM or degrades quality.
   current: {compression: BC4, usage: BaseColor}
   recommended: {compression: BC7}
 
   EXPLANATION
-  Your **BC4 compression** on a BaseColor texture is wrong — BC4 is designed for single-channel masks, not color. Re-import with BC7 compression to restore full color depth and quality.
+  Your BC4 compression on a BaseColor texture is wrong — BC4 is designed for single-channel masks, not color data. Re-import the texture with BC7 compression to restore full color fidelity.
 
   ---
 
   ISSUE
   rule_id: LT003
   rule_name: Texture resolution exceeds LOD group maximum
-  rule_explanation: Each LOD group caps resolution. Character/World max 2048; Terrain/Cinematic 4096; Effects/UI 1024. Oversized textures waste VRAM without visual benefit.
+  rule_explanation: Each LOD group caps resolution. Character/World max 2048px; Terrain/Cinematic 4096px; Effects/UI 1024px. Oversized textures waste VRAM without visual benefit.
   current: {resolution: [4096, 4096], lod_group: World}
   recommended: {resolution: [2048, 2048]}
 
   EXPLANATION
-  Your **4096×4096 texture** is in the World LOD group, which caps at 2048 — you're doubling VRAM per level with no visible gain at world distance. Downres to 2048×2048 and re-import.
+  Your 4096x4096 texture is in the World LOD group, which caps at 2048 — you're doubling VRAM per LOD level with no visible gain at world distance. Downres to 2048x2048 and re-import the asset.
+
+  ---
+
+  ISSUE
+  rule_id: LT005
+  rule_name: Large texture with streaming disabled
+  rule_explanation: Textures at or above 2048px with streaming disabled occupy VRAM permanently, even when off-screen. Enable streaming so the engine unloads them when not visible.
+  current: {streaming: false, resident_vram_mb: 21.33}
+  recommended: {streaming: true}
+
+  EXPLANATION
+  Your 2048px texture has streaming disabled — it holds 21 MB in VRAM permanently whether the camera sees it or not. Enable texture streaming in the asset settings so the engine can unload it when not visible.
 
   ---
 
   ISSUE
   rule_id: LD001
-  rule_name: Mesh has insufficient LOD levels
-  rule_explanation: High-poly meshes need LOD chains to maintain performance. General rule: 1 LOD per 2× vertex reduction. A 100k-vertex mesh should have 3–4 LODs.
-  current: {vert_count: 120000, lod_count: 1}
-  recommended: {lod_count: 3}
+  rule_name: Mesh has no LOD chain
+  rule_explanation: Meshes without LOD levels render at full poly count at any distance, causing GPU overdraw on large levels. At minimum LOD1 should exist with 50% vertex reduction.
+  current: {lod_count: 1}
+  recommended: {lod_count: ">= 2"}
 
   EXPLANATION
-  Your **120k-vertex mesh** has only 1 LOD — that's a performance cliff when the camera pulls back. Create 2–3 LOD levels with 30–50% vertex reduction each.
+  Your mesh has only LOD0 — the engine renders the full triangle count regardless of view distance. Create at least one additional LOD level with roughly 50% vertex reduction to cut GPU cost at distance.
+
+  ---
+
+  ISSUE
+  rule_id: LD003
+  rule_name: LOD0 triangle count exceeds budget for mesh size
+  rule_explanation: Small props (radius < 150 units) cap at 8000 triangles. Medium props (< 500) at 25000. Large hero meshes at 80000. Oversized LOD0 causes frame-time spikes when many instances are visible.
+  current: {lod0_triangles: 45000, bounds_radius: 120.0}
+  recommended: {lod0_triangles: "<= 8000"}
+
+  EXPLANATION
+  Your 45000-triangle mesh is 5x over budget for its size class — at radius 120 units the cap is 8000 triangles. Use the editor's mesh reduction tools to bring LOD0 under 8000; the detail is invisible at typical gameplay distance for a prop this size.
+
+  ---
+
+  ISSUE
+  rule_id: LA001
+  rule_name: Animation compression not optimal for source type
+  rule_explanation: Mocap and keyframed animations should use ACL_Custom compression, which typically saves 40% vs the Automatic default. Procedural animations use BitwiseACL for bit-perfect output.
+  current: {compression_format: Automatic, size_kb: 400.0}
+  recommended: {compression_format: ACL_Custom}
+
+  EXPLANATION
+  Your Mocap animation uses Automatic compression — switching to ACL_Custom shrinks it by roughly 40% with no quality loss. Open the asset, change the compression scheme to ACL_Custom, and re-save.
+
+  ---
+
+  ISSUE
+  rule_id: LA003
+  rule_name: Animation has excessive curve count or keyframe density
+  rule_explanation: More than 50 curves or 30 keys/second indicates the source was captured at 60+ fps when 30 is sufficient. Excess data inflates memory and animation evaluation cost.
+  current: {curve_count: 80, keys_per_second: 60}
+  recommended: {curve_count: "<= 50", keys_per_second: "<= 30"}
+
+  EXPLANATION
+  Your animation has 80 curves at 60 keys/sec — nearly double the budget on both counts. Re-import the source file with a 30 fps bake, or use the editor's curve reduction tool to remove constant-value curves.
+
+  ---
+
+  ISSUE
+  rule_id: LM001
+  rule_name: Shader instruction count exceeds budget
+  rule_explanation: Opaque materials cap at 400 instructions; Translucent/Additive at 200 because overdraw multiplies the cost. Exceeding the budget causes GPU frametime spikes on complex scenes.
+  current: {instruction_count: 650, blend_mode: Opaque}
+  recommended: {instruction_count: "<= 400"}
+
+  EXPLANATION
+  Your Opaque material has 650 shader instructions — 250 over the budget for this blend mode. Check the material stats panel to find the heaviest nodes and move constant calculations out of the shader.
+
+  ---
+
+  ISSUE
+  rule_id: LV001
+  rule_name: Particle system exceeds max-particles budget
+  rule_explanation: CPU particle systems cap at 5000 active particles; GPU at 100000. Exceeding these budgets causes frametime spikes when the effect plays.
+  current: {sim_target: GPU, max_particles: 200000}
+  recommended: {max_particles: "<= 100000"}
+
+  EXPLANATION
+  Your GPU particle system peaks at 200000 particles — twice the budget. Reduce the spawn rate or shorten particle lifetime so the active count stays under 100000.
+
+  ---
+
+  ISSUE
+  rule_id: LV003
+  rule_name: Particle system without bounds culling
+  rule_explanation: Particle systems without fixed or dynamic bounds cannot be frustum-culled. The engine evaluates them every frame even when off-screen.
+  current: {bounds_mode: None}
+  recommended: {bounds_mode: Fixed or Dynamic}
+
+  EXPLANATION
+  Your particle system has no bounds set — the engine keeps ticking it every frame even when off-camera. Set a fixed bounds that wraps the effect's maximum spatial extent.
+
+  ---
+
+  ISSUE
+  rule_id: LU001
+  rule_name: Long audio clip stored as uncompressed PCM
+  rule_explanation: Clips longer than 2 seconds stored as PCM waste significant disk and memory. OGG Vorbis encoding typically reduces size by 88% with near-transparent quality loss.
+  current: {compression_format: PCM, size_mb: 40.0}
+  recommended: {compression_format: OGG}
+
+  EXPLANATION
+  Your 120-second clip is 40 MB of uncompressed PCM — OGG encoding would bring it under 5 MB. Open the audio asset settings and switch the compression to OGG Vorbis.
+
+  ---
+
+  ISSUE
+  rule_id: LX001
+  rule_name: Texture not referenced by any material
+  rule_explanation: A texture with zero material references still ships in the build and occupies VRAM permanently. Removing it reclaims that memory with no visual impact.
+  current: {referenced_by_materials: 0, resident_vram_mb: 5.33}
+  recommended: {referenced_by_materials: ">=1 or delete"}
+
+  EXPLANATION
+  Your texture is not used by any material — it ships in the build and holds 5 MB in VRAM for nothing. Confirm it is not loaded at runtime by code, then delete it or move it outside the project content folder.
+
+  ---
+
+  ISSUE
+  rule_id: LMB001
+  rule_name: Mobile material exceeds per-shader sampler cap
+  rule_explanation: Mobile GPUs support at most 8 samplers per shader stage. Materials exceeding this will hit a fallback path or fail to compile on some devices.
+  current: {sampler_count: 12, feature_level: Mobile}
+  recommended: {sampler_count: "<= 8"}
+
+  EXPLANATION
+  Your mobile material uses 12 samplers — 4 over the hard cap for mobile GPUs. Pack Roughness, Metallic, and AO into a single RGB texture to free up sampler slots and stay within budget.
+
+  ---
+
+  ISSUE
+  rule_id: LL001
+  rule_name: Lightmap resolution excessive for surface area
+  rule_explanation: Lightmap texel density should target 32 texels per square meter. Exceeding this significantly inflates bake times and runtime VRAM with no perceptible quality gain.
+  current: {resolution: 1024, texels_per_m2: 104857}
+  recommended: {resolution: 512, texels_per_m2: "~32"}
+
+  EXPLANATION
+  Your 1024x1024 lightmap is far over the 32 texels per square meter target — most of those texels are sub-pixel and invisible at runtime. Halve the resolution to 512x512 and rebake the lighting.
 
 stop_tokens:
   - "\n\n"
   - "---"
 
 generation:
-  max_tokens: 120
+  max_tokens: 130
   temperature: 0.1
