@@ -4,16 +4,18 @@
 Usage
 -----
     # Indie tier (default)
-    python core/scripts/seed_license.py --key shint_XXXXXXXX
+    python core/scripts/seed_license.py --key sk_XXXXXXXX
 
-    # Custom tier / studio
-    python core/scripts/seed_license.py --key shint_XXXXXXXX --tier indie --studio "MyStudio"  # noqa: E501
+    # Studio tier (for LOD Auditor testing)
+    python core/scripts/seed_license.py --key sk_XXXXXXXX --tier studio --studio "TestStudio"  # noqa: E501
 
     # Custom MongoDB URL
-    python core/scripts/seed_license.py --key shint_XXXXXXXX --mongo mongodb://localhost:27017  # noqa: E501
+    python core/scripts/seed_license.py --key sk_XXXXXXXX --tier studio --mongo mongodb://localhost:27017  # noqa: E501
 
     # List existing licenses
     python core/scripts/seed_license.py --list
+
+Tiers: free | indie | studio | enterprise
 
 The script upserts: if the key already exists it updates tier/active/studio;
 if it doesn't it inserts a new document.
@@ -36,7 +38,7 @@ except ImportError:
 
 DB_NAME = "shinttools"
 COLLECTION = "licenses"
-VALID_TIERS = ("free", "indie")
+VALID_TIERS = ("free", "indie", "studio", "enterprise")
 
 
 def main() -> None:
@@ -137,9 +139,9 @@ def main() -> None:
         print(f"  {k}: {v}")
 
     print("\nNext steps:")
-    print("  1. Make sure this key matches 'api_key' in your shinttools.config.json")
-    print("  2. Restart the core engine (uvicorn)")
-    print("  3. Restart the Unreal Editor (or reload the plugin config)")
+    print("  1. Share the key with the plugin team (Unity or UE5)")
+    print("  2. They paste it in Plugin Settings → Validate to activate")
+    print("  3. Or manually set api_key in shinttools.config.json + restart core")
 
     client.close()
 
