@@ -1,0 +1,73 @@
+# core/modules/lod_auditor/config/thresholds_mobile.yaml
+#
+# Mobile profile — tight VRAM, low instruction budgets.
+# Targets iOS A14 / Android Adreno 660 baseline.
+
+profile: mobile
+description: "Mobile (iOS A14 / Android Adreno 660) — tight VRAM and shader budgets"
+
+# ── Textures ──────────────────────────────────────────────────────────────────
+
+LT001_EXPECTED_FORMAT:
+  BaseColor: BC7
+  Normal: BC5
+  Mask: BC4
+  HDR: BC6H
+  UI: RGBA8
+  Data: BC4
+
+# Half the desktop budget across the board
+LT003_MAX_SIZE_BY_LOD_GROUP:
+  Character: 1024
+  CharacterNormalMap: 1024
+  World: 1024
+  WorldNormalMap: 1024
+  Environment: 1024
+  Terrain: 2048
+  Cinematic: 2048
+  Effects: 512
+  VFX: 512
+  UI: 1024
+  Skybox: 1024
+
+LT003_DEFAULT_MAX_SIZE: 1024
+LT005_STREAMING_MIN_EDGE: 1024
+
+# ── Materials ─────────────────────────────────────────────────────────────────
+
+# Mobile GPUs hit thermal limits well before the desktop budget
+LM001_BUDGET_BY_BLEND_MODE:
+  Opaque: 200
+  Masked: 150
+  Translucent: 100
+  Additive: 100
+  Modulate: 100
+
+LM001_DEFAULT_BUDGET: 200
+LM003_PRIMITIVES_THRESHOLD: 2
+
+# ── Meshes ────────────────────────────────────────────────────────────────────
+
+LD001_MIN_LOD_COUNT: 3
+
+LD003_TRIANGLE_BUDGET:
+  - [50.0, 800]
+  - [150.0, 3000]
+  - [500.0, 10000]
+  - [.inf, 25000]
+
+# ── Animations ────────────────────────────────────────────────────────────────
+
+LA001_EXPECTED_COMPRESSION:
+  Mocap: ACL_Custom
+  Keyframed: ACL_Custom
+  Procedural: BitwiseACL
+  Additive: ACL_Custom
+
+LA002_MIN_LOD_COUNT: 3
+LA003_MAX_CURVES: 30
+LA003_MAX_KEYS_PER_SECOND: 24
+
+# ── Cross-detection ───────────────────────────────────────────────────────────
+
+LX003_MIN_DUPLICATE_SIZE_KB: 50.0

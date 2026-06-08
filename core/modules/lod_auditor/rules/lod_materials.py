@@ -5,26 +5,11 @@
 # Each rule is a pure function:
 #   check_lmXXX(asset: dict) -> Finding | None
 
+from lod_auditor.config import load_profile
 from lod_auditor.schema import Finding, Saving
 
-# ── Thresholds ────────────────────────────────────────────────────────────────
-
-THRESHOLDS: dict = {
-    # LM001 — max shader instructions per blend mode.
-    # Translucent/Additive pixels can be drawn multiple times (overdraw),
-    # so their budget is lower than Opaque.
-    "LM001_BUDGET_BY_BLEND_MODE": {
-        "Opaque": 400,
-        "Masked": 350,
-        "Translucent": 200,
-        "Additive": 200,
-        "Modulate": 200,
-    },
-    "LM001_DEFAULT_BUDGET": 400,
-    # LM003 — minimum number of primitives that share a non-instanced material
-    # before we recommend converting it to a Material Instance.
-    "LM003_PRIMITIVES_THRESHOLD": 3,
-}
+# Thresholds are loaded from YAML — see config/thresholds_default.yaml.
+THRESHOLDS = load_profile()
 
 
 # ── LM001 ─────────────────────────────────────────────────────────────────────

@@ -1,0 +1,74 @@
+# core/modules/lod_auditor/config/thresholds_default.yaml
+#
+# Default LOD Auditor thresholds.
+# Targeting AAA PC / Console (mid-to-high end). Mobile and lower-end
+# console profiles override these in their own profile YAML.
+#
+# Reload at runtime by calling lod_auditor.config.load_profile("name").
+
+profile: default
+description: "AAA PC / Console — high VRAM budget, allows large textures"
+
+# ── Textures ──────────────────────────────────────────────────────────────────
+
+LT001_EXPECTED_FORMAT:
+  BaseColor: BC7
+  Normal: BC5
+  Mask: BC4
+  HDR: BC6H
+  UI: RGBA8
+  Data: BC4
+
+LT003_MAX_SIZE_BY_LOD_GROUP:
+  Character: 2048
+  CharacterNormalMap: 2048
+  World: 2048
+  WorldNormalMap: 2048
+  Environment: 2048
+  Terrain: 4096
+  Cinematic: 4096
+  Effects: 1024
+  VFX: 1024
+  UI: 1024
+  Skybox: 2048
+
+LT003_DEFAULT_MAX_SIZE: 2048
+LT005_STREAMING_MIN_EDGE: 2048
+
+# ── Materials ─────────────────────────────────────────────────────────────────
+
+LM001_BUDGET_BY_BLEND_MODE:
+  Opaque: 400
+  Masked: 350
+  Translucent: 200
+  Additive: 200
+  Modulate: 200
+
+LM001_DEFAULT_BUDGET: 400
+LM003_PRIMITIVES_THRESHOLD: 3
+
+# ── Meshes ────────────────────────────────────────────────────────────────────
+
+LD001_MIN_LOD_COUNT: 2
+
+LD003_TRIANGLE_BUDGET:
+  - [50.0, 2000]
+  - [150.0, 8000]
+  - [500.0, 25000]
+  - [.inf, 80000]
+
+# ── Animations ────────────────────────────────────────────────────────────────
+
+LA001_EXPECTED_COMPRESSION:
+  Mocap: ACL_Custom
+  Keyframed: ACL_Custom
+  Procedural: BitwiseACL
+  Additive: ACL_Custom
+
+LA002_MIN_LOD_COUNT: 2
+LA003_MAX_CURVES: 50
+LA003_MAX_KEYS_PER_SECOND: 30
+
+# ── Cross-detection ───────────────────────────────────────────────────────────
+
+LX003_MIN_DUPLICATE_SIZE_KB: 100.0

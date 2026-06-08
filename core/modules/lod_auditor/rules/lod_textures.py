@@ -10,41 +10,16 @@
 
 import logging
 
+from lod_auditor.config import load_profile
 from lod_auditor.schema import Finding, Saving
 from lod_auditor.vram_model import estimate_texture_vram_mb, normalize_compression
 
 _logger = logging.getLogger("shinttools.lod_auditor")
 
-# ── Thresholds ────────────────────────────────────────────────────────────────
-
-THRESHOLDS: dict = {
-    # LT001 — optimal canonical compression per usage type
-    "LT001_EXPECTED_FORMAT": {
-        "BaseColor": "BC7",
-        "Normal": "BC5",
-        "Mask": "BC4",
-        "HDR": "BC6H",
-        "UI": "RGBA8",
-        "Data": "BC4",
-    },
-    # LT003 — maximum resolution (px, long edge) per UE5 LOD group
-    "LT003_MAX_SIZE_BY_LOD_GROUP": {
-        "Character": 2048,
-        "CharacterNormalMap": 2048,
-        "World": 2048,
-        "WorldNormalMap": 2048,
-        "Environment": 2048,
-        "Terrain": 4096,
-        "Cinematic": 4096,
-        "Effects": 1024,
-        "VFX": 1024,
-        "UI": 1024,
-        "Skybox": 2048,
-    },
-    "LT003_DEFAULT_MAX_SIZE": 2048,
-    # LT005 — textures at or above this long-edge size should have streaming on
-    "LT005_STREAMING_MIN_EDGE": 2048,
-}
+# Thresholds are loaded from YAML — see config/thresholds_default.yaml.
+# Profile can be switched at runtime: load_profile("mobile") swaps the
+# cached values transparently across all rules.
+THRESHOLDS = load_profile()
 
 # Usages whose data is linear/non-perceptual — sRGB must be OFF
 _DATA_USAGES: frozenset[str] = frozenset({"Normal", "Mask", "HDR", "Data"})

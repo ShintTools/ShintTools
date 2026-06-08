@@ -5,24 +5,11 @@
 # Each rule is a pure function:
 #   check_ldXXX(asset: dict) -> Finding | None
 
+from lod_auditor.config import load_profile
 from lod_auditor.schema import Finding, Saving
 
-# ── Thresholds ────────────────────────────────────────────────────────────────
-
-THRESHOLDS: dict = {
-    # LD001 — minimum number of LOD levels before we flag the mesh
-    "LD001_MIN_LOD_COUNT": 2,
-    # LD003 — LOD0 triangle budget by mesh size class.
-    # Each entry is (max_bounds_radius, max_triangles).
-    # The list is checked in order; the first matching radius wins.
-    # Units: UE5 world units (1 unit ≈ 1 cm by convention).
-    "LD003_TRIANGLE_BUDGET": [
-        (50.0, 2_000),  # very small props (coins, screws, small decor)
-        (150.0, 8_000),  # small props (chairs, barrels, crates)
-        (500.0, 25_000),  # medium props (cars, trees, room furniture)
-        (float("inf"), 80_000),  # large / hero meshes (buildings, terrain chunks)
-    ],
-}
+# Thresholds are loaded from YAML — see config/thresholds_default.yaml.
+THRESHOLDS = load_profile()
 
 
 # ── LT001 ─────────────────────────────────────────────────────────────────────
