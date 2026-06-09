@@ -76,7 +76,11 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            # Always update :latest — this workflow only triggers on version
+            # tags and manual dispatch, so latest tracking the newest build is
+            # the intended behavior (and lets a manual dispatch publish :latest
+            # for verification without cutting a release tag).
+            type=raw,value=latest
           labels: |
             org.opencontainers.image.title=ShintTools Core
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
