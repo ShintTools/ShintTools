@@ -159,6 +159,99 @@ class CppFixer:
 
         return "\n".join(lines), "\n".join(additions), changes
 
+    @staticmethod
+    def _split_declaration(line: str):
+        """If ``line`` is a simple ``Type Var = rhs;`` declaration (NOT
+        ``auto``), return ``(type, var, rhs)``; otherwise ``None``.
+
+        Used to hoist a declaration out of an ``IsValid()`` guard so the
+        variable stays in the enclosing scope. Wrapping e.g.
+        ``int32 N = Ptr->Count();`` directly in ``if (IsValid(Ptr)) { ... }``
+        would scope ``N`` inside the block and break every later use of ``N``
+        (the exact "safety check breaks the code" defect). ``auto`` is
+        excluded because ``auto N{};`` has no initializer to deduce from.
+        """
+        m = re.match(
+            r"^\s*("
+            r"(?:(?:const|constexpr|static|mutable)\s+)*"
+            r"[A-Za-z_][\w:]*"
+            r"(?:\s*<[^;{}=]*>)?"
+            r"(?:\s*[*&]+|\s+)"  # REQUIRED separator: ptr/ref, or whitespace
+            r")"
+            r"\s*([A-Za-z_]\w*)\s*=\s*(?!=)(.+?)\s*;\s*$",
+            line,
+        )
+        if not m:
+            return None
+        var_type = m.group(1).strip()
+        head = var_type.split()
+        # auto/const/constexpr cannot be hoisted safely (no deducible type, or
+        # not reassignable) — let the caller mark-for-review instead.
+        if (
+            not head
+            or head[0] in {
+                "return", "if", "while", "for", "else", "switch", "do", "case",
+            }
+            or any(t in head for t in ("auto", "const", "constexpr"))
+        ):
+            return None
+        return var_type, m.group(2), m.group(3).strip()
+
+    @staticmethod
+    def _is_declaration_line(line: str) -> bool:
+        """True if ``line`` declares a new local (including ``auto``).
+
+        Lets a caller bail out of an auto-fix that would otherwise scope an
+        un-hoistable declaration (``auto``) inside a guard block.
+        """
+        return (
+            re.match(
+                r"^\s*(?:(?:const|constexpr|static|mutable|auto)\s+)*"
+                r"[A-Za-z_][\w:]*(?:\s*<[^;{}=]*>)?\s*[*&]?\s+\*?[A-Za-z_]\w*"
+                r"\s*=\s*(?!=)",
+                line,
+            )
+            is not None
+        )
+
+    def _build_guarded_block(
+        self,
+        indent: str,
+        guard_expr: str,
+        inner_line: str,
+        prefix_lines=None,
+    ):
+        """Build ``if (guard_expr) { inner_line }`` without breaking scope.
+
+        * ``inner_line`` declares a hoistable variable → hoist it
+          (value-initialised) above the guard and assign inside, keeping it
+          in the enclosing scope.
+        * ``inner_line`` is a non-hoistable declaration (e.g. ``auto``) →
+          return ``None`` so the caller marks the issue for review instead of
+          emitting code that will not compile.
+        * otherwise → wrap the statement as-is.
+        """
+        prefix = list(prefix_lines or [])
+        stripped = inner_line.strip()
+        decl = self._split_declaration(stripped)
+        if decl:
+            var_type, var_name, rhs = decl
+            return prefix + [
+                f"{indent}{var_type} {var_name}{{}};",
+                f"{indent}if ({guard_expr})",
+                f"{indent}{{",
+                f"{indent}    {var_name} = {rhs};",
+                f"{indent}}}",
+            ]
+        if self._is_declaration_line(stripped):
+            return None  # un-hoistable declaration (auto/…): do not break it
+        return prefix + [
+            f"{indent}if ({guard_expr})",
+            f"{indent}{{",
+            f"{indent}    {stripped}",
+            f"{indent}}}",
+        ]
+
     def _apply_null_check(
         self,
         code: str,
@@ -276,14 +369,26 @@ class CppFixer:
                     f"{var_name}->",
                     original.strip(),
                 )
-                new_lines = [
+                cast_decl = (
                     f"{indent}{cast_type}* {var_name} = "
-                    f"Cast<{cast_type}>({cast_arg});",
-                    f"{indent}if (IsValid({var_name}))",
-                    f"{indent}{{",
-                    f"{indent}    {inner}",
-                    f"{indent}}}",
-                ]
+                    f"Cast<{cast_type}>({cast_arg});"
+                )
+                new_lines = self._build_guarded_block(
+                    indent,
+                    f"IsValid({var_name})",
+                    inner,
+                    prefix_lines=[cast_decl],
+                )
+                if new_lines is None:
+                    return (
+                        code,
+                        "",
+                        [
+                            f"Line {line_number}: Cannot auto-fix Cast<{cast_type}>"
+                            f" — its result is bound to an `auto` declaration used"
+                            f" later. Add an IsValid() guard manually."
+                        ],
+                    )
                 lines[idx : idx + 1] = new_lines
                 return (
                     "\n".join(lines),
@@ -332,13 +437,20 @@ class CppFixer:
                     ],
                 )
 
-            # General case: wrap the line in an IsValid() block.
-            new_lines = [
-                f"{indent}if ({wp_var}.IsValid())",
-                f"{indent}{{",
-                f"{indent}    {stripped}",
-                f"{indent}}}",
-            ]
+            # General case: wrap the line in an IsValid() block, hoisting any
+            # declaration out so the variable stays in the enclosing scope.
+            new_lines = self._build_guarded_block(
+                indent, f"{wp_var}.IsValid()", stripped
+            )
+            if new_lines is None:
+                return (
+                    code,
+                    "",
+                    [
+                        f"Line {line_number}: Cannot auto-fix safely — declares a "
+                        f"variable used later. Guard {wp_var}.IsValid() manually."
+                    ],
+                )
             lines[idx : idx + 1] = new_lines
             return (
                 "\n".join(lines),
@@ -356,13 +468,20 @@ class CppFixer:
             )
 
         ptr_var = match.group(1)
-        inner = original.strip()
-        new_lines = [
-            f"{indent}if (IsValid({ptr_var}))",
-            f"{indent}{{",
-            f"{indent}    {inner}",
-            f"{indent}}}",
-        ]
+        new_lines = self._build_guarded_block(
+            indent, f"IsValid({ptr_var})", original
+        )
+        if new_lines is None:
+            return (
+                code,
+                "",
+                [
+                    f"Line {line_number}: Cannot auto-fix safely — "
+                    f"`{original.strip()}` declares a variable used later. "
+                    f"Value-init it first, then assign inside "
+                    f"if (IsValid({ptr_var})) {{ ... }}."
+                ],
+            )
         lines[idx : idx + 1] = new_lines
         return (
             "\n".join(lines),
