@@ -5,8 +5,8 @@
 #   * workflow_dispatch (manual smoke runs from the Actions tab)
 #
 # Output:
-#   ghcr.io/shinttoolsdev/shinttools-core:<semver tag>   (immutable)
-#   ghcr.io/shinttoolsdev/shinttools-core:latest         (mutable, points to last)
+#   ghcr.io/noctxas97dev/shinttools-core:<semver tag>   (immutable)
+#   ghcr.io/noctxas97dev/shinttools-core:latest         (mutable, points to last)
 #
 # The image is PUBLIC and pulled anonymously by the ShintTools marketplace
 # plugin (UE5 Fab + Unity AS) on first install via FShintCoreInstaller.
@@ -70,7 +70,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/shinttoolsdev/shinttools-core
+          images: ghcr.io/noctxas97dev/shinttools-core
           # Semver tag (v1.2.3 -> 1.2.3) for immutable refs + latest for
           # the mutable convenience tag the marketplace plugin pulls.
           tags: |
