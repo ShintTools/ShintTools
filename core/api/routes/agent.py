@@ -305,8 +305,10 @@ _TIER_GATE_MESSAGES = {
         "set it to your license key and restart the core."
     ),
     "key_not_found": (
-        "api_key not recognised — the key was not found in the license database. "
-        "Contact support or re-run the Launcher to reseed your license."
+        "api_key not recognised on this machine. A license key binds 1:1 to "
+        "the first computer that activates it — if it's already in use on "
+        "another machine, release it at shint.tools/account/devices or use "
+        "your own key, then re-run the Launcher to reseed your license."
     ),
     "db_unavailable": (
         "License database is unreachable — MongoDB may not be running. "
