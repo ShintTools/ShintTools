@@ -6,7 +6,7 @@
 
 import time
 
-from api.dashboard_license import activate as dashboard_activate
+from api.dashboard_license import validate_license as dashboard_validate
 from api.database import resolve_tier, seed_license
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -98,7 +98,7 @@ async def activate_license(payload: ActivateRequest):
     """
     t0 = time.perf_counter()
 
-    result = await dashboard_activate(payload.api_key, payload.machine_id)
+    result = await dashboard_validate(payload.api_key, payload.machine_id)
 
     if not result.get("valid"):
         return {

@@ -82,15 +82,16 @@ async def _resolve_tier_via_dashboard(api_key: str) -> tuple[str, str]:
     Launcher seed never ran (container not started, wrong container name,
     key added after installation, etc.).
 
-    Passes machine_id="" because the Core runs inside Docker and cannot
-    read the host machine fingerprint. The dashboard validates by key
-    validity alone in that case; binding is enforced only when the
-    plugin explicitly calls /license/activate with the real machine_id.
+    Uses the dashboard's READ-ONLY /license/validate (not /activate): the
+    Core only needs to read the tier, and validate_license substitutes a
+    stable synthetic machine_id because the Core runs inside Docker and
+    cannot read the host fingerprint. The 1:1 binding is owned by the
+    Launcher, which calls /activate with the real machine_id at install.
     """
-    from api.dashboard_license import activate  # lazy import — avoids circular dep
+    from api.dashboard_license import validate_license  # lazy import — avoids circular dep
 
     try:
-        result = await activate(api_key, machine_id="")
+        result = await validate_license(api_key)
     except Exception as exc:
         logger.error("_resolve_tier_via_dashboard: unexpected error — %s", exc)
         return _DEFAULT_TIER, "db_unavailable"
