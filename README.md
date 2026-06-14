@@ -15,7 +15,7 @@ Automatiza validación de código, optimización de assets y QA para estudios de
 
 ```bash
 # 1. Clonar el repositorio
-git clone https://github.com/Genesishg1509/ShintTools.git
+git clone https://github.com/Noctxas97Dev/ShintTools.git
 cd ShintTools
 
 # 2. Levantar el Core
@@ -294,7 +294,7 @@ El Core Engine expone estos endpoints (FastAPI, puerto `18200`):
 ### 1. Clonar el repositorio
 
 ```bash
-git clone https://github.com/Genesishg1509/ShintTools.git
+git clone https://github.com/Noctxas97Dev/ShintTools.git
 cd ShintTools
 ```
 

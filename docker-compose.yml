@@ -28,7 +28,7 @@ services:
       # Al actualizar el modelo: cambiar FILE, URL y SHA256 juntos.
       SHINTTOOLS_MODELS_DIR: "/app/core/models"
       SHINTTOOLS_MODEL_FILE: "Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf"
-      SHINTTOOLS_MODEL_URL: "https://github.com/Genesishg1509/ShintTools-Models/releases/download/v2.0-models/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf"
+      SHINTTOOLS_MODEL_URL: "https://github.com/Noctxas97Dev/ShintTools-Models/releases/download/v2.0-models/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf"
       SHINTTOOLS_MODEL_SHA256: "f530705d447660a4336c329981af164b471b60b974b1d808d57e8ec9fe23b239"
     depends_on:
       mongodb:
