@@ -75,6 +75,43 @@ async def get_license(payload: LicenseRequest):
         }
 
 
+@router.post("/license/status")
+async def get_license_status(payload: LicenseRequest):
+    """Resolve the server-side license tier as a STRING for the plugin's
+    top-bar indicator.
+
+    The marketplace plugin (FShintLicenseApi::RequestStatus) POSTs
+    ``{"api_key": "..."}`` here and reads ``{"tier": "...", "error": "...",
+    "time": 0.0}``. This is the string-tier sibling of POST /license (which
+    returns an integer ``license`` code for the plugin's enum); both resolve
+    through resolve_tier() — local MongoDB first, remote dashboard fallback.
+
+    Without this route the plugin's POST 404'd, RequestStatus set
+    bSuccess=false, and the indicator defaulted to "free" for EVERY user —
+    paid tiers included — which also hid the dashboard-sync action that is
+    gated on a paid tier.
+
+    Output:
+        error   — non-empty string if something went wrong
+        time    — request duration in seconds
+        tier    — "free" | "indie" | "studio" | "enterprise"
+    """
+    t0 = time.perf_counter()
+    try:
+        tier: str = await resolve_tier(payload.api_key)
+        return {
+            "error": "",
+            "time": round(time.perf_counter() - t0, 4),
+            "tier": tier or "free",
+        }
+    except Exception as exc:
+        return {
+            "error": str(exc),
+            "time": round(time.perf_counter() - t0, 4),
+            "tier": "free",
+        }
+
+
 @router.post("/license/activate")
 async def activate_license(payload: ActivateRequest):
     """Validate a license key against the remote dashboard and seed MongoDB.
