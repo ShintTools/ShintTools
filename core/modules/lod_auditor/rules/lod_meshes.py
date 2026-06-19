@@ -6,6 +6,7 @@
 #   check_ldXXX(asset: dict) -> Finding | None
 
 from lod_auditor.config import load_profile
+from lod_auditor.guidance import guidance_for
 from lod_auditor.schema import Finding, Saving
 
 # Thresholds are loaded from YAML — see config/thresholds_default.yaml.
@@ -15,7 +16,7 @@ THRESHOLDS = load_profile()
 # ── LT001 ─────────────────────────────────────────────────────────────────────
 
 
-def check_ld001(asset: dict) -> Finding | None:
+def check_ld001(asset: dict, engine: str = "unreal") -> Finding | None:
     """LD001: Mesh has no LOD chain — only LOD0 is present."""
     lod_count: int = asset.get("lod_count", 1)
 
@@ -43,7 +44,7 @@ def check_ld001(asset: dict) -> Finding | None:
 # ── LD002 ─────────────────────────────────────────────────────────────────────
 
 
-def check_ld002(asset: dict) -> Finding | None:
+def check_ld002(asset: dict, engine: str = "unreal") -> Finding | None:
     """LD002: LOD chain is not monotonically decreasing in triangles or screen size."""
     raw_lods: list = asset.get("lods", [])
 
@@ -108,7 +109,7 @@ def check_ld002(asset: dict) -> Finding | None:
 # ── LD003 ─────────────────────────────────────────────────────────────────────
 
 
-def check_ld003(asset: dict) -> Finding | None:
+def check_ld003(asset: dict, engine: str = "unreal") -> Finding | None:
     """LD003: LOD0 triangle count exceeds the budget for the mesh's size class."""
     raw_lods: list = asset.get("lods", [])
     bounds_radius: float = float(asset.get("bounds_radius", 100.0))
@@ -147,10 +148,5 @@ def check_ld003(asset: dict) -> Finding | None:
         recommended={"lod0_triangles": f"<= {budget}"},
         estimated_saving=Saving(vram_mb=0.0, shader_instructions=0),
         auto_fixable=False,
-        guidance=(
-            f"Target <= {budget:,} triangles using the engine's mesh reduction "
-            "tools (UE5 Simplygon / built-in auto-LOD). "
-            "Review whether the mesh silhouette can be simplified without "
-            "losing the intended visual fidelity at the closest view distance."
-        ),
+        guidance=guidance_for("LD003", engine, budget=budget),
     )

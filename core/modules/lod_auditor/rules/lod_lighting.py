@@ -8,6 +8,7 @@
 # report whichever level fits its workflow.
 
 from lod_auditor.config import load_profile
+from lod_auditor.guidance import guidance_for
 from lod_auditor.schema import Finding, Saving
 
 THRESHOLDS = load_profile()
@@ -20,7 +21,7 @@ _DEFAULT_OVERDRAW_THRESHOLD = 2.0  # avg overdraw per pixel before flagging
 # ── LL001 ─────────────────────────────────────────────────────────────────────
 
 
-def check_ll001(asset: dict) -> Finding | None:
+def check_ll001(asset: dict, engine: str = "unreal") -> Finding | None:
     """LL001: Lightmap resolution is excessive for the primitive's surface area."""
     if asset.get("asset_type") != "Lightmap":
         return None
@@ -71,7 +72,7 @@ def check_ll001(asset: dict) -> Finding | None:
 # ── LL002 ─────────────────────────────────────────────────────────────────────
 
 
-def check_ll002(asset: dict) -> Finding | None:
+def check_ll002(asset: dict, engine: str = "unreal") -> Finding | None:
     """LL002: Light's draw distance / radius creates measurable overdraw."""
     if asset.get("asset_type") not in ("PointLight", "SpotLight", "RectLight"):
         return None
@@ -96,9 +97,5 @@ def check_ll002(asset: dict) -> Finding | None:
         recommended={"avg_overdraw": f"<= {threshold}"},
         estimated_saving=Saving(vram_mb=0.0, shader_instructions=0),
         auto_fixable=False,
-        guidance=(
-            "In UE5, inspect the LightComplexity view-mode. Shrink the "
-            "AttenuationRadius (PointLight/SpotLight) so the falloff sphere "
-            "doesn't overlap neighbors."
-        ),
+        guidance=guidance_for("LL002", engine),
     )

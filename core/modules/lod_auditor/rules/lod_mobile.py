@@ -8,6 +8,7 @@
 # them prevents shader compile failures and runtime fallbacks.
 
 from lod_auditor.config import load_profile
+from lod_auditor.guidance import guidance_for
 from lod_auditor.schema import Finding, Saving
 
 THRESHOLDS = load_profile()
@@ -44,7 +45,7 @@ def _is_mobile(asset: dict) -> bool:
 # ── LMB001 ────────────────────────────────────────────────────────────────────
 
 
-def check_lmb001_sampler_count(asset: dict) -> Finding | None:
+def check_lmb001_sampler_count(asset: dict, engine: str = "unreal") -> Finding | None:
     """LMB001: Mobile material exceeds the per-shader sampler cap."""
     if not _is_mobile(asset):
         return None
@@ -75,17 +76,14 @@ def check_lmb001_sampler_count(asset: dict) -> Finding | None:
         recommended={"sampler_count": f"<= {budget}"},
         estimated_saving=Saving(vram_mb=0.0, shader_instructions=0),
         auto_fixable=False,
-        guidance=(
-            "Merge texture samples (e.g. pack Roughness/Metallic/AO into one RGB), "
-            "or move some samples to a Material Parameter Collection."
-        ),
+        guidance=guidance_for("LMB001", engine),
     )
 
 
 # ── LMB002 ────────────────────────────────────────────────────────────────────
 
 
-def check_lmb002_compression(asset: dict) -> Finding | None:
+def check_lmb002_compression(asset: dict, engine: str = "unreal") -> Finding | None:
     """LMB002: Texture uses a desktop-only compression format on mobile."""
     if not _is_mobile(asset):
         return None
@@ -115,18 +113,14 @@ def check_lmb002_compression(asset: dict) -> Finding | None:
         recommended={"compression": "ASTC_6x6 (color) or ETC2_RGBA"},
         estimated_saving=Saving(vram_mb=0.0, shader_instructions=0),
         auto_fixable=True,
-        guidance=(
-            "Enable ASTC support in project settings and re-cook. "
-            "ASTC_6x6 is the sweet spot for color textures on iOS A13+ and "
-            "Adreno 6xx; older devices fall back to ETC2."
-        ),
+        guidance=guidance_for("LMB002", engine),
     )
 
 
 # ── LMB003 ────────────────────────────────────────────────────────────────────
 
 
-def check_lmb003_forbidden_nodes(asset: dict) -> Finding | None:
+def check_lmb003_forbidden_nodes(asset: dict, engine: str = "unreal") -> Finding | None:
     """LMB003: Translucent material on mobile uses screen-space nodes."""
     if not _is_mobile(asset):
         return None
@@ -161,8 +155,5 @@ def check_lmb003_forbidden_nodes(asset: dict) -> Finding | None:
         recommended={"forbidden_nodes": "remove or switch to Opaque/Masked"},
         estimated_saving=Saving(vram_mb=0.0, shader_instructions=0),
         auto_fixable=False,
-        guidance=(
-            "Replace SceneTexture/SceneColor with a baked equivalent or use "
-            "a custom RT, or switch the material to Opaque with dithered alpha."
-        ),
+        guidance=guidance_for("LMB003", engine),
     )

@@ -121,6 +121,16 @@ class Finding(BaseModel):
     estimated_saving: Saving
     auto_fixable: bool
     guidance: str | None = None
+    # ── Enrichment (filled by rule_metadata.enrich_lod_finding) ───────────
+    # rule_name: short humanised title; rule_explanation: docstring grounding
+    # for the LLM + UI tooltip; engine: normalised engine ("unreal"|"unity")
+    # so the agent prompt registry resolves the right template.
+    rule_name: str = ""
+    rule_explanation: str = ""
+    engine: str = ""
+    # ai_guidance: optional LLM-generated guidance, attached only when the
+    # caller requests bounded enrichment (Unreal-only, top-N findings).
+    ai_guidance: str | None = None
 
 
 class AuditSummary(BaseModel):
