@@ -1,0 +1,16 @@
+# LoRA fine-tuning dependencies for core/scripts/finetune_lora.py.
+#
+# DELIBERATELY SEPARATE from requirements.txt — the runtime serves explanations
+# via llama-cpp-python (GGUF) and must NOT pull this training stack into the
+# Docker image. Install this only on the machine that trains the adapter:
+#
+#   pip install -r core/requirements-finetune.txt
+#
+# After training, the adapter is merged + re-quantised to GGUF and the runtime
+# keeps using llama.cpp — none of these packages ship to users.
+
+torch>=2.2
+transformers>=4.44
+peft>=0.11
+datasets>=2.19
+accelerate>=0.30
