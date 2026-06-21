@@ -255,38 +255,61 @@ class CSharpFixer:
                 )
         return code, "", [f"'{old_text}' not on lines {line_number}±2"]
 
+    @staticmethod
+    def _statement_end(lines: List[str], start: int) -> int:
+        """Index of the last line of the statement starting at `start`.
+
+        When the start line opens a paren that doesn't close on the same line
+        (a multi-line `Debug.Log($"...",\n  arg);` call), walk forward until
+        the parens balance and the line ends with `;`. A self-contained line
+        returns `start`. Mirrors CppFixer so deleting a multi-line statement
+        never orphans its continuation lines into code that won't compile.
+        """
+        depth = lines[start].count("(") - lines[start].count(")")
+        if depth <= 0:
+            return start
+        for j in range(start + 1, min(start + 25, len(lines))):
+            depth += lines[j].count("(") - lines[j].count(")")
+            if depth <= 0 and lines[j].rstrip().endswith(";"):
+                return j
+        return start  # boundary not found — delete only the start line
+
     def _apply_delete_line(
         self,
         code: str,
         line_number: int,
         marker: Optional[str] = None,
     ) -> Tuple[str, str, List[str]]:
-        """Remove the issue line (or the closest line containing `marker`
-        within ±2 of `line_number`). When `marker` is None, the line at
-        the exact `line_number` is deleted unconditionally.
+        """Remove the full statement on the issue line (or the closest line
+        containing `marker` within ±2 of `line_number`). When `marker` is
+        None, the statement at the exact `line_number` is deleted.
+
+        A multi-line call (e.g. a wrapped `Debug.Log(...)`) is removed whole;
+        popping only its first line would orphan the argument lines.
         """
         lines = code.split("\n")
         idx = line_number - 1
         if idx < 0 or idx >= len(lines):
             return code, "", ["Invalid line number"]
 
+        start = idx
         if marker:
+            start = None
             for offset in (0, 1, -1, 2, -2):
                 j = idx + offset
                 if 0 <= j < len(lines) and marker in lines[j]:
-                    deleted = lines.pop(j)
-                    return (
-                        "\n".join(lines),
-                        "",
-                        [f"Line {j + 1}: deleted ({deleted.strip()!r})"],
-                    )
-            return code, "", [f"marker '{marker}' not on lines {line_number}±2"]
+                    start = j
+                    break
+            if start is None:
+                return code, "", [f"marker '{marker}' not on lines {line_number}±2"]
 
-        deleted = lines.pop(idx)
+        end = self._statement_end(lines, start)
+        deleted = "\n".join(lines[start : end + 1]).strip()
+        del lines[start : end + 1]
         return (
             "\n".join(lines),
             "",
-            [f"Line {line_number}: deleted ({deleted.strip()!r})"],
+            [f"Line {start + 1}: deleted ({deleted[:80]!r})"],
         )
 
 
