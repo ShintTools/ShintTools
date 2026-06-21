@@ -30,8 +30,18 @@
 #       --base Qwen/Qwen2.5-Coder-1.5B-Instruct \
 #       --epochs 3
 #
-# Deploy loop (turning the adapter into a served model):
-#   train (this script) -> peft merge_and_unload() -> fp16 HF model
+# Deploy loop — LOD adapter (PREFERRED; keeps the shared Coder intact):
+#   train (this script) -> llama.cpp convert_lora_to_gguf.py -> a GGUF LoRA
+#     adapter -> point SHINTTOOLS_LOD_LORA_PATH at it.
+#   The runtime keeps ONE base Coder GGUF in RAM and attaches this adapter
+#   ONLY around LOD enrichment generations (llm_backend.lod_adapter()), so
+#   the Deep Code Validator's Coder output is unchanged. Do NOT merge for
+#   the LOD case — merging into the served GGUF would also alter the Code
+#   Validator (and/or force a second model into RAM).
+#
+# Deploy loop — full model swap (only if you ever want EVERY module to move
+# to the fine-tuned weights):
+#   train -> peft merge_and_unload() -> fp16 HF model
 #     -> llama.cpp convert_hf_to_gguf.py -> quantize to Q4_K_M
 #     -> drop the new .gguf in place of the shipped one.
 #   The explainer's cache key includes the model id, so swapping the GGUF

@@ -243,7 +243,7 @@ def _enrich_top_findings(
     # The model lives in the agent process; if it hasn't finished loading we
     # skip enrichment entirely rather than blocking on a cold load.
     try:
-        from agent.llm_backend import is_loaded
+        from agent.llm_backend import is_loaded, lod_adapter
 
         if not is_loaded():
             logger.info("/assets/lod/audit: explain skipped — LLM not loaded")
@@ -260,6 +260,36 @@ def _enrich_top_findings(
     by_finding = dict(zip(findings, result_dicts))
     ranked = sorted(findings, key=_saving_score, reverse=True)[:n]
 
+    # Apply the LOD LoRA adapter (if configured) for the whole enrichment
+    # batch and detach it on exit — set once, clear once. Outside this block
+    # the Deep Code Validator keeps serving the unmodified Coder. A no-op when
+    # no adapter is configured (plain Coder, today's behaviour).
+    with lod_adapter() as lora_applied:
+        if lora_applied:
+            logger.info("/assets/lod/audit: LOD LoRA adapter active for enrichment")
+        _explain_ranked(
+            ranked=ranked,
+            by_finding=by_finding,
+            registry_engine=registry_engine,
+            explain_issue=_explain_issue,
+            log_explanation=log_explanation,
+        )
+
+
+def _explain_ranked(
+    *,
+    ranked: list,
+    by_finding: dict,
+    registry_engine: str,
+    explain_issue,
+    log_explanation,
+) -> None:
+    """Run the explainer over the pre-ranked findings and write back guidance.
+
+    Split out of :func:`_enrich_top_findings` so the LoRA-adapter context wraps
+    exactly the generation work and nothing else. ``explain_issue`` is passed in
+    (already None-checked by the caller) so this helper stays self-contained.
+    """
     for f in ranked:
         issue_dict = {
             "rule_id": f.rule_id,
@@ -276,7 +306,7 @@ def _enrich_top_findings(
         }
         started = time.perf_counter()
         try:
-            explanation = _explain_issue(issue_dict)
+            explanation = explain_issue(issue_dict)
         except Exception as e:  # noqa: BLE001 — never let one failure abort
             logger.warning(
                 "/assets/lod/audit: explain failed for %s (%s): %s",

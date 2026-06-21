@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
 from typing import Any, Iterator, Optional
@@ -38,6 +39,30 @@ DEFAULT_MODELS_DIR = (
 # Module-level singleton. Loaded once during FastAPI lifespan; reused
 # across requests. None until load_model() is called.
 _llama: Optional[Any] = None
+
+# ── Optional LOD LoRA adapter (applied ONLY on LOD enrichment requests) ─────
+#
+# One base Coder GGUF stays in RAM and serves every module. The LOD Auditor
+# can OPTIONALLY specialise its explanations with a LoRA adapter that is
+# attached to the llama context for the duration of a single generation and
+# detached immediately after — see lod_adapter(). The Deep Code Validator
+# never enters that context, so its Coder output is byte-for-byte unchanged.
+#
+# Config (all optional — unset ⇒ feature off, plain Coder everywhere):
+#   SHINTTOOLS_LOD_LORA_PATH    path to a llama.cpp GGUF LoRA adapter
+#   SHINTTOOLS_LOD_LORA_SCALE   adapter strength (float, default 1.0)
+#
+# The adapter is produced by the deploy loop in scripts/finetune_lora.py:
+#   train LoRA → convert_lora_to_gguf.py → drop the .gguf here (NO merge,
+#   so the base Coder is shared, not duplicated).
+_lod_adapter: Optional[Any] = None  # llama_lora_adapter_p, or None when off
+
+
+def _lod_lora_scale() -> float:
+    try:
+        return float(os.environ.get("SHINTTOOLS_LOD_LORA_SCALE", "1.0"))
+    except ValueError:
+        return 1.0
 
 
 def _resolved_model_path() -> Path:
@@ -80,6 +105,79 @@ def load_model(*, n_ctx: int = 4096, n_threads: int | None = None) -> None:
         verbose=False,
     )
 
+    _init_lod_adapter()
+
+
+def _init_lod_adapter() -> None:
+    """Attach the optional LOD LoRA adapter to the loaded model, if configured.
+
+    No-op (and never raises) when SHINTTOOLS_LOD_LORA_PATH is unset, the file
+    is missing, or the binding/adapter fails to load — the runtime then serves
+    the plain Coder for every module, exactly as before. Loading here only
+    *registers* the adapter; it stays detached until lod_adapter() applies it
+    around a single generation.
+    """
+    global _lod_adapter
+    _lod_adapter = None
+    if _llama is None:
+        return
+
+    raw = os.environ.get("SHINTTOOLS_LOD_LORA_PATH", "").strip()
+    if not raw:
+        return
+    adapter_path = Path(raw)
+    if not adapter_path.exists():
+        return
+
+    try:
+        import llama_cpp
+
+        handle = llama_cpp.llama_lora_adapter_init(
+            _llama.model, str(adapter_path).encode("utf-8")
+        )
+    except Exception:
+        handle = None
+    # llama_lora_adapter_init returns NULL (falsy ctypes pointer) on failure.
+    _lod_adapter = handle or None
+
+
+def lod_adapter_loaded() -> bool:
+    """True when a LOD LoRA adapter is registered and ready to apply."""
+    return _lod_adapter is not None
+
+
+@contextlib.contextmanager
+def lod_adapter() -> Iterator[bool]:
+    """Apply the LOD LoRA adapter for the duration of the block, then detach.
+
+    Used ONLY by the LOD audit enrichment path. Yields True if the adapter was
+    actually applied (so callers can log/branch), False otherwise. The adapter
+    is always cleared on exit — even on exception — so a subsequent Deep Code
+    Validator generation can never inherit LOD weights.
+
+    When no adapter is configured this is a transparent no-op: the body runs
+    against the plain Coder, identical to today.
+    """
+    applied = False
+    if _llama is not None and _lod_adapter is not None:
+        try:
+            import llama_cpp
+
+            rc = llama_cpp.llama_lora_adapter_set(
+                _llama.ctx, _lod_adapter, _lod_lora_scale()
+            )
+            applied = rc == 0
+        except Exception:
+            applied = False
+    try:
+        yield applied
+    finally:
+        if applied and _llama is not None:
+            with contextlib.suppress(Exception):
+                import llama_cpp
+
+                llama_cpp.llama_lora_adapter_clear(_llama.ctx)
+
 
 def is_loaded() -> bool:
     """Return True if a model is currently loaded into memory."""
@@ -88,7 +186,13 @@ def is_loaded() -> bool:
 
 def unload_model() -> None:
     """Release the loaded model. Mostly useful in tests."""
-    global _llama
+    global _llama, _lod_adapter
+    if _lod_adapter is not None:
+        with contextlib.suppress(Exception):
+            import llama_cpp
+
+            llama_cpp.llama_lora_adapter_free(_lod_adapter)
+    _lod_adapter = None
     _llama = None
 
 
