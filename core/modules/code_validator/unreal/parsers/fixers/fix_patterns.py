@@ -94,7 +94,15 @@ RULE_TO_PATTERN = {
     "CP004": ("delete_line", "UE_LOG"),
     "CP005": ("replace_sleep", None),
     "CP006": ("move_to_beginplay", "GetAllActorsOfClass"),
-    "CP007": ("replace_text", ("= true", "= false")),
+    # CP007: do NOT auto-flip bCanEverTick. A blind `= true`→`= false`
+    # text replace silently disables tick (and can hit the wrong `= true`
+    # on the line). The detector now only fires when tick is unused, but
+    # the safe action is still developer-reviewed.
+    "CP007": (
+        "mark_for_review",
+        "Tick enabled but no meaningful Tick override found — set "
+        "PrimaryActorTick.bCanEverTick to false if per-frame updates aren't needed",
+    ),
     "CP008": ("cache_calculation", None),
     "CP009": ("cache_calculation", None),
     "CP010": ("replace_text", ("FORCEINLINE", "inline")),

@@ -564,19 +564,61 @@ def detect_get_all_actors_in_tick(
 
 
 # CP007: bCanEverTick = true in constructor
+def _has_meaningful_tick(content: str) -> bool:
+    """True if the file defines a Tick override that does real work (more
+    than a bare ``Super::Tick(...)`` call).
+
+    Enabling tick in the constructor is the CANONICAL, Epic-recommended way
+    to turn on per-frame updates — flagging it unconditionally is a false
+    positive on every actor that genuinely ticks. We only warn when tick is
+    enabled but NOT actually used (no Tick override, or an empty/Super-only
+    one), which is the real waste this rule targets.
+    """
+    sig = re.search(r"\b\w+::Tick\s*\([^)]*\)", content)
+    if not sig:
+        return False
+    brace_start = content.find("{", sig.end())
+    if brace_start == -1:
+        return False
+    depth = 0
+    i = brace_start
+    while i < len(content):
+        ch = content[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    body = content[brace_start + 1 : i]
+    # Strip comments and the Super::Tick call; anything left = real logic.
+    body = re.sub(r"//[^\n]*", "", body)
+    body = re.sub(r"/\*.*?\*/", "", body, flags=re.DOTALL)
+    body = re.sub(r"\bSuper::Tick\s*\([^)]*\)\s*;", "", body)
+    return bool(body.strip())
+
+
 def detect_tick_enabled_in_constructor(
     content: str,
     file_path: str,
 ) -> List[Issue]:
     """
-    Detects PrimaryActorTick.bCanEverTick = true set in
-    the constructor. Tick is disabled by default in UE5
-    for good reason — every Actor with Tick enabled runs
-    its Tick function every frame. Only enable it if the
-    Actor genuinely needs per-frame updates. Use timers
-    or events for infrequent updates instead.
+    Detects PrimaryActorTick.bCanEverTick = true enabled in
+    the constructor of an actor that does NOT actually use
+    Tick (no Tick override, or an empty/Super-only one).
+
+    Enabling tick in the constructor is the correct UE5 pattern
+    when the actor genuinely needs per-frame updates, so we stay
+    silent in that case and only flag the wasteful one: tick on,
+    but no real Tick body. Use timers or events for infrequent
+    logic instead of an always-on empty tick.
     """
     if not _is_source(file_path):
+        return []
+
+    # Actor genuinely ticks → enabling it in the ctor is correct. Skip.
+    if _has_meaningful_tick(content):
         return []
 
     issues: List[Issue] = []

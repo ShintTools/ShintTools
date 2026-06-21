@@ -1,11 +1,16 @@
 """Tests for Tree-sitter fix patterns — all 53 auto-fix rules."""
 
 import sys
+from pathlib import Path
 
-sys.path.insert(0, "C:/Users/Usuario/ShintTools/core")
+# Resolve paths relative to this file so the harness runs on any machine /
+# CI, not just the original author's hardcoded checkout.
+_CORE = Path(__file__).resolve().parents[3]  # .../core
+sys.path.insert(0, str(_CORE))
+sys.path.insert(0, str(_CORE / "modules"))  # for the code_validator package
 sys.path.insert(
     0,
-    "C:/Users/Usuario/ShintTools/core" "/modules/code_validator/unreal/parsers/fixers",
+    str(_CORE / "modules" / "code_validator" / "unreal" / "parsers" / "fixers"),
 )
 
 from cpp_fixer import CppFixer  # noqa: E402
@@ -60,12 +65,15 @@ print("\n=== CORRECTED PATTERNS (CP007, CP010) ===")
 # ================================================================
 
 _run_case(
-    "CP007: bCanEverTick = true -> false",
+    # CP007 no longer auto-flips bCanEverTick (that silently disabled a
+    # needed tick — the "Apply broke my code" defect). It now marks the
+    # line for review and leaves the original code untouched.
+    "CP007: mark_for_review (never flip tick)",
     "CP007",
     "AMyActor::AMyActor() {\n" "    PrimaryActorTick.bCanEverTick = true;\n}",
     2,
+    ["[SHINTTOOLS REVIEW]", "= true"],
     "= false",
-    "= true",
 )
 
 _run_case(

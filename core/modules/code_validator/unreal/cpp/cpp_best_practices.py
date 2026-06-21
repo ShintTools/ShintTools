@@ -466,7 +466,8 @@ def detect_float_no_suffix(
                         content,
                         _char_pos_for_line(source_lines, line_no),
                     ),
-                    "severity": "warning",
+                    # Micro-optimization style nit, not an error.
+                    "severity": "info",
                     "rule_id": "CB008",
                     "category": "Best Practices",
                     "message": (
@@ -564,6 +565,14 @@ def detect_magic_numbers(
         if re.search(r"\bconstexpr\b|\bconst\b.*=", stripped):
             continue
 
+        # Skip a DIRECT literal assignment: `X = 100.0f;` (member default,
+        # UPROPERTY initializer, tuning constant). The value is already named
+        # by the field/variable it's bound to, so it is not a "magic number"
+        # buried in an expression. We still flag literals inside expressions
+        # (`a * 100 + 7`, `if (x > 64)`, `Foo(42, bar)`).
+        if re.search(r"=\s*-?\d+(?:\.\d+)?f?\s*;?\s*$", _code_part(stripped)):
+            continue
+
         magic_match = magic_pattern.search(stripped)
         if magic_match:
             issues.append(
@@ -574,7 +583,10 @@ def detect_magic_numbers(
                         content,
                         _char_pos_for_line(source_lines, line_no),
                     ),
-                    "severity": "warning",
+                    # Style nit, not an error: magic numbers are a readability
+                    # suggestion. Kept at "info" so they don't inflate the
+                    # error/warning count that drives the plugin's UI.
+                    "severity": "info",
                     "rule_id": "CB010",
                     "category": "Best Practices",
                     "message": (

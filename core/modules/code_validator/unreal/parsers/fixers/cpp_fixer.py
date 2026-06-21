@@ -494,10 +494,40 @@ class CppFixer:
         code: str,
         line_number: int,
     ) -> Tuple[str, str, List[str]]:
-        """Delete a line."""
+        """Delete the full statement starting on the given line.
+
+        A multi-line statement — e.g. a ``UE_LOG(...)`` or
+        ``AddOnScreenDebugMessage(...)`` whose arguments wrap across lines —
+        must be removed whole. Popping only the first line leaves the
+        argument lines as orphans that do not compile (the exact "Apply
+        corrupted my file" defect). We walk forward across balanced parens
+        until the terminating ``;``; if the statement does not close within a
+        small window we fall back to deleting just the reported line.
+        """
         lines = code.split("\n")
-        deleted = lines.pop(line_number - 1)
-        return "\n".join(lines), "", [f"Deleted: {deleted.strip()}"]
+        idx = line_number - 1
+        if idx < 0 or idx >= len(lines):
+            return code, "", ["Invalid line number"]
+
+        end = idx
+        # Only extend when the FIRST line opens a paren that doesn't close on
+        # the same line — that's the multi-line-call case. A self-contained
+        # line (single statement, or a `// TODO` comment) has depth <= 0 and
+        # is deleted alone, so we never swallow the following statement.
+        depth = lines[idx].count("(") - lines[idx].count(")")
+        if depth > 0:
+            for j in range(idx + 1, min(idx + 25, len(lines))):
+                depth += lines[j].count("(") - lines[j].count(")")
+                if depth <= 0 and lines[j].rstrip().endswith(";"):
+                    end = j
+                    break
+            else:
+                # Boundary not found in window — delete only the first line.
+                end = idx
+
+        deleted = "\n".join(lines[idx : end + 1]).strip()
+        del lines[idx : end + 1]
+        return "\n".join(lines), "", [f"Deleted: {deleted[:80]}"]
 
     def _apply_replace_sleep(
         self,
@@ -774,12 +804,26 @@ class CppFixer:
             return code, "", ["Invalid line number"]
 
         original = lines[idx]
+
         # Match C-style casts: (Type)expression
         # Negative lookbehind: exclude function-call patterns like func(Type)var
         # Only match when '(' is NOT preceded by an identifier character.
+        #
+        # CRITICAL: a control-flow condition `if (bFlag) DoThing()` has the
+        # exact same shape `(word) word` and would be corrupted into
+        # `static_cast<bFlag>(DoThing)`. Skip any match whose '(' is the
+        # condition of if/while/for/switch/catch — that is NOT a cast.
+        _CONTROL = re.compile(r"\b(?:if|while|for|switch|catch)\s*$")
+
+        def _to_static_cast(m: "re.Match") -> str:
+            before = original[: m.start()]
+            if _CONTROL.search(before):
+                return m.group(0)  # control-flow condition, leave untouched
+            return f"static_cast<{m.group(1)}>({m.group(2)})"
+
         new_line = re.sub(
             r"(?<![a-zA-Z_0-9])\((\w+)\)\s*(\w+)",
-            r"static_cast<\1>(\2)",
+            _to_static_cast,
             original,
         )
         if new_line == original:
