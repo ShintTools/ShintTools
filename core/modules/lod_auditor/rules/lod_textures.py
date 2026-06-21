@@ -39,7 +39,7 @@ _MIPS_WASTEFUL_USAGES: frozenset[str] = frozenset({"UI"})
 # ── LT001 ─────────────────────────────────────────────────────────────────────
 
 
-def check_lt001(asset: dict) -> Finding | None:
+def check_lt001(asset: dict, engine: str = "unreal") -> Finding | None:
     """LT001: Compression format not optimal for the texture's declared usage."""
     usage: str = asset.get("usage", "")
     compression_raw: str = asset.get("compression", "")
@@ -81,7 +81,7 @@ def check_lt001(asset: dict) -> Finding | None:
 # ── LT002 ─────────────────────────────────────────────────────────────────────
 
 
-def check_lt002(asset: dict) -> Finding | None:
+def check_lt002(asset: dict, engine: str = "unreal") -> Finding | None:
     """LT002: MIP chain configuration does not match the texture's usage."""
     usage: str = asset.get("usage", "")
     mips_enabled: bool = asset.get("mips_enabled", True)
@@ -127,7 +127,7 @@ def check_lt002(asset: dict) -> Finding | None:
 # ── LT003 ─────────────────────────────────────────────────────────────────────
 
 
-def check_lt003(asset: dict) -> Finding | None:
+def check_lt003(asset: dict, engine: str = "unreal") -> Finding | None:
     """LT003: Texture resolution exceeds the slot budget for its LOD group."""
     lod_group: str = asset.get("lod_group", "World")
     width: int = asset.get("width", 0)
@@ -184,7 +184,7 @@ def check_lt003(asset: dict) -> Finding | None:
 # ── LT004 ─────────────────────────────────────────────────────────────────────
 
 
-def check_lt004(asset: dict) -> Finding | None:
+def check_lt004(asset: dict, engine: str = "unreal") -> Finding | None:
     """LT004: sRGB flag does not match the texture's data type."""
     usage: str = asset.get("usage", "")
     srgb: bool = asset.get("srgb", True)
@@ -231,7 +231,7 @@ def check_lt004(asset: dict) -> Finding | None:
 # ── LT005 ─────────────────────────────────────────────────────────────────────
 
 
-def check_lt005(asset: dict) -> Finding | None:
+def check_lt005(asset: dict, engine: str = "unreal") -> Finding | None:
     """LT005: Large texture with streaming disabled occupies VRAM permanently."""
     width: int = asset.get("width", 0)
     height: int = asset.get("height", 0)

@@ -6,6 +6,7 @@
 #   check_laXXX(asset: dict) -> Finding | None
 
 from lod_auditor.config import load_profile
+from lod_auditor.guidance import guidance_for
 from lod_auditor.schema import Finding, Saving
 
 # Thresholds are loaded from YAML — see config/thresholds_default.yaml.
@@ -19,7 +20,7 @@ _VALID_COMPRESSION_SOURCES: frozenset[str] = frozenset(
 # ── LA001 ─────────────────────────────────────────────────────────────────────
 
 
-def check_la001(asset: dict) -> Finding | None:
+def check_la001(asset: dict, engine: str = "unreal") -> Finding | None:
     """LA001: Animation Sequence compression not optimal for its source type."""
     source: str = asset.get("anim_source", "")
     compression: str = asset.get("compression_format", "")
@@ -60,7 +61,7 @@ def check_la001(asset: dict) -> Finding | None:
 # ── LA002 ─────────────────────────────────────────────────────────────────────
 
 
-def check_la002(asset: dict) -> Finding | None:
+def check_la002(asset: dict, engine: str = "unreal") -> Finding | None:
     """LA002: Skeletal Mesh has no LOD chain (mirror of LD001 for skeletal)."""
     if asset.get("asset_type") != "SkeletalMesh":
         return None
@@ -90,7 +91,7 @@ def check_la002(asset: dict) -> Finding | None:
 # ── LA003 ─────────────────────────────────────────────────────────────────────
 
 
-def check_la003(asset: dict) -> Finding | None:
+def check_la003(asset: dict, engine: str = "unreal") -> Finding | None:
     """LA003: Animation has excessive curve count or keyframe density."""
     if asset.get("asset_type") != "AnimSequence":
         return None
@@ -136,9 +137,5 @@ def check_la003(asset: dict) -> Finding | None:
         },
         estimated_saving=Saving(vram_mb=0.0, shader_instructions=0),
         auto_fixable=False,
-        guidance=(
-            "Re-import with reduced sample rate, or use UE5's "
-            "'Bake Animation Curve' to remove redundant curves "
-            "that drive constants."
-        ),
+        guidance=guidance_for("LA003", engine),
     )

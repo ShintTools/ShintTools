@@ -112,6 +112,16 @@ class LodAuditRequest(BaseModel):
 
     api_key: str = ""
     profile: str = "default"  # "default" | "mobile" — selects threshold YAML
+    # Engine drives engine-aware fix guidance (Unreal vs Unity wording) and,
+    # when explain=True, which agent prompt template is used. Accepts any of
+    # "unreal"/"ue5"/"unity"/"unity6" (case-insensitive); normalised internally.
+    engine: str = "unreal"
+    # Bounded LLM enrichment (Unreal only). When explain=True, after the
+    # deterministic findings are computed the top `max_explanations` findings
+    # (by estimated saving) get an LLM-written `ai_guidance`. Off by default
+    # because each explanation costs ~20-40s on CPU.
+    explain: bool = False
+    max_explanations: int = 5
     assets: list[LodAssetFile] = Field(default_factory=list)
 
 
@@ -173,6 +183,156 @@ def _to_audit_dict(asset_model: LodAssetFile) -> dict[str, Any]:
     if asset_dict["streaming_enabled"] and not asset_dict["streaming"]:
         asset_dict["streaming"] = True
     return asset_dict
+
+
+def _normalize_engine(raw: str) -> str:
+    """Map any engine spelling the plugin sends to the canonical rule engine.
+
+    Rules + guidance key off "unreal" / "unity". Anything unrecognised
+    defaults to "unreal" (the historical behaviour before the field existed).
+    """
+    e = (raw or "").strip().lower()
+    if e in ("unity", "unity6"):
+        return "unity"
+    return "unreal"
+
+
+# Canonical engine -> the agent prompt-registry engine token. The registry
+# resolves LOD templates as templates/lod_auditor/{engine}/vN.yaml; only "ue5"
+# exists today, so Unity findings are never sent to the LLM (deterministic
+# guidance only — see the enrichment guard below).
+_REGISTRY_ENGINE = {"unreal": "ue5", "unity": "unity6"}
+
+# Hard ceiling on enrichment regardless of what the client requests — the model
+# is CPU-only at ~20-40s/finding, so even Studio can't ask for a 200-finding
+# enrichment that would block the request for over an hour.
+_MAX_EXPLANATIONS_CEILING = 10
+
+
+def _saving_score(finding) -> float:
+    """Rank key for enrichment: VRAM saved + a small weight on shader savings.
+
+    Highest-impact findings get the (expensive) LLM treatment first.
+    """
+    s = finding.estimated_saving
+    return s.vram_mb + 0.01 * s.shader_instructions
+
+
+def _enrich_top_findings(
+    *,
+    findings: list,
+    result_dicts: list[dict[str, Any]],
+    registry_engine: str,
+    max_explanations: int,
+) -> None:
+    """Attach LLM ``ai_guidance`` to the top-N findings, best-effort.
+
+    Sorts findings by estimated saving, takes the top ``max_explanations``
+    (clamped to [0, ceiling]), runs the explainer on each, and writes the text
+    into the matching result dict. Every step is guarded: a slow/unloaded model
+    or a single failed call never affects the deterministic results already in
+    ``result_dicts``. Each explanation is logged to JSONL for fine-tuning.
+    """
+    if not _EXPLAINER_AVAILABLE or _explain_issue is None:
+        return
+
+    n = max(0, min(max_explanations, _MAX_EXPLANATIONS_CEILING))
+    if n == 0 or not findings:
+        return
+
+    # The model lives in the agent process; if it hasn't finished loading we
+    # skip enrichment entirely rather than blocking on a cold load.
+    try:
+        from agent.llm_backend import is_loaded, lod_adapter
+
+        if not is_loaded():
+            logger.info("/assets/lod/audit: explain skipped — LLM not loaded")
+            return
+    except Exception:
+        return
+
+    try:
+        from agent.finetuning_logger import log_explanation
+    except Exception:
+        log_explanation = None  # logging is optional
+
+    # Index result dicts by identity of their finding so we can write back.
+    by_finding = dict(zip(findings, result_dicts))
+    ranked = sorted(findings, key=_saving_score, reverse=True)[:n]
+
+    # Apply the LOD LoRA adapter (if configured) for the whole enrichment
+    # batch and detach it on exit — set once, clear once. Outside this block
+    # the Deep Code Validator keeps serving the unmodified Coder. A no-op when
+    # no adapter is configured (plain Coder, today's behaviour).
+    with lod_adapter() as lora_applied:
+        if lora_applied:
+            logger.info("/assets/lod/audit: LOD LoRA adapter active for enrichment")
+        _explain_ranked(
+            ranked=ranked,
+            by_finding=by_finding,
+            registry_engine=registry_engine,
+            explain_issue=_explain_issue,
+            log_explanation=log_explanation,
+        )
+
+
+def _explain_ranked(
+    *,
+    ranked: list,
+    by_finding: dict,
+    registry_engine: str,
+    explain_issue,
+    log_explanation,
+) -> None:
+    """Run the explainer over the pre-ranked findings and write back guidance.
+
+    Split out of :func:`_enrich_top_findings` so the LoRA-adapter context wraps
+    exactly the generation work and nothing else. ``explain_issue`` is passed in
+    (already None-checked by the caller) so this helper stays self-contained.
+    """
+    for f in ranked:
+        issue_dict = {
+            "rule_id": f.rule_id,
+            "rule_name": f.rule_name,
+            "rule_explanation": f.rule_explanation,
+            "engine": registry_engine,  # stamp so the registry picks the template
+            "asset_path": f.asset_path,
+            "message": f.message,
+            "severity": f.severity,
+            "is_auto_fixable": f.auto_fixable,
+            "current": f.current,
+            "recommended": f.recommended,
+            "snippet": f"Current: {f.current}\nRecommended: {f.recommended}",
+        }
+        started = time.perf_counter()
+        try:
+            explanation = explain_issue(issue_dict)
+        except Exception as e:  # noqa: BLE001 — never let one failure abort
+            logger.warning(
+                "/assets/lod/audit: explain failed for %s (%s): %s",
+                f.asset_path,
+                f.rule_id,
+                e,
+            )
+            continue
+        elapsed = round(time.perf_counter() - started, 2)
+
+        target = by_finding.get(f)
+        if target is not None:
+            target["ai_guidance"] = explanation
+
+        if log_explanation is not None:
+            try:
+                log_explanation(
+                    rule_id=f.rule_id,
+                    rule_name=f.rule_name,
+                    rule_explanation=f.rule_explanation,
+                    explanation_generated=explanation,
+                    issue_payload=issue_dict,
+                    generation_seconds=elapsed,
+                )
+            except Exception:  # noqa: BLE001 — best-effort logging
+                pass
 
 
 # Human-readable cause per resolve_tier reason code. Surfaced in the 403
@@ -249,13 +409,20 @@ async def lod_audit(payload: LodAuditRequest):
     # load_profile is cached, so the cost is one yaml.safe_load per process.
     load_profile(payload.profile)
 
+    engine = _normalize_engine(payload.engine)
     assets_dicts = [_to_audit_dict(f) for f in payload.assets if f.asset_path]
     logger.info(
-        "/assets/lod/audit: assets=%d profile=%s", len(assets_dicts), payload.profile
+        "/assets/lod/audit: assets=%d profile=%s engine=%s explain=%s",
+        len(assets_dicts),
+        payload.profile,
+        engine,
+        payload.explain,
     )
 
     try:
-        audit_response = audit_assets(assets_dicts, allowed_rules=None)
+        audit_response = audit_assets(
+            assets_dicts, engine=engine, allowed_rules=None
+        )
     except Exception as e:
         logger.error("/assets/lod/audit: error during audit: %s", e)
         return {
@@ -265,50 +432,43 @@ async def lod_audit(payload: LodAuditRequest):
             "results": [],
         }
 
+    # Build the deterministic result list first. These are always returned in
+    # full — LLM enrichment (below) is best-effort and never blocks or drops
+    # them. Each dict pairs 1:1 with its Finding so we can attach ai_guidance
+    # to the selected top-N afterwards.
     results: list[dict[str, Any]] = []
     for f in audit_response.results:
-        result_dict = {
-            "asset_path": f.asset_path,
-            "rule_id": f.rule_id,
-            "category": f.category,
-            "severity": f.severity,
-            "message": f.message,
-            "current": f.current,
-            "recommended": f.recommended,
-            "auto_fixable": f.auto_fixable,
-            "guidance": f.guidance,
-            "estimated_saving": {
-                "vram_mb": round(f.estimated_saving.vram_mb, 2),
-                "shader_instructions": f.estimated_saving.shader_instructions,
-            },
-        }
+        results.append(
+            {
+                "asset_path": f.asset_path,
+                "rule_id": f.rule_id,
+                "rule_name": f.rule_name,
+                "category": f.category,
+                "severity": f.severity,
+                "message": f.message,
+                "current": f.current,
+                "recommended": f.recommended,
+                "auto_fixable": f.auto_fixable,
+                "guidance": f.guidance,
+                "ai_guidance": None,
+                "engine": f.engine,
+                "estimated_saving": {
+                    "vram_mb": round(f.estimated_saving.vram_mb, 2),
+                    "shader_instructions": f.estimated_saving.shader_instructions,
+                },
+            }
+        )
 
-        # Optional LLM-generated guidance (currently scoped to indie, kept
-        # for forward-compat; Studio tier sees deterministic guidance).
-        if _EXPLAINER_AVAILABLE and _explain_issue and tier == "studio":
-            try:
-                issue_dict = {
-                    "rule_id": f.rule_id,
-                    "rule_name": f"{f.rule_id} — {f.message[:60]}",
-                    "rule_explanation": "",
-                    "asset_path": f.asset_path,
-                    "message": f.message,
-                    "severity": f.severity,
-                    "is_auto_fixable": f.auto_fixable,
-                    "current": f.current,
-                    "recommended": f.recommended,
-                    "snippet": f"Current: {f.current}\nRecommended: {f.recommended}",
-                }
-                explanation = _explain_issue(issue_dict)
-                result_dict["detailed_guidance"] = explanation
-            except Exception as e:
-                logger.warning(
-                    "/assets/lod/audit: guidance failed for %s: %s",
-                    f.asset_path,
-                    e,
-                )
-
-        results.append(result_dict)
+    # Bounded LLM enrichment — Unreal only, opt-in, top-N by estimated saving.
+    # Off by default; never runs for Unity (no unity6 LOD template) and never
+    # blocks the deterministic results if the model is slow or not loaded.
+    if payload.explain and engine == "unreal":
+        _enrich_top_findings(
+            findings=audit_response.results,
+            result_dicts=results,
+            registry_engine=_REGISTRY_ENGINE[engine],
+            max_explanations=payload.max_explanations,
+        )
 
     logger.info("/assets/lod/audit: completed with %d findings", len(results))
 
@@ -346,16 +506,20 @@ async def lod_report(payload: LodReportRequest):
     await _enforce_studio(payload.api_key, "/assets/lod/report")
 
     load_profile(payload.profile)
+    engine = _normalize_engine(payload.engine)
     assets_dicts = [_to_audit_dict(f) for f in payload.assets if f.asset_path]
     logger.info(
-        "/assets/lod/report: assets=%d profile=%s top_n=%d",
+        "/assets/lod/report: assets=%d profile=%s engine=%s top_n=%d",
         len(assets_dicts),
         payload.profile,
+        engine,
         payload.top_n,
     )
 
     try:
-        audit_response = audit_assets(assets_dicts, allowed_rules=None)
+        audit_response = audit_assets(
+            assets_dicts, engine=engine, allowed_rules=None
+        )
     except Exception as e:
         logger.error("/assets/lod/report: error during audit: %s", e)
         return {

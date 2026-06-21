@@ -92,8 +92,12 @@ _LIGHTING_ASSET_TYPES: frozenset[str] = frozenset(
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
 
-def _dispatch_asset(asset: dict[str, Any]) -> list[Finding]:
-    """Run all rules applicable to *asset* and return their findings."""
+def _dispatch_asset(asset: dict[str, Any], engine: str) -> list[Finding]:
+    """Run all rules applicable to *asset* and return their findings.
+
+    *engine* ("unreal" | "unity") is threaded to each rule so it can emit
+    engine-appropriate guidance via lod_auditor.guidance.guidance_for.
+    """
     asset_type: str = asset.get("asset_type", "")
 
     rules: list = []
@@ -119,18 +123,18 @@ def _dispatch_asset(asset: dict[str, Any]) -> list[Finding]:
 
     findings: list[Finding] = []
     for check_fn in rules:
-        result = check_fn(asset)
+        result = check_fn(asset, engine)
         if result is not None:
             findings.append(result)
 
     return findings
 
 
-def _run_cross_rules(assets: list[dict[str, Any]]) -> list[Finding]:
+def _run_cross_rules(assets: list[dict[str, Any]], engine: str) -> list[Finding]:
     """Run every cross-asset detector against the full batch."""
     findings: list[Finding] = []
     for cross_fn in CROSS_RULES:
-        findings.extend(cross_fn(assets))
+        findings.extend(cross_fn(assets, engine))
     return findings
 
 
@@ -156,31 +160,42 @@ def _compute_summary(findings: list[Finding], assets_audited: int) -> AuditSumma
 
 def audit_assets(
     assets: list[dict[str, Any]],
+    *,
+    engine: str = "unreal",
     allowed_rules: frozenset[str] | None = None,
 ) -> AuditResponse:
     """Run all LOD rules on a list of raw asset dicts.
 
     Args:
         assets:        Asset metadata dicts as received from the plugin.
+        engine:        Normalised engine ("unreal" | "unity") used to tailor
+                       fix guidance and stamp findings for the agent registry.
         allowed_rules: Frozenset of rule IDs the client's tier may see.
                        ``None`` means all rules are visible (Studio tier).
 
     Returns:
-        AuditResponse with a summary and the full list of findings.
+        AuditResponse with a summary and the full list of findings, each
+        enriched with rule_name / rule_explanation / engine.
     """
+    from lod_auditor.rule_metadata import enrich_lod_finding
+
     all_findings: list[Finding] = []
 
     # Per-asset rules
     for asset in assets:
-        findings = _dispatch_asset(asset)
+        findings = _dispatch_asset(asset, engine)
         all_findings.extend(findings)
 
     # Cross-asset rules see the full batch in one pass
-    all_findings.extend(_run_cross_rules(assets))
+    all_findings.extend(_run_cross_rules(assets, engine))
 
     # Apply tier filter once at the end
     if allowed_rules is not None:
         all_findings = [f for f in all_findings if f.rule_id in allowed_rules]
+
+    # Enrich every finding with rule_name / rule_explanation / engine.
+    for finding in all_findings:
+        enrich_lod_finding(finding, engine)
 
     summary = _compute_summary(all_findings, len(assets))
     return AuditResponse(summary=summary, results=all_findings)

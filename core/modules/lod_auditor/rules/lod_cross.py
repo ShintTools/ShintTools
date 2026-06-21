@@ -25,7 +25,7 @@ THRESHOLDS = load_profile()
 # ── LX001 ─────────────────────────────────────────────────────────────────────
 
 
-def check_lx001_dead_textures(assets: list[dict]) -> list[Finding]:
+def check_lx001_dead_textures(assets: list[dict], engine: str = "unreal") -> list[Finding]:
     """LX001: Texture asset not referenced by any material in the batch.
 
     The plugin populates ``referenced_by_materials`` per texture. A zero
@@ -87,7 +87,7 @@ def check_lx001_dead_textures(assets: list[dict]) -> list[Finding]:
 # ── LX002 ─────────────────────────────────────────────────────────────────────
 
 
-def check_lx002_dead_materials(assets: list[dict]) -> list[Finding]:
+def check_lx002_dead_materials(assets: list[dict], engine: str = "unreal") -> list[Finding]:
     """LX002: Material/MaterialInstance assigned to zero primitives.
 
     The plugin populates ``used_by_primitives`` per material. A zero means
@@ -133,7 +133,7 @@ def check_lx002_dead_materials(assets: list[dict]) -> list[Finding]:
 # ── LX003 ─────────────────────────────────────────────────────────────────────
 
 
-def check_lx003_duplicate_meshes(assets: list[dict]) -> list[Finding]:
+def check_lx003_duplicate_meshes(assets: list[dict], engine: str = "unreal") -> list[Finding]:
     """LX003: Two or more meshes share an identical content hash.
 
     Requires the plugin to compute a ``content_hash`` per StaticMesh

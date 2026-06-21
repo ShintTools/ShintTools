@@ -72,10 +72,14 @@ def _mesh_asset(
 
 @pytest.fixture
 def _studio_tier(monkeypatch):
-    """Patch resolve_tier to return 'studio' for tests that need full access."""
+    """Patch resolve_tier_detailed to return 'studio' for tests needing access.
+
+    resolve_tier_detailed returns a (tier, reason) tuple — reason is empty for
+    a cleanly-resolved key.
+    """
     monkeypatch.setattr(
-        "api.routes.lod_audit.resolve_tier",
-        AsyncMock(return_value="studio"),
+        "api.routes.lod_audit.resolve_tier_detailed",
+        AsyncMock(return_value=("studio", "")),
     )
 
 
@@ -182,8 +186,8 @@ class TestTierGating:
     @pytest.mark.anyio
     async def test_indie_tier_returns_403(self, async_client, monkeypatch):
         monkeypatch.setattr(
-            "api.routes.lod_audit.resolve_tier",
-            AsyncMock(return_value="indie"),
+            "api.routes.lod_audit.resolve_tier_detailed",
+            AsyncMock(return_value=("indie", "")),
         )
         payload = _audit_payload(assets=[_texture_asset("Assets/T1.png")])
         resp = await async_client.post("/assets/lod/audit", json=payload)
@@ -195,8 +199,8 @@ class TestTierGating:
     @pytest.mark.anyio
     async def test_studio_tier_returns_200(self, async_client, monkeypatch):
         monkeypatch.setattr(
-            "api.routes.lod_audit.resolve_tier",
-            AsyncMock(return_value="studio"),
+            "api.routes.lod_audit.resolve_tier_detailed",
+            AsyncMock(return_value=("studio", "")),
         )
         payload = _audit_payload(assets=[_texture_asset("Assets/T1.png")])
         resp = await async_client.post("/assets/lod/audit", json=payload)
@@ -205,8 +209,8 @@ class TestTierGating:
     @pytest.mark.anyio
     async def test_studio_sees_all_rules(self, async_client, monkeypatch):
         monkeypatch.setattr(
-            "api.routes.lod_audit.resolve_tier",
-            AsyncMock(return_value="studio"),
+            "api.routes.lod_audit.resolve_tier_detailed",
+            AsyncMock(return_value=("studio", "")),
         )
         assets = [
             _texture_asset("Assets/T1.png", compression="BC5"),  # LT001
@@ -276,3 +280,117 @@ class TestResponseStructure:
         resp = await async_client.post("/assets/lod/audit", json=payload)
         elapsed = resp.json()["time"]
         assert elapsed < 1.0, f"Audit took {elapsed}s — expected < 1s"
+
+
+# ── Engine-awareness + bounded enrichment ──────────────────────────────────
+
+
+class TestEngineAware:
+    """The engine field tailors guidance; findings carry rule_name + engine."""
+
+    @pytest.mark.anyio
+    async def test_unity_engine_returns_unity_guidance(
+        self, async_client, _studio_tier
+    ):
+        mesh = _mesh_asset("Assets/M.uasset", lod_count=1)
+        mesh["lods"] = [{"index": 0, "triangles": 90000, "screen_size": 1.0}]
+        mesh["bounds_radius"] = 40.0
+        mesh["asset_type"] = "Mesh"  # Unity name
+        payload = _audit_payload(assets=[mesh])
+        payload["engine"] = "unity"
+        resp = await async_client.post("/assets/lod/audit", json=payload)
+        assert resp.status_code == 200
+        results = resp.json()["results"]
+        ld003 = [f for f in results if f["rule_id"] == "LD003"]
+        assert ld003, "LD003 should fire (non-empty results — Unity contract OK)"
+        assert "Simplygon" not in (ld003[0]["guidance"] or "")
+        # rule_name is populated (Unity needs it for its row label).
+        assert ld003[0]["rule_name"]
+
+    @pytest.mark.anyio
+    async def test_unreal_engine_keeps_unreal_guidance(
+        self, async_client, _studio_tier
+    ):
+        mesh = _mesh_asset("Assets/M.uasset", lod_count=1)
+        mesh["lods"] = [{"index": 0, "triangles": 90000, "screen_size": 1.0}]
+        mesh["bounds_radius"] = 40.0
+        payload = _audit_payload(assets=[mesh])
+        payload["engine"] = "unreal"
+        resp = await async_client.post("/assets/lod/audit", json=payload)
+        ld003 = [f for f in resp.json()["results"] if f["rule_id"] == "LD003"]
+        assert ld003
+        assert "Simplygon" in (ld003[0]["guidance"] or "")
+
+
+class TestBoundedEnrichment:
+    """explain=true is Unreal-only, top-N, and degrades gracefully."""
+
+    def _over_budget_mesh(self):
+        return {
+            "asset_path": "/Game/Meshes/Rock",
+            "asset_type": "StaticMesh",
+            "lod_count": 1,
+            "lods": [{"index": 0, "triangles": 90000, "screen_size": 1.0}],
+            "bounds_radius": 40.0,
+        }
+
+    @pytest.mark.anyio
+    async def test_explain_false_does_no_llm_calls(
+        self, async_client, _studio_tier, monkeypatch
+    ):
+        # If the explainer were called, this would raise — assert it isn't.
+        def _boom(*a, **k):
+            raise AssertionError("explainer must not run when explain=false")
+
+        monkeypatch.setattr("api.routes.lod_audit._explain_issue", _boom)
+        payload = _audit_payload(assets=[self._over_budget_mesh()])
+        payload["explain"] = False
+        resp = await async_client.post("/assets/lod/audit", json=payload)
+        assert resp.status_code == 200
+        for f in resp.json()["results"]:
+            assert f.get("ai_guidance") is None
+
+    @pytest.mark.anyio
+    async def test_explain_graceful_when_llm_unloaded(
+        self, async_client, _studio_tier, monkeypatch
+    ):
+        # Enrichment is requested but the model isn't loaded → deterministic
+        # results still return, no ai_guidance, no error.
+        monkeypatch.setattr("api.routes.lod_audit._EXPLAINER_AVAILABLE", True)
+        monkeypatch.setattr(
+            "api.routes.lod_audit._explain_issue", lambda d: "should not be used"
+        )
+        # Patch is_loaded() (imported lazily inside the helper) to False.
+        import types
+
+        fake_backend = types.SimpleNamespace(is_loaded=lambda: False)
+        monkeypatch.setitem(
+            __import__("sys").modules, "agent.llm_backend", fake_backend
+        )
+        payload = _audit_payload(assets=[self._over_budget_mesh()])
+        payload["explain"] = True
+        payload["engine"] = "unreal"
+        resp = await async_client.post("/assets/lod/audit", json=payload)
+        assert resp.status_code == 200
+        for f in resp.json()["results"]:
+            assert f.get("ai_guidance") is None
+
+    @pytest.mark.anyio
+    async def test_unity_never_enriched(
+        self, async_client, _studio_tier, monkeypatch
+    ):
+        # explain=true on Unity must NOT call the explainer (no unity6 template).
+        def _boom(*a, **k):
+            raise AssertionError("Unity must not be enriched")
+
+        monkeypatch.setattr("api.routes.lod_audit._EXPLAINER_AVAILABLE", True)
+        monkeypatch.setattr("api.routes.lod_audit._explain_issue", _boom)
+        mesh = self._over_budget_mesh()
+        mesh["asset_type"] = "Mesh"
+        payload = _audit_payload(assets=[mesh])
+        payload["explain"] = True
+        payload["engine"] = "unity"
+        resp = await async_client.post("/assets/lod/audit", json=payload)
+        assert resp.status_code == 200
+        for f in resp.json()["results"]:
+            assert f.get("ai_guidance") is None

@@ -6,6 +6,7 @@
 #   check_lmXXX(asset: dict) -> Finding | None
 
 from lod_auditor.config import load_profile
+from lod_auditor.guidance import guidance_for
 from lod_auditor.schema import Finding, Saving
 
 # Thresholds are loaded from YAML — see config/thresholds_default.yaml.
@@ -15,7 +16,7 @@ THRESHOLDS = load_profile()
 # ── LM001 ─────────────────────────────────────────────────────────────────────
 
 
-def check_lm001(asset: dict) -> Finding | None:
+def check_lm001(asset: dict, engine: str = "unreal") -> Finding | None:
     """LM001: Shader instruction count exceeds the budget for its blend mode."""
     instruction_count: int = asset.get("instruction_count", 0)
     blend_mode: str = asset.get("blend_mode", "Opaque")
@@ -42,18 +43,14 @@ def check_lm001(asset: dict) -> Finding | None:
         recommended={"instruction_count": f"<= {budget}"},
         estimated_saving=Saving(vram_mb=0.0, shader_instructions=excess),
         auto_fixable=False,
-        guidance=(
-            "Move constant calculations to material parameters, "
-            "remove redundant nodes, or merge texture samples. "
-            "Use the Material Stats panel to identify expensive nodes."
-        ),
+        guidance=guidance_for("LM001", engine),
     )
 
 
 # ── LM002 ─────────────────────────────────────────────────────────────────────
 
 
-def check_lm002(asset: dict) -> Finding | None:
+def check_lm002(asset: dict, engine: str = "unreal") -> Finding | None:
     """LM002: Same texture sampled more than once (duplicate sampler slot usage).
 
     Requires the plugin to populate ``texture_samples`` on the asset dict.
@@ -106,7 +103,7 @@ def check_lm002(asset: dict) -> Finding | None:
 # ── LM003 ─────────────────────────────────────────────────────────────────────
 
 
-def check_lm003(asset: dict) -> Finding | None:
+def check_lm003(asset: dict, engine: str = "unreal") -> Finding | None:
     """LM003: Non-instanced material shared across many primitives."""
     is_material_instance: bool = asset.get("is_material_instance", False)
     used_by_primitives: int = asset.get("used_by_primitives", 1)
@@ -132,8 +129,5 @@ def check_lm003(asset: dict) -> Finding | None:
         recommended={"is_material_instance": True},
         estimated_saving=Saving(vram_mb=0.0, shader_instructions=0),
         auto_fixable=False,
-        guidance=(
-            "Right-click the material → Create Material Instance. "
-            "Assign the instance to each primitive that references this material."
-        ),
+        guidance=guidance_for("LM003", engine),
     )

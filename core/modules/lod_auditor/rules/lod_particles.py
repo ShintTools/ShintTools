@@ -22,7 +22,7 @@ _DEFAULT_MAX_EMITTERS_PER_SYSTEM = 8
 # ── LV001 ─────────────────────────────────────────────────────────────────────
 
 
-def check_lv001(asset: dict) -> Finding | None:
+def check_lv001(asset: dict, engine: str = "unreal") -> Finding | None:
     """LV001: Particle system exceeds the max-particles budget for its sim type."""
     if asset.get("asset_type") not in ("NiagaraSystem", "ParticleSystem"):
         return None
@@ -64,7 +64,7 @@ def check_lv001(asset: dict) -> Finding | None:
 # ── LV002 ─────────────────────────────────────────────────────────────────────
 
 
-def check_lv002(asset: dict) -> Finding | None:
+def check_lv002(asset: dict, engine: str = "unreal") -> Finding | None:
     """LV002: CPU sim used where GPU would scale far better.
 
     Heuristic: any CPU emitter declaring > 1 000 particles should be on
@@ -107,7 +107,7 @@ def check_lv002(asset: dict) -> Finding | None:
 # ── LV003 ─────────────────────────────────────────────────────────────────────
 
 
-def check_lv003(asset: dict) -> Finding | None:
+def check_lv003(asset: dict, engine: str = "unreal") -> Finding | None:
     """LV003: Particle system without bounds culling (always-evaluating)."""
     if asset.get("asset_type") not in ("NiagaraSystem", "ParticleSystem"):
         return None

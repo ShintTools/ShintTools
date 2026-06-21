@@ -24,7 +24,7 @@ _COMPRESSED_FORMATS: frozenset[str] = frozenset({"OGG", "Vorbis", "ADPCM", "Opus
 # ── LU001 ─────────────────────────────────────────────────────────────────────
 
 
-def check_lu001(asset: dict) -> Finding | None:
+def check_lu001(asset: dict, engine: str = "unreal") -> Finding | None:
     """LU001: Long audio clip stored as uncompressed PCM."""
     if asset.get("asset_type") not in ("SoundWave", "AudioClip", "Sound"):
         return None
@@ -65,7 +65,7 @@ def check_lu001(asset: dict) -> Finding | None:
 # ── LU002 ─────────────────────────────────────────────────────────────────────
 
 
-def check_lu002(asset: dict) -> Finding | None:
+def check_lu002(asset: dict, engine: str = "unreal") -> Finding | None:
     """LU002: Long audio clip loaded entirely into memory (streaming disabled)."""
     if asset.get("asset_type") not in ("SoundWave", "AudioClip", "Sound"):
         return None
