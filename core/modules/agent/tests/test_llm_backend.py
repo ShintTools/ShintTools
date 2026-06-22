@@ -47,6 +47,7 @@ class TestGenerate:
             max_tokens=42,
             temperature=0.7,
             stop=["</s>"],
+            repeat_penalty=1.1,
         )
 
     def test_raises_when_model_not_loaded(self):

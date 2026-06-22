@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import time
 from typing import Any, Iterator, Mapping
 
@@ -217,6 +218,18 @@ _EXPLAINER_STOPS: list[str] = [
     "\n```",
 ]
 
+# Prose anti-repetition. The 1.5B model, left at llama-cpp's mild 1.1 default,
+# loops into long repetitive paragraphs ("largo y repetitivo" bug). 1.3 keeps a
+# tight 2-4 sentence answer without the model echoing itself. Only the explainer
+# uses this — the JSON-structured custom_rule_checker keeps the gentle default
+# so its legitimate punctuation repetition isn't penalised.
+_EXPLAINER_REPEAT_PENALTY: float = 1.3
+
+# The mandated closing line for non-auto-fixable issues (see the few-shots in
+# prompts/templates/**/v1.yaml). When the model runs away it tends to repeat
+# this; we cut everything after its first occurrence.
+_MANDATED_CLOSING: str = "You must fix this manually."
+
 
 def _resolve_generation_params(
     issue_dict: Mapping[str, Any],
@@ -241,18 +254,49 @@ def _resolve_generation_params(
     return rendered_prompt, effective_max, effective_temp, effective_stop
 
 
-def _trim_to_last_sentence(text: str) -> str:
-    """Return *text* stripped and truncated to the last complete sentence.
+def _dedupe_sentences(text: str) -> str:
+    """Collapse immediately-repeated sentences a small model emits when it
+    loops. Preserves order; drops a sentence only when it is identical
+    (case-insensitive, whitespace-folded) to the one just kept, so distinct
+    advice is never lost.
+    """
+    parts = re.split(r"(?<=[.!?])\s+", text.strip())
+    kept: list[str] = []
+    last_norm = ""
+    for part in parts:
+        norm = " ".join(part.lower().split())
+        if norm and norm != last_norm:
+            kept.append(part)
+            last_norm = norm
+    return " ".join(kept)
 
-    If the LLM hits max_tokens mid-sentence the raw completion ends
-    without terminal punctuation. We find the last '.', '!' or '?' and
-    cut there so the caller never receives a dangling fragment.
-    If no sentence boundary is found, return the stripped text as-is —
-    better a fragment than an empty string.
+
+def _trim_to_last_sentence(text: str) -> str:
+    """Clean up a raw completion: cut runaway repetition, then truncate to the
+    last complete sentence.
+
+    Three guards, in order:
+      1. If the mandated closing line appears, drop everything after its first
+         occurrence — a second copy (or trailing ramble) means the model ran
+         away past the point it was told to stop.
+      2. Collapse immediately-repeated sentences (`_dedupe_sentences`).
+      3. If the result still ends mid-sentence (the model hit max_tokens), cut
+         back to the last '.', '!' or '?' so the caller never gets a dangling
+         fragment. If no boundary is found, return the stripped text as-is —
+         better a fragment than an empty string.
     """
     text = text.strip()
     if not text:
         return text
+
+    closing_at = text.find(_MANDATED_CLOSING)
+    if closing_at != -1:
+        text = text[: closing_at + len(_MANDATED_CLOSING)]
+
+    text = _dedupe_sentences(text).strip()
+    if not text:
+        return text
+
     # Already ends with sentence-closing punctuation — nothing to trim.
     if text[-1] in ".!?":
         return text
@@ -293,6 +337,7 @@ def explain_issue(
         max_tokens=effective_max,
         temperature=effective_temp,
         stop=effective_stop,
+        repeat_penalty=_EXPLAINER_REPEAT_PENALTY,
     )
     return _trim_to_last_sentence(raw_completion)
 
@@ -323,5 +368,6 @@ def explain_issue_stream(
         max_tokens=effective_max,
         temperature=effective_temp,
         stop=effective_stop,
+        repeat_penalty=_EXPLAINER_REPEAT_PENALTY,
     ):
         yield chunk

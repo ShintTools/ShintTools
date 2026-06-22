@@ -69,7 +69,7 @@ def detect_debug_message(
                         content,
                         _char_pos_for_line(source_lines, line_no),
                     ),
-                    "severity": "error",
+                    "severity": "warning",
                     "rule_id": "CM001",
                     "category": "Maintainability",
                     "message": (

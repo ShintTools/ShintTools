@@ -105,7 +105,7 @@ def detect_getworld_no_check(
                     content,
                     _char_pos_for_line(source_lines, line_no),
                 ),
-                "severity": "warning",
+                "severity": "info",
                 "rule_id": "CS001",
                 "category": "Security",
                 "message": (
@@ -223,6 +223,13 @@ def detect_cast_no_check(
         if not re.search(r"\bCast\s*<", source_line):
             continue
 
+        # CastChecked<T> / ExactCast<T> are deliberately-checked idioms:
+        # CastChecked asserts non-null internally (check()), so using the
+        # result directly is the *correct* usage, not a missing null-check.
+        # Never treat a checked cast as a defect.
+        if re.search(r"\b(?:CastChecked|ExactCast)\s*<", source_line):
+            continue
+
         var_match = re.search(r"\b(\w+)\s*=\s*Cast\s*<", source_line)
         if not var_match:
             continue
@@ -261,7 +268,7 @@ def detect_cast_no_check(
                             "asset_path": file_path,
                             "line": usage_line_no,
                             "class": class_name,
-                            "severity": "error",
+                            "severity": "warning",
                             "rule_id": "CS003",
                             "category": "Security",
                             "message": (
@@ -532,7 +539,7 @@ def detect_getowner_no_check(
                         content,
                         _char_pos_for_line(source_lines, line_no),
                     ),
-                    "severity": "warning",
+                    "severity": "info",
                     "rule_id": "CS006",
                     "category": "Security",
                     "message": (

@@ -211,7 +211,7 @@ def detect_raw_new(
                         content,
                         _char_pos_for_line(source_lines, line_no),
                     ),
-                    "severity": "error",
+                    "severity": "warning",
                     "rule_id": "CB003",
                     "category": "Best Practices",
                     "message": (
@@ -1518,7 +1518,7 @@ def detect_ufunction_missing_category(
                             content,
                             _char_pos_for_line(source_lines, line_no),
                         ),
-                        "severity": "warning",
+                        "severity": "info",
                         "rule_id": "CB025",
                         "category": "Best Practices",
                         "message": (
@@ -2244,7 +2244,7 @@ def detect_uproperty_missing_category(
                     content,
                     _char_pos_for_line(source_lines, line_no),
                 ),
-                "severity": "warning",
+                "severity": "info",
                 "rule_id": "CB035",
                 "category": "Best Practices",
                 "message": (

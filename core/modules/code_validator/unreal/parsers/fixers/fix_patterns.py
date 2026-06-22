@@ -122,15 +122,34 @@ RULE_TO_PATTERN = {
     # --- Tree-sitter patterns (precise) ---
     "CB005": ("replace_text", ("std::vector", "TArray")),
     "CB006": ("replace_text", ("printf(", "UE_LOG(LogTemp, Log, ")),
-    "CB008": ("add_suffix", "f"),
+    # CB008: the add_suffix fixer no-ops on most real float literals (only the
+    # exact regex shape matched) → it presented an Apply button that did
+    # nothing. mark_for_review until a robust fixer exists.
+    "CB008": (
+        "mark_for_review",
+        "Float literal without 'f' suffix — append f (e.g. 1.0f) to avoid an "
+        "implicit double→float narrowing",
+    ),
     "CB011": ("delete_line", None),
     "CB012": ("wrap_static_cast", None),
     "CB013": ("null_check", "->"),
     "CB018": ("replace_text", ("std::array", "TArray")),
     "CB019": ("add_virtual", None),
-    "CB020": ("replace_text", ("FString Id", "FName Id")),
+    # CB020: the literal "FString Id"→"FName Id" replacement only matched that
+    # exact identifier name, so it no-opped on every other field → broken Apply.
+    "CB020": (
+        "mark_for_review",
+        "Identifier stored as FString — prefer FName for name-like keys "
+        "(interned, cheaper compares)",
+    ),
     "CB022": ("replace_text", ("ensure(", "ensureAlways(")),
-    "CB023": ("add_override", None),
+    # CB023: add_override couldn't reliably locate the virtual signature →
+    # no-op Apply on real code. mark_for_review until the fixer is robust.
+    "CB023": (
+        "mark_for_review",
+        "Virtual override missing the 'override' specifier — add override so "
+        "the compiler verifies the signature",
+    ),
     "CB030": ("wrap_text_macro", None),
     # --- Real auto-fix (formerly mark_for_review) ---
     "CB001": ("comment_line", None),  # Infinite loop -> comment out
@@ -145,8 +164,15 @@ RULE_TO_PATTERN = {
     "CB025": ("add_ufunction_category", None),  # Add Category="Default"
     # CB026: ExposeOnSpawn field → insert type-aware default
     "CB026": ("insert_field_default", None),
-    # CB028: SetTimer raw `this` → wrap in CreateWeakLambda
-    "CB028": ("wrap_weak_lambda", None),
+    # CB028: SetTimer raw `this` → wrap in CreateWeakLambda. The wrap fixer
+    # no-ops on most lambda shapes (only the exact captured form matched), so
+    # Apply failed on real code. Keep the (warning) finding but mark_for_review.
+    "CB028": (
+        "mark_for_review",
+        "Timer lambda captures 'this' — capture a TWeakObjectPtr and bail if "
+        "invalid to avoid a use-after-free if the object is destroyed before "
+        "the timer fires",
+    ),
     # CB029: UE_LOG Verbose → wrap in #if !UE_BUILD_SHIPPING
     "CB029": ("wrap_shipping_guard", None),
     "CB031": ("add_const_qualifier", None),  # Add const to BlueprintPure

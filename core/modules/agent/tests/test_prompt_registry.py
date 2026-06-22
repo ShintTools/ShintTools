@@ -328,7 +328,7 @@ class TestExplainerUsesRegistry:
         )
         seen: dict[str, object] = {}
 
-        def fake_generate(prompt, *, max_tokens, temperature, stop):
+        def fake_generate(prompt, *, max_tokens, temperature, stop, repeat_penalty=1.1):
             seen["max_tokens"] = max_tokens
             seen["temperature"] = temperature
             seen["stop"] = list(stop)
@@ -358,7 +358,7 @@ class TestExplainerUsesRegistry:
         )
         seen: dict[str, object] = {}
 
-        def fake_generate(prompt, *, max_tokens, temperature, stop):
+        def fake_generate(prompt, *, max_tokens, temperature, stop, repeat_penalty=1.1):
             seen["max_tokens"] = max_tokens
             seen["temperature"] = temperature
             return "ok"
@@ -424,7 +424,7 @@ class TestAcceptanceCriteria:
         )
         captured: dict[str, object] = {}
 
-        def fake_generate(prompt, *, max_tokens, temperature, stop):
+        def fake_generate(prompt, *, max_tokens, temperature, stop, repeat_penalty=1.1):
             captured["prompt"] = prompt
             captured["max_tokens"] = max_tokens
             return ""

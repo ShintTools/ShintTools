@@ -119,11 +119,13 @@ print("\n=== EASY PATTERNS (Priority 2) ===")
 # ================================================================
 
 _run_case(
-    "CB008: add_suffix (1.0 -> 1.0f)",
+    # CB008 demoted to mark_for_review: the add_suffix fixer no-opped on most
+    # real float literals, so Apply silently did nothing (marketplace #5).
+    "CB008: mark_for_review (float literal suffix)",
     "CB008",
     "void AMyActor::Setup() {\n" "    float Value = 1.0;\n}",
     2,
-    "1.0f",
+    "[SHINTTOOLS REVIEW]",
 )
 
 _run_case(
@@ -135,11 +137,13 @@ _run_case(
 )
 
 _run_case(
-    "CB023: add_override",
+    # CB023 demoted to mark_for_review: add_override couldn't reliably locate
+    # the virtual signature, so Apply no-opped on real code (marketplace #5).
+    "CB023: mark_for_review (missing override)",
     "CB023",
     "class AMyActor : public AActor {\n" "    void BeginPlay();\n};",
     2,
-    "override;",
+    "[SHINTTOOLS REVIEW]",
 )
 
 _run_case(

@@ -23,8 +23,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
-from typing import AsyncIterator
+import threading
+from typing import AsyncIterator, Callable, Iterator
 
 from api.database import resolve_tier_detailed
 from fastapi import APIRouter, HTTPException, status
@@ -32,6 +34,54 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/agent", tags=["agent"])
+
+
+# Serializes access to the single shared llama instance across worker threads.
+# The explain endpoints run the blocking ~20-40 s CPU inference OFF the event
+# loop (asyncio.to_thread / a producer thread) so the loop stays free to answer
+# /health — otherwise the connection indicator falsely flips to "disconnected"
+# while an explanation is generating. This lock guarantees only one inference
+# touches llama at a time (llama-cpp is single-instance / not reentrant-safe).
+_LLAMA_LOCK = threading.Lock()
+
+
+async def _aiter_in_thread(
+    make_iter: Callable[[], Iterator[str]],
+) -> AsyncIterator[str]:
+    """Drive a blocking sync generator from a worker thread, surfacing its items
+    to the event loop without starving it.
+
+    ``make_iter`` is a 0-arg factory that creates the generator *inside* the
+    worker thread. Items (and any terminal exception) are funnelled back through
+    an ``asyncio.Queue`` so every token hop returns control to the loop —
+    keeping /health responsive while the LLM streams. ``_LLAMA_LOCK`` is held
+    for the whole generation so a concurrent explain can't race the model.
+    """
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+    sentinel = object()
+
+    def _producer() -> None:
+        try:
+            with _LLAMA_LOCK:
+                for item in make_iter():
+                    loop.call_soon_threadsafe(queue.put_nowait, item)
+        except Exception as exc:  # surface to the consumer; never kill the thread
+            loop.call_soon_threadsafe(queue.put_nowait, exc)
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, sentinel)
+
+    producer_future = loop.run_in_executor(None, _producer)
+    try:
+        while True:
+            item = await queue.get()
+            if item is sentinel:
+                break
+            if isinstance(item, BaseException):
+                raise item
+            yield item
+    finally:
+        await producer_future
 
 
 # ── Request / response shapes ───────────────────────────────────────────────
@@ -436,7 +486,15 @@ async def explain(payload: AgentExplainRequest) -> AgentExplainResponse:
 
     started_at = time.perf_counter()
     try:
-        generated_text = explain_issue(issue_payload_dict)
+        # Run the blocking ~20-40 s CPU inference in a worker thread (under the
+        # llama lock) so the event loop stays free to answer /health while the
+        # explanation generates — fixes the "connection drops while Explainer is
+        # open" false-disconnect.
+        def _run_explain() -> str:
+            with _LLAMA_LOCK:
+                return explain_issue(issue_payload_dict)
+
+        generated_text = await asyncio.to_thread(_run_explain)
     except Exception as unexpected_error:
         return AgentExplainResponse(
             success=False,
@@ -538,7 +596,12 @@ async def _explain_stream_events(
     accumulated_parts: list[str] = []
     stream_failed: Exception | None = None
     try:
-        for chunk in explain_issue_stream(issue_payload_dict):
+        # Pull tokens off a worker thread so the event loop keeps serving
+        # /health between chunks (otherwise each blocking next() starves it and
+        # the connection indicator flickers to "disconnected" mid-stream).
+        async for chunk in _aiter_in_thread(
+            lambda: explain_issue_stream(issue_payload_dict)
+        ):
             accumulated_parts.append(chunk)
             yield "data: " + json.dumps({"chunk": chunk}) + "\n\n"
     except Exception as unexpected_error:

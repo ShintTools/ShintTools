@@ -227,6 +227,7 @@ def generate(
     max_tokens: int = 1024,
     temperature: float = 0.2,
     stop: list[str] | None = None,
+    repeat_penalty: float = 1.1,
 ) -> str:
     """Run a synchronous completion against the loaded model.
 
@@ -235,6 +236,11 @@ def generate(
     `stop` defaults to a set of patterns chosen to keep a 1.3B model on
     the agent protocol (single JSON object per turn). Pass an explicit
     list (including `[]`) to override.
+
+    `repeat_penalty` defaults to llama-cpp's mild 1.1 — fine for the
+    JSON-structured callers (custom rule checker) whose output legitimately
+    repeats punctuation. Prose callers (the explainer) pass a stronger value
+    to stop the small model looping into long repetitive paragraphs.
     """
     if _llama is None:
         raise RuntimeError("Model not loaded — call load_model() first.")
@@ -245,6 +251,7 @@ def generate(
         max_tokens=max_tokens,
         temperature=temperature,
         stop=effective_stop,
+        repeat_penalty=repeat_penalty,
     )
     return out["choices"][0]["text"]
 
@@ -255,6 +262,7 @@ def generate_stream(
     max_tokens: int = 1024,
     temperature: float = 0.2,
     stop: list[str] | None = None,
+    repeat_penalty: float = 1.1,
 ) -> Iterator[str]:
     """Stream a completion token-by-token, yielding text chunks.
 
@@ -285,6 +293,7 @@ def generate_stream(
         max_tokens=max_tokens,
         temperature=temperature,
         stop=effective_stop,
+        repeat_penalty=repeat_penalty,
         stream=True,
     )
     for chunk in stream:
