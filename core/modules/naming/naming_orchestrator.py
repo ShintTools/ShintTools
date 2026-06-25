@@ -83,6 +83,37 @@ _NM_TO_NMU_UNITY: dict[str, str] = {
     "NM018": "NMU031",  # redundant type in name
 }
 
+# ── Already-compliant guard ───────────────────────────
+# Rules that legitimately emit a fix_suggestion equal to the current name:
+# the violation is not about the name itself (a cross-folder collision or
+# wrong folder) or there is no actionable rename (no recognised prefix,
+# body too short, body reduces to empty). These are preserved; every other
+# rule with suggestion == current_name is a no-op and is dropped.
+_NAME_PRESERVING_RULES = {"NM001", "NM005", "NM009", "NM017", "NM018"}
+
+
+def _drop_noop_suggestions(issues: List[Issue]) -> List[Issue]:
+    """Remove findings whose suggested name equals the asset's current name.
+
+    A rename rule whose fix matches the current name means the asset already
+    follows the convention — surfacing it produces a confusing "rename
+    SM_Rock → SM_Rock" suggestion. Runs in NM* id space (before the Unity
+    remap). Unity-specific findings carry no ``current_name`` and so pass
+    through untouched; only rules in ``_NAME_PRESERVING_RULES`` keep a
+    same-name suggestion.
+    """
+    return [
+        issue
+        for issue in issues
+        if not (
+            issue.get("current_name")
+            and issue.get("fix_suggestion", "").strip()
+            == issue.get("current_name", "").strip()
+            and issue.get("rule_id") not in _NAME_PRESERVING_RULES
+        )
+    ]
+
+
 # ── RUNNER ────────────────────────────────────────────
 
 
@@ -143,6 +174,9 @@ def run_all_naming_rules(
     all_issues += detect_version_suffix(asset_records)
     all_issues += detect_name_too_short(asset_records)
     all_issues += detect_redundant_type_in_name(asset_records)
+
+    # Drop no-op suggestions for assets that already follow the convention.
+    all_issues = _drop_noop_suggestions(all_issues)
 
     # When running for Unity, remap engine-agnostic NM* IDs to NMU* so
     # the Unity plugin never sees UE5-prefixed rule IDs.
