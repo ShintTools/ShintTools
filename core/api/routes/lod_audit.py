@@ -122,7 +122,29 @@ class LodAuditRequest(BaseModel):
     # because each explanation costs ~20-40s on CPU.
     explain: bool = False
     max_explanations: int = 5
+
+    # ── Per-request threshold overrides (Studio knobs) ───────────────────────
+    # Optional. Each layers over the selected `profile` for this one request;
+    # None = use the profile default. Friendly names map to threshold keys in
+    # lod_orchestrator._OVERRIDE_TO_THRESHOLD.
+    oversized_max_size: int | None = None      # global px ceiling for LT003
+    uncompressed_min_size: int | None = None   # LT007 min edge (below = silent)
+    uncompressed_max_size: int | None = None   # LT007 warn-escalation edge
+    npot_min_size: int | None = None           # LT006 min edge
+    streaming_min_size: int | None = None      # LT005 min edge
+
     assets: list[LodAssetFile] = Field(default_factory=list)
+
+    def threshold_overrides(self) -> dict[str, int]:
+        """Collect the non-None override knobs into the dict audit_assets wants."""
+        raw = {
+            "oversized_max_size": self.oversized_max_size,
+            "uncompressed_min_size": self.uncompressed_min_size,
+            "uncompressed_max_size": self.uncompressed_max_size,
+            "npot_min_size": self.npot_min_size,
+            "streaming_min_size": self.streaming_min_size,
+        }
+        return {k: v for k, v in raw.items() if v is not None}
 
 
 class LodReportRequest(LodAuditRequest):
@@ -421,7 +443,11 @@ async def lod_audit(payload: LodAuditRequest):
 
     try:
         audit_response = audit_assets(
-            assets_dicts, engine=engine, allowed_rules=None
+            assets_dicts,
+            engine=engine,
+            allowed_rules=None,
+            profile=payload.profile,
+            overrides=payload.threshold_overrides(),
         )
     except Exception as e:
         logger.error("/assets/lod/audit: error during audit: %s", e)
@@ -518,7 +544,11 @@ async def lod_report(payload: LodReportRequest):
 
     try:
         audit_response = audit_assets(
-            assets_dicts, engine=engine, allowed_rules=None
+            assets_dicts,
+            engine=engine,
+            allowed_rules=None,
+            profile=payload.profile,
+            overrides=payload.threshold_overrides(),
         )
     except Exception as e:
         logger.error("/assets/lod/report: error during audit: %s", e)

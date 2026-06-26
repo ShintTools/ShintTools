@@ -39,13 +39,16 @@ _MIPS_WASTEFUL_USAGES: frozenset[str] = frozenset({"UI"})
 # ── LT001 ─────────────────────────────────────────────────────────────────────
 
 
-def check_lt001(asset: dict, engine: str = "unreal") -> Finding | None:
+def check_lt001(
+    asset: dict, engine: str = "unreal", thresholds: dict | None = None
+) -> Finding | None:
     """LT001: Compression format not optimal for the texture's declared usage."""
+    T = thresholds if thresholds is not None else THRESHOLDS
     usage: str = asset.get("usage", "")
     compression_raw: str = asset.get("compression", "")
     compression: str = normalize_compression(compression_raw)
 
-    expected_formats: dict = THRESHOLDS["LT001_EXPECTED_FORMAT"]
+    expected_formats: dict = T["LT001_EXPECTED_FORMAT"]
     expected: str | None = expected_formats.get(usage)
 
     if not expected:
@@ -127,8 +130,11 @@ def check_lt002(asset: dict, engine: str = "unreal") -> Finding | None:
 # ── LT003 ─────────────────────────────────────────────────────────────────────
 
 
-def check_lt003(asset: dict, engine: str = "unreal") -> Finding | None:
+def check_lt003(
+    asset: dict, engine: str = "unreal", thresholds: dict | None = None
+) -> Finding | None:
     """LT003: Texture resolution exceeds the slot budget for its LOD group."""
+    T = thresholds if thresholds is not None else THRESHOLDS
     lod_group: str = asset.get("lod_group", "World")
     width: int = asset.get("width", 0)
     height: int = asset.get("height", 0)
@@ -136,15 +142,23 @@ def check_lt003(asset: dict, engine: str = "unreal") -> Finding | None:
     compression: str = normalize_compression(compression_raw)
     mips_enabled: bool = asset.get("mips_enabled", True)
 
-    budget_map: dict = THRESHOLDS["LT003_MAX_SIZE_BY_LOD_GROUP"]
+    budget_map: dict = T["LT003_MAX_SIZE_BY_LOD_GROUP"]
     if lod_group not in budget_map:
         _logger.debug(
             "LT003: lod_group '%s' not in budget map for '%s' — using default %dpx",
             lod_group,
             asset.get("asset_path", "?"),
-            THRESHOLDS["LT003_DEFAULT_MAX_SIZE"],
+            T["LT003_DEFAULT_MAX_SIZE"],
         )
-    budget: int = budget_map.get(lod_group, THRESHOLDS["LT003_DEFAULT_MAX_SIZE"])
+    budget: int = budget_map.get(lod_group, T["LT003_DEFAULT_MAX_SIZE"])
+
+    # Optional global ceiling (per-request override): a project can cap every
+    # LOD group at one size regardless of the per-group budget, e.g. "nothing
+    # over 1024 on this mobile target". Absent in the YAML profiles — only the
+    # request overrides inject it (see lod_orchestrator._build_thresholds).
+    global_max = T.get("LT003_GLOBAL_MAX_SIZE")
+    if global_max is not None:
+        budget = min(budget, int(global_max))
 
     long_edge: int = max(width, height)
     if long_edge <= budget:
@@ -231,15 +245,18 @@ def check_lt004(asset: dict, engine: str = "unreal") -> Finding | None:
 # ── LT005 ─────────────────────────────────────────────────────────────────────
 
 
-def check_lt005(asset: dict, engine: str = "unreal") -> Finding | None:
+def check_lt005(
+    asset: dict, engine: str = "unreal", thresholds: dict | None = None
+) -> Finding | None:
     """LT005: Large texture with streaming disabled occupies VRAM permanently."""
+    T = thresholds if thresholds is not None else THRESHOLDS
     width: int = asset.get("width", 0)
     height: int = asset.get("height", 0)
     streaming: bool = asset.get("streaming", True)
     compression_raw: str = asset.get("compression", "RGBA8")
     compression: str = normalize_compression(compression_raw)
 
-    min_edge: int = THRESHOLDS["LT005_STREAMING_MIN_EDGE"]
+    min_edge: int = T["LT005_STREAMING_MIN_EDGE"]
     long_edge: int = max(width, height)
 
     if long_edge < min_edge or streaming:
@@ -290,13 +307,16 @@ _RDO_FORMATS: frozenset[str] = frozenset({"BC1", "BC3", "BC4", "BC5", "BC7"})
 # ── LT006 ─────────────────────────────────────────────────────────────────────
 
 
-def check_lt006(asset: dict, engine: str = "unreal") -> Finding | None:
+def check_lt006(
+    asset: dict, engine: str = "unreal", thresholds: dict | None = None
+) -> Finding | None:
     """LT006: Non-power-of-two texture wastes memory through GPU padding.
 
     UE5 pads NPOT textures up to the next power of two for the mip chain,
     so a 1500×1500 texture costs as much VRAM as 2048×2048. UI textures are
     exempt — they sample at fixed pixel sizes and NPOT is idiomatic there.
     """
+    T = thresholds if thresholds is not None else THRESHOLDS
     width: int = asset.get("width", 0)
     height: int = asset.get("height", 0)
     lod_group: str = asset.get("lod_group", "World")
@@ -306,7 +326,7 @@ def check_lt006(asset: dict, engine: str = "unreal") -> Finding | None:
     if lod_group == "UI":
         return None
 
-    min_edge: int = THRESHOLDS["LT006_NPOT_MIN_EDGE"]
+    min_edge: int = T["LT006_NPOT_MIN_EDGE"]
     if max(width, height) < min_edge:
         return None
 
@@ -345,7 +365,9 @@ def check_lt006(asset: dict, engine: str = "unreal") -> Finding | None:
 # ── LT007 ─────────────────────────────────────────────────────────────────────
 
 
-def check_lt007(asset: dict, engine: str = "unreal") -> Finding | None:
+def check_lt007(
+    asset: dict, engine: str = "unreal", thresholds: dict | None = None
+) -> Finding | None:
     """LT007: Large texture stored uncompressed burns VRAM (4 bpp vs 1).
 
     Mirrors the Unity "uncompressed" family: below the min edge it stays
@@ -355,6 +377,7 @@ def check_lt007(asset: dict, engine: str = "unreal") -> Finding | None:
     format. (LOD findings stay within the warning/info convention — see
     test_orchestrator.test_findings_have_valid_severity_values.)
     """
+    T = thresholds if thresholds is not None else THRESHOLDS
     width: int = asset.get("width", 0)
     height: int = asset.get("height", 0)
     compression: str = normalize_compression(asset.get("compression", "RGBA8"))
@@ -365,8 +388,8 @@ def check_lt007(asset: dict, engine: str = "unreal") -> Finding | None:
     if compression != "RGBA8":
         return None
 
-    min_edge: int = THRESHOLDS["LT007_UNCOMPRESSED_MIN_EDGE"]
-    max_edge: int = THRESHOLDS["LT007_UNCOMPRESSED_MAX_EDGE"]
+    min_edge: int = T["LT007_UNCOMPRESSED_MIN_EDGE"]
+    max_edge: int = T["LT007_UNCOMPRESSED_MAX_EDGE"]
     long_edge: int = max(width, height)
     if long_edge < min_edge:
         return None
@@ -402,7 +425,9 @@ def check_lt007(asset: dict, engine: str = "unreal") -> Finding | None:
 # ── LT008 ─────────────────────────────────────────────────────────────────────
 
 
-def check_lt008(asset: dict, engine: str = "unreal") -> Finding | None:
+def check_lt008(
+    asset: dict, engine: str = "unreal", thresholds: dict | None = None
+) -> Finding | None:
     """LT008: Block-compressed texture has Oodle RDO off — larger package.
 
     RDO trades a little quality for a smaller on-disk payload; it does not
@@ -411,6 +436,7 @@ def check_lt008(asset: dict, engine: str = "unreal") -> Finding | None:
     is False — an absent field means an older client that doesn't send it
     yet, so the rule stays silent rather than guessing.
     """
+    T = thresholds if thresholds is not None else THRESHOLDS
     rdo_enabled = asset.get("rdo_enabled", None)
     if rdo_enabled is not False:
         return None
@@ -421,7 +447,7 @@ def check_lt008(asset: dict, engine: str = "unreal") -> Finding | None:
 
     width: int = asset.get("width", 0)
     height: int = asset.get("height", 0)
-    min_edge: int = THRESHOLDS["LT008_RDO_MIN_EDGE"]
+    min_edge: int = T["LT008_RDO_MIN_EDGE"]
     if max(width, height) < min_edge:
         return None
 

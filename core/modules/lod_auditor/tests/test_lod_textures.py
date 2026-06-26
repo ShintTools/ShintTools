@@ -1,6 +1,9 @@
 # core/modules/lod_auditor/tests/test_lod_textures.py
 
+import copy
+
 from lod_auditor.rules.lod_textures import (
+    THRESHOLDS,
     check_lt001,
     check_lt002,
     check_lt003,
@@ -10,6 +13,13 @@ from lod_auditor.rules.lod_textures import (
     check_lt007,
     check_lt008,
 )
+
+
+def _thresholds(**overrides) -> dict:
+    """A copy of the default thresholds with specific keys overridden."""
+    t = copy.deepcopy(THRESHOLDS)
+    t.update(overrides)
+    return t
 
 # ── Base fixture ──────────────────────────────────────────────────────────────
 
@@ -326,4 +336,60 @@ class TestLT008:
                 _tex(width=128, height=128, compression="BC7", rdo_enabled=False)
             )
             is None
+        )
+
+
+# ── Per-request threshold overrides (thresholds= kwarg) ───────────────────────
+
+
+class TestThresholdParam:
+    def test_lt003_global_ceiling_flags_under_budget_texture(self):
+        # 2048 World is within the per-group budget (2048) but a 1024 global
+        # ceiling makes it over budget and pins the recommendation to 1024.
+        tex = _tex(width=2048, height=2048, lod_group="World")
+        assert check_lt003(tex) is None
+        result = check_lt003(tex, thresholds=_thresholds(LT003_GLOBAL_MAX_SIZE=1024))
+        assert result is not None
+        assert result.recommended["max_texture_size"] == 1024
+
+    def test_lt003_ceiling_never_raises_a_tighter_group_budget(self):
+        # A ceiling above the group budget must not loosen it (min wins).
+        tex = _tex(width=4096, height=4096, lod_group="World")  # budget 2048
+        result = check_lt003(tex, thresholds=_thresholds(LT003_GLOBAL_MAX_SIZE=8192))
+        assert result is not None
+        assert result.recommended["max_texture_size"] == 2048
+
+    def test_lt007_raised_min_edge_silences_small_uncompressed(self):
+        tex = _tex(width=512, height=512, compression="RGBA8")
+        assert check_lt007(tex) is not None  # default min 256 → fires
+        assert (
+            check_lt007(tex, thresholds=_thresholds(LT007_UNCOMPRESSED_MIN_EDGE=1024))
+            is None
+        )
+
+    def test_lt007_lowered_max_edge_escalates_to_warning(self):
+        # 512 is info by default (max 1024); drop max to 256 → warning.
+        tex = _tex(width=512, height=512, compression="RGBA8")
+        assert check_lt007(tex).severity == "info"
+        escalated = check_lt007(
+            tex, thresholds=_thresholds(LT007_UNCOMPRESSED_MAX_EDGE=256)
+        )
+        assert escalated is not None
+        assert escalated.severity == "warning"
+
+    def test_lt006_raised_min_edge_silences_small_npot(self):
+        tex = _tex(width=300, height=300, lod_group="World")
+        assert check_lt006(tex) is not None  # default min 128 → fires
+        assert (
+            check_lt006(tex, thresholds=_thresholds(LT006_NPOT_MIN_EDGE=512)) is None
+        )
+
+    def test_lt005_lowered_min_edge_flags_smaller_texture(self):
+        # 1024 non-streaming is below the default 2048 streaming min → silent;
+        # lower the min to 512 and it should fire.
+        tex = _tex(width=1024, height=1024, streaming=False)
+        assert check_lt005(tex) is None
+        assert (
+            check_lt005(tex, thresholds=_thresholds(LT005_STREAMING_MIN_EDGE=512))
+            is not None
         )

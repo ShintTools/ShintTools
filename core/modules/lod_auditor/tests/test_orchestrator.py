@@ -171,3 +171,64 @@ class TestAuditAssets:
         valid_severities = {"warning", "info"}
         for finding in result.results:
             assert finding.severity in valid_severities
+
+
+class TestProfileAndOverrides:
+    """Per-request profile selection and threshold override knobs.
+
+    These also pin the fix for the latent bug where the route pre-warmed a
+    profile but audit_assets never received it, so every rule silently read
+    the default thresholds regardless of profile=.
+    """
+
+    def test_profile_mobile_tightens_resolution_budget(self):
+        # _GOOD_TEXTURE is 2048 World — clean on default (budget 2048) but over
+        # the mobile budget (1024). Proves profile= actually reaches the rules.
+        assert audit_assets([_GOOD_TEXTURE]).summary.issues_found == 0
+        mobile = audit_assets([_GOOD_TEXTURE], profile="mobile")
+        assert any(f.rule_id == "LT003" for f in mobile.results)
+
+    def test_override_oversized_max_size_caps_lt003(self):
+        assert audit_assets([_GOOD_TEXTURE]).summary.issues_found == 0
+        capped = audit_assets(
+            [_GOOD_TEXTURE], overrides={"oversized_max_size": 1024}
+        )
+        lt003 = [f for f in capped.results if f.rule_id == "LT003"]
+        assert lt003, "global ceiling should make the 2K texture over budget"
+        assert lt003[0].recommended["max_texture_size"] == 1024
+
+    def test_override_uncompressed_min_size_silences_lt007(self):
+        tex = {
+            **_GOOD_TEXTURE,
+            "asset_path": "/Game/T_Uncompressed",
+            "compression": "RGBA8",
+            "width": 512,
+            "height": 512,
+        }
+        base = audit_assets([tex])
+        assert any(f.rule_id == "LT007" for f in base.results)
+        raised = audit_assets([tex], overrides={"uncompressed_min_size": 1024})
+        assert not any(f.rule_id == "LT007" for f in raised.results)
+
+    def test_none_and_empty_overrides_match_default(self):
+        a = audit_assets([_BAD_TEXTURE]).summary.issues_found
+        b = audit_assets([_BAD_TEXTURE], overrides=None).summary.issues_found
+        c = audit_assets([_BAD_TEXTURE], overrides={}).summary.issues_found
+        assert a == b == c
+
+    def test_unknown_override_keys_are_ignored(self):
+        # A field we don't map must not crash or change the outcome.
+        base = audit_assets([_BAD_TEXTURE]).summary.issues_found
+        weird = audit_assets(
+            [_BAD_TEXTURE], overrides={"not_a_real_knob": 7}
+        ).summary.issues_found
+        assert base == weird
+
+    def test_build_thresholds_deepcopies_cached_profile(self):
+        # _build_thresholds must never mutate the lru_cache-shared profile dict.
+        from lod_auditor.config import load_profile
+        from lod_auditor.lod_orchestrator import _build_thresholds
+
+        resolved = _build_thresholds("default", {"oversized_max_size": 64})
+        assert resolved["LT003_GLOBAL_MAX_SIZE"] == 64
+        assert "LT003_GLOBAL_MAX_SIZE" not in load_profile("default")

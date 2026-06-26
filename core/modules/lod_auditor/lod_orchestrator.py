@@ -7,8 +7,11 @@
 # tier filter, runs cross-asset detectors over the full batch, and
 # returns a fully assembled AuditResponse.
 
+import copy
+import inspect
 from typing import Any
 
+from lod_auditor.config import load_profile
 from lod_auditor.rules.lod_animations import check_la001, check_la002, check_la003
 from lod_auditor.rules.lod_audio import check_lu001, check_lu002
 from lod_auditor.rules.lod_cross import (
@@ -77,6 +80,63 @@ CROSS_RULES = [
     check_lx003_duplicate_meshes,
 ]
 
+# ── Threshold injection ───────────────────────────────────────────────────────
+#
+# A rule "opts in" to per-request thresholds simply by declaring a
+# ``thresholds`` keyword parameter. We detect that once at import via
+# introspection, so adding the param to any future rule auto-enables override
+# support without touching this dispatcher. Rules without it keep reading their
+# module-level THRESHOLDS (the default profile) — behaviour unchanged.
+_ALL_RULE_FNS = (
+    TEXTURE_RULES
+    + MATERIAL_RULES
+    + MESH_RULES
+    + ANIM_RULES
+    + PARTICLE_RULES
+    + AUDIO_RULES
+    + LIGHTING_RULES
+    + CROSS_RULES
+    + MOBILE_RULES_BY_TYPE["Material"]
+    + MOBILE_RULES_BY_TYPE["Texture"]
+)
+_THRESHOLD_AWARE: frozenset = frozenset(
+    fn for fn in _ALL_RULE_FNS if "thresholds" in inspect.signature(fn).parameters
+)
+
+# Per-request override field -> threshold key it rewrites. The request exposes
+# friendly names (e.g. "oversized_max_size"); _build_thresholds maps them onto
+# the YAML threshold keys the rules actually read. Unknown/None overrides are
+# ignored, so an older client that doesn't send them gets the profile defaults.
+_OVERRIDE_TO_THRESHOLD: dict[str, str] = {
+    "oversized_max_size": "LT003_GLOBAL_MAX_SIZE",
+    "uncompressed_min_size": "LT007_UNCOMPRESSED_MIN_EDGE",
+    "uncompressed_max_size": "LT007_UNCOMPRESSED_MAX_EDGE",
+    "npot_min_size": "LT006_NPOT_MIN_EDGE",
+    "streaming_min_size": "LT005_STREAMING_MIN_EDGE",
+}
+
+
+def _build_thresholds(
+    profile: str = "default", overrides: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Resolve the effective threshold set for one audit run.
+
+    Starts from the cached YAML profile (``default`` | ``mobile`` | …) and
+    layers any per-request overrides on top. The profile dict is deep-copied
+    before mutation because ``load_profile`` is ``lru_cache``-backed and hands
+    back a shared object — writing to it would poison every later request.
+    """
+    thresholds: dict[str, Any] = copy.deepcopy(load_profile(profile))
+    if overrides:
+        for field, value in overrides.items():
+            if value is None:
+                continue
+            key = _OVERRIDE_TO_THRESHOLD.get(field)
+            if key is not None:
+                thresholds[key] = value
+    return thresholds
+
+
 # ── Asset-type routing tables ─────────────────────────────────────────────────
 
 _TEXTURE_ASSET_TYPES: frozenset[str] = frozenset(
@@ -104,11 +164,15 @@ _LIGHTING_ASSET_TYPES: frozenset[str] = frozenset(
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
 
-def _dispatch_asset(asset: dict[str, Any], engine: str) -> list[Finding]:
+def _dispatch_asset(
+    asset: dict[str, Any], engine: str, thresholds: dict[str, Any] | None = None
+) -> list[Finding]:
     """Run all rules applicable to *asset* and return their findings.
 
     *engine* ("unreal" | "unity") is threaded to each rule so it can emit
     engine-appropriate guidance via lod_auditor.guidance.guidance_for.
+    *thresholds* (when provided) is passed only to rules that declare a
+    ``thresholds`` parameter; the rest read their module defaults.
     """
     asset_type: str = asset.get("asset_type", "")
 
@@ -135,7 +199,10 @@ def _dispatch_asset(asset: dict[str, Any], engine: str) -> list[Finding]:
 
     findings: list[Finding] = []
     for check_fn in rules:
-        result = check_fn(asset, engine)
+        if thresholds is not None and check_fn in _THRESHOLD_AWARE:
+            result = check_fn(asset, engine, thresholds=thresholds)
+        else:
+            result = check_fn(asset, engine)
         if result is not None:
             findings.append(result)
 
@@ -143,7 +210,12 @@ def _dispatch_asset(asset: dict[str, Any], engine: str) -> list[Finding]:
 
 
 def _run_cross_rules(assets: list[dict[str, Any]], engine: str) -> list[Finding]:
-    """Run every cross-asset detector against the full batch."""
+    """Run every cross-asset detector against the full batch.
+
+    Cross rules read their module-level thresholds (LX003_MIN_DUPLICATE_SIZE_KB)
+    directly; none expose a per-request override today, so the override knobs
+    are texture-scoped and cross rules need no thresholds argument.
+    """
     findings: list[Finding] = []
     for cross_fn in CROSS_RULES:
         findings.extend(cross_fn(assets, engine))
@@ -175,6 +247,8 @@ def audit_assets(
     *,
     engine: str = "unreal",
     allowed_rules: frozenset[str] | None = None,
+    profile: str = "default",
+    overrides: dict[str, Any] | None = None,
 ) -> AuditResponse:
     """Run all LOD rules on a list of raw asset dicts.
 
@@ -184,6 +258,11 @@ def audit_assets(
                        fix guidance and stamp findings for the agent registry.
         allowed_rules: Frozenset of rule IDs the client's tier may see.
                        ``None`` means all rules are visible (Studio tier).
+        profile:       Threshold profile name ("default" | "mobile" | …). Selects
+                       which YAML the threshold-aware rules read.
+        overrides:     Optional per-request threshold overrides (friendly field
+                       names → values; see _OVERRIDE_TO_THRESHOLD). Layered on
+                       top of the profile; ``None``/absent values are ignored.
 
     Returns:
         AuditResponse with a summary and the full list of findings, each
@@ -191,11 +270,12 @@ def audit_assets(
     """
     from lod_auditor.rule_metadata import enrich_lod_finding
 
+    thresholds = _build_thresholds(profile, overrides)
     all_findings: list[Finding] = []
 
     # Per-asset rules
     for asset in assets:
-        findings = _dispatch_asset(asset, engine)
+        findings = _dispatch_asset(asset, engine, thresholds)
         all_findings.extend(findings)
 
     # Cross-asset rules see the full batch in one pass
