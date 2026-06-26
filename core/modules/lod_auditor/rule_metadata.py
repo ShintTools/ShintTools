@@ -37,6 +37,9 @@ LOD_RULE_NAMES: dict[str, str] = {
     "LT003": "Texture over resolution budget",
     "LT004": "sRGB flag mismatch",
     "LT005": "Large texture, streaming off",
+    "LT006": "Non-power-of-two texture",
+    "LT007": "Large texture uncompressed",
+    "LT008": "Oodle RDO disabled",
     # ── Materials (LM) ───────────────────────────────────
     "LM001": "Shader over instruction budget",
     "LM002": "Duplicate texture sampler",

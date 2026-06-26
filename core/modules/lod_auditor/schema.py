@@ -105,6 +105,10 @@ class Saving(BaseModel):
 
     vram_mb: float = 0.0
     shader_instructions: int = 0
+    # Build/package-size saving in MB — distinct from runtime VRAM. Used by
+    # rules that shrink the cooked payload without changing GPU residency
+    # (e.g. LT008 Oodle/RDO). Kept out of the VRAM totals on purpose.
+    build_size_mb: float = 0.0
 
 
 class Finding(BaseModel):

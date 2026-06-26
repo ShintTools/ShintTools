@@ -31,6 +31,9 @@ from lod_auditor.rules.lod_textures import (
     check_lt003,
     check_lt004,
     check_lt005,
+    check_lt006,
+    check_lt007,
+    check_lt008,
 )
 from lod_auditor.schema import AuditResponse, AuditSummary, Finding
 
@@ -39,7 +42,16 @@ from lod_auditor.schema import AuditResponse, AuditSummary, Finding
 # Ordered lists so findings always appear in the same sequence regardless
 # of dict iteration order.  Add new rules by appending here.
 
-TEXTURE_RULES = [check_lt001, check_lt002, check_lt003, check_lt004, check_lt005]
+TEXTURE_RULES = [
+    check_lt001,
+    check_lt002,
+    check_lt003,
+    check_lt004,
+    check_lt005,
+    check_lt006,
+    check_lt007,
+    check_lt008,
+]
 MATERIAL_RULES = [check_lm001, check_lm002, check_lm003]
 MESH_RULES = [check_ld001, check_ld002, check_ld003]
 ANIM_RULES = [check_la001, check_la002, check_la003]

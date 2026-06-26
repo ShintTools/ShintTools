@@ -1,6 +1,6 @@
 # core/modules/lod_auditor/rules/lod_textures.py
 #
-# Texture LOD rules: LT001 – LT005
+# Texture LOD rules: LT001 – LT008
 #
 # Each rule is a pure function:
 #   check_ltXXX(asset: dict) -> Finding | None
@@ -262,6 +262,192 @@ def check_lt005(asset: dict, engine: str = "unreal") -> Finding | None:
         current={"streaming": False, "resident_vram_mb": resident_vram},
         recommended={"streaming": True},
         estimated_saving=Saving(vram_mb=0.0, shader_instructions=0),
+        auto_fixable=True,
+        guidance=None,
+    )
+
+
+# ── Power-of-two helpers (LT006) ───────────────────────────────────────────────
+
+
+def _is_power_of_two(n: int) -> bool:
+    """True for 1, 2, 4, 8, … (and only those). 0/negatives are not POT."""
+    return n > 0 and (n & (n - 1)) == 0
+
+
+def _floor_pow2(n: int) -> int:
+    """Largest power of two <= n (min 1). Used to suggest a POT downsize."""
+    if n < 1:
+        return 1
+    return 1 << (n.bit_length() - 1)
+
+
+# RDO (rate-distortion optimisation) only applies to block-compressed formats;
+# uncompressed and HDR payloads have nothing for it to shrink.
+_RDO_FORMATS: frozenset[str] = frozenset({"BC1", "BC3", "BC4", "BC5", "BC7"})
+
+
+# ── LT006 ─────────────────────────────────────────────────────────────────────
+
+
+def check_lt006(asset: dict, engine: str = "unreal") -> Finding | None:
+    """LT006: Non-power-of-two texture wastes memory through GPU padding.
+
+    UE5 pads NPOT textures up to the next power of two for the mip chain,
+    so a 1500×1500 texture costs as much VRAM as 2048×2048. UI textures are
+    exempt — they sample at fixed pixel sizes and NPOT is idiomatic there.
+    """
+    width: int = asset.get("width", 0)
+    height: int = asset.get("height", 0)
+    lod_group: str = asset.get("lod_group", "World")
+    compression: str = normalize_compression(asset.get("compression", "RGBA8"))
+    mips_enabled: bool = asset.get("mips_enabled", True)
+
+    if lod_group == "UI":
+        return None
+
+    min_edge: int = THRESHOLDS["LT006_NPOT_MIN_EDGE"]
+    if max(width, height) < min_edge:
+        return None
+
+    if _is_power_of_two(width) and _is_power_of_two(height):
+        return None
+
+    rec_width: int = _floor_pow2(width)
+    rec_height: int = _floor_pow2(height)
+
+    current_vram: float = estimate_texture_vram_mb(
+        width, height, compression, with_mips=mips_enabled
+    )
+    recommended_vram: float = estimate_texture_vram_mb(
+        rec_width, rec_height, compression, with_mips=mips_enabled
+    )
+    vram_saved: float = round(current_vram - recommended_vram, 2)
+
+    return Finding(
+        asset_path=asset["asset_path"],
+        rule_id="LT006",
+        category="Texture",
+        severity="warning",
+        message=(
+            f"{width}×{height} is not power-of-two — UE5 pads it on the GPU. "
+            f"Resize to {rec_width}×{rec_height} to drop the padding "
+            f"(≈ {vram_saved} MB VRAM)."
+        ),
+        current={"width": width, "height": height},
+        recommended={"width": rec_width, "height": rec_height},
+        estimated_saving=Saving(vram_mb=max(0.0, vram_saved), shader_instructions=0),
+        auto_fixable=True,
+        guidance=None,
+    )
+
+
+# ── LT007 ─────────────────────────────────────────────────────────────────────
+
+
+def check_lt007(asset: dict, engine: str = "unreal") -> Finding | None:
+    """LT007: Large texture stored uncompressed burns VRAM (4 bpp vs 1).
+
+    Mirrors the Unity "uncompressed" family: below the min edge it stays
+    quiet (filters noise on small UI/lookup textures); below the max edge
+    it is info; at/above the max edge it escalates to warning. The
+    recommended replacement is BC7 — the safe general-purpose RGBA block
+    format. (LOD findings stay within the warning/info convention — see
+    test_orchestrator.test_findings_have_valid_severity_values.)
+    """
+    width: int = asset.get("width", 0)
+    height: int = asset.get("height", 0)
+    compression: str = normalize_compression(asset.get("compression", "RGBA8"))
+    mips_enabled: bool = asset.get("mips_enabled", True)
+
+    # Only uncompressed payloads — normalize_compression collapses every
+    # uncompressed UE5/Unity format onto "RGBA8".
+    if compression != "RGBA8":
+        return None
+
+    min_edge: int = THRESHOLDS["LT007_UNCOMPRESSED_MIN_EDGE"]
+    max_edge: int = THRESHOLDS["LT007_UNCOMPRESSED_MAX_EDGE"]
+    long_edge: int = max(width, height)
+    if long_edge < min_edge:
+        return None
+
+    recommended: str = "BC7"
+    current_vram: float = estimate_texture_vram_mb(
+        width, height, "RGBA8", with_mips=mips_enabled
+    )
+    recommended_vram: float = estimate_texture_vram_mb(
+        width, height, recommended, with_mips=mips_enabled
+    )
+    vram_saved: float = round(current_vram - recommended_vram, 2)
+
+    severity: str = "warning" if long_edge >= max_edge else "info"
+
+    return Finding(
+        asset_path=asset["asset_path"],
+        rule_id="LT007",
+        category="Texture",
+        severity=severity,
+        message=(
+            f"{width}×{height} texture is uncompressed (RGBA8) — "
+            f"compress to {recommended} to save ≈ {vram_saved} MB VRAM."
+        ),
+        current={"compression": "RGBA8", "vram_mb": current_vram},
+        recommended={"compression": recommended, "vram_mb": recommended_vram},
+        estimated_saving=Saving(vram_mb=max(0.0, vram_saved), shader_instructions=0),
+        auto_fixable=True,
+        guidance=None,
+    )
+
+
+# ── LT008 ─────────────────────────────────────────────────────────────────────
+
+
+def check_lt008(asset: dict, engine: str = "unreal") -> Finding | None:
+    """LT008: Block-compressed texture has Oodle RDO off — larger package.
+
+    RDO trades a little quality for a smaller on-disk payload; it does not
+    change runtime VRAM, so the saving is reported as build_size_mb, never
+    vram_mb. Fires only when the collector explicitly reports rdo_enabled
+    is False — an absent field means an older client that doesn't send it
+    yet, so the rule stays silent rather than guessing.
+    """
+    rdo_enabled = asset.get("rdo_enabled", None)
+    if rdo_enabled is not False:
+        return None
+
+    compression: str = normalize_compression(asset.get("compression", ""))
+    if compression not in _RDO_FORMATS:
+        return None
+
+    width: int = asset.get("width", 0)
+    height: int = asset.get("height", 0)
+    min_edge: int = THRESHOLDS["LT008_RDO_MIN_EDGE"]
+    if max(width, height) < min_edge:
+        return None
+
+    # RDO typically shaves ~15 % off the compressed payload. We model VRAM,
+    # so reuse the resident-size arithmetic as a payload proxy and report it
+    # strictly as a build-size saving.
+    payload_mb: float = estimate_texture_vram_mb(
+        width, height, compression, with_mips=True
+    )
+    build_saved: float = round(payload_mb * 0.15, 2)
+
+    return Finding(
+        asset_path=asset["asset_path"],
+        rule_id="LT008",
+        category="Texture",
+        severity="info",
+        message=(
+            f"{width}×{height} {compression} texture has Oodle RDO disabled — "
+            f"enable it to shave ≈ {build_saved} MB off the package "
+            "(build size only; runtime VRAM is unchanged)."
+        ),
+        current={"rdo_enabled": False},
+        recommended={"rdo_enabled": True},
+        estimated_saving=Saving(
+            vram_mb=0.0, shader_instructions=0, build_size_mb=build_saved
+        ),
         auto_fixable=True,
         guidance=None,
     )

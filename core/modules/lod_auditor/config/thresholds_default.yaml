@@ -35,6 +35,16 @@ LT003_MAX_SIZE_BY_LOD_GROUP:
 LT003_DEFAULT_MAX_SIZE: 2048
 LT005_STREAMING_MIN_EDGE: 2048
 
+# LT006 — non-power-of-two: ignore tiny textures where padding is negligible.
+LT006_NPOT_MIN_EDGE: 128
+
+# LT007 — uncompressed: below min stays quiet; at/above max escalates to error.
+LT007_UNCOMPRESSED_MIN_EDGE: 256
+LT007_UNCOMPRESSED_MAX_EDGE: 1024
+
+# LT008 — Oodle/RDO: only flag block-compressed textures at or above this edge.
+LT008_RDO_MIN_EDGE: 256
+
 # ── Materials ─────────────────────────────────────────────────────────────────
 
 LM001_BUDGET_BY_BLEND_MODE:

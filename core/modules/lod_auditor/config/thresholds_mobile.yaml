@@ -33,6 +33,12 @@ LT003_MAX_SIZE_BY_LOD_GROUP:
 LT003_DEFAULT_MAX_SIZE: 1024
 LT005_STREAMING_MIN_EDGE: 1024
 
+# Mobile is stricter: flag NPOT and uncompressed textures earlier.
+LT006_NPOT_MIN_EDGE: 128
+LT007_UNCOMPRESSED_MIN_EDGE: 128
+LT007_UNCOMPRESSED_MAX_EDGE: 512
+LT008_RDO_MIN_EDGE: 128
+
 # ── Materials ─────────────────────────────────────────────────────────────────
 
 # Mobile GPUs hit thermal limits well before the desktop budget

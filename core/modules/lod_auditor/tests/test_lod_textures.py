@@ -6,6 +6,9 @@ from lod_auditor.rules.lod_textures import (
     check_lt003,
     check_lt004,
     check_lt005,
+    check_lt006,
+    check_lt007,
+    check_lt008,
 )
 
 # ── Base fixture ──────────────────────────────────────────────────────────────
@@ -208,3 +211,119 @@ class TestLT005:
     def test_auto_fixable_is_true(self):
         result = check_lt005(_tex(width=2048, height=2048, streaming=False))
         assert result.auto_fixable is True
+
+
+# ── LT006 ─────────────────────────────────────────────────────────────────────
+
+
+class TestLT006:
+    def test_fires_for_npot_world_texture(self):
+        result = check_lt006(_tex(width=1500, height=1500, lod_group="World"))
+        assert result is not None
+        assert result.rule_id == "LT006"
+
+    def test_recommends_floor_power_of_two(self):
+        result = check_lt006(_tex(width=1500, height=900, lod_group="World"))
+        assert result.recommended == {"width": 1024, "height": 512}
+
+    def test_no_finding_for_power_of_two(self):
+        assert check_lt006(_tex(width=2048, height=1024)) is None
+
+    def test_no_finding_for_ui_group(self):
+        # UI textures are exempt — NPOT is idiomatic there.
+        assert check_lt006(_tex(width=1500, height=900, lod_group="UI")) is None
+
+    def test_no_finding_below_min_edge(self):
+        assert check_lt006(_tex(width=100, height=60, lod_group="World")) is None
+
+    def test_one_npot_edge_is_enough(self):
+        # POT width but NPOT height still pads on the GPU.
+        result = check_lt006(_tex(width=1024, height=900, lod_group="World"))
+        assert result is not None
+
+
+# ── LT007 ─────────────────────────────────────────────────────────────────────
+
+
+class TestLT007:
+    def test_fires_for_uncompressed_large(self):
+        result = check_lt007(_tex(width=512, height=512, compression="RGBA8"))
+        assert result is not None
+        assert result.rule_id == "LT007"
+        assert result.recommended["compression"] == "BC7"
+
+    def test_recognises_ue5_uncompressed_alias(self):
+        # TC_VectorDisplacementmap normalises to RGBA8.
+        result = check_lt007(
+            _tex(width=512, height=512, compression="TC_VectorDisplacementmap")
+        )
+        assert result is not None
+
+    def test_info_below_max_edge(self):
+        # 512 is >= min (256) but < max (1024) → minor, info severity.
+        result = check_lt007(_tex(width=512, height=512, compression="RGBA8"))
+        assert result.severity == "info"
+
+    def test_warning_at_or_above_max_edge(self):
+        # Default max edge is 1024 → a 2K uncompressed texture is a warning.
+        result = check_lt007(_tex(width=2048, height=2048, compression="RGBA8"))
+        assert result.severity == "warning"
+
+    def test_vram_saving_is_positive(self):
+        result = check_lt007(_tex(width=1024, height=1024, compression="RGBA8"))
+        assert result.estimated_saving.vram_mb > 0
+
+    def test_no_finding_for_compressed(self):
+        assert check_lt007(_tex(width=2048, height=2048, compression="BC7")) is None
+
+    def test_no_finding_below_min_edge(self):
+        assert check_lt007(_tex(width=128, height=128, compression="RGBA8")) is None
+
+
+# ── LT008 ─────────────────────────────────────────────────────────────────────
+
+
+class TestLT008:
+    def test_fires_when_rdo_disabled_on_bc7(self):
+        result = check_lt008(
+            _tex(width=2048, height=2048, compression="BC7", rdo_enabled=False)
+        )
+        assert result is not None
+        assert result.rule_id == "LT008"
+
+    def test_saving_is_build_size_not_vram(self):
+        result = check_lt008(
+            _tex(width=2048, height=2048, compression="BC7", rdo_enabled=False)
+        )
+        assert result.estimated_saving.vram_mb == 0.0
+        assert result.estimated_saving.build_size_mb > 0
+        assert result.severity == "info"
+
+    def test_silent_when_rdo_field_absent(self):
+        # No rdo_enabled key → older client, stay quiet rather than guess.
+        assert check_lt008(_tex(width=2048, height=2048, compression="BC7")) is None
+
+    def test_silent_when_rdo_enabled(self):
+        assert (
+            check_lt008(
+                _tex(width=2048, height=2048, compression="BC7", rdo_enabled=True)
+            )
+            is None
+        )
+
+    def test_no_finding_for_uncompressed_format(self):
+        # RDO has nothing to shrink on RGBA8.
+        assert (
+            check_lt008(
+                _tex(width=2048, height=2048, compression="RGBA8", rdo_enabled=False)
+            )
+            is None
+        )
+
+    def test_no_finding_below_min_edge(self):
+        assert (
+            check_lt008(
+                _tex(width=128, height=128, compression="BC7", rdo_enabled=False)
+            )
+            is None
+        )
