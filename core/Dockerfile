@@ -62,6 +62,25 @@ RUN rm -f \
     modules/agent/llm_backend.py \
     modules/agent/prefab_explanations.py
 
+# ── Image edition gate ────────────────────────────────────────────────────────
+# Two published editions share this Dockerfile, selected at build time:
+#   free  (default) — the Fab / free-tier image. The paid sources (LLM agent,
+#                     LOD Auditor, dashboard upload) are PHYSICALLY removed so
+#                     the restriction can't be lifted at runtime — even
+#                     `docker run -e SHINT_CORE_EDITION=paid` finds nothing to
+#                     import (api/main.py guards the import and falls back).
+#   paid            — Indie + Studio image; keeps the paid modules.
+# Built with: docker build --build-arg SHINT_CORE_EDITION=paid ...
+ARG SHINT_CORE_EDITION=free
+ENV SHINT_CORE_EDITION=${SHINT_CORE_EDITION}
+RUN if [ "$SHINT_CORE_EDITION" != "paid" ]; then \
+        echo "Building FREE edition — stripping paid modules" && \
+        rm -rf modules/agent modules/lod_auditor \
+               api/routes/agent.py api/routes/lod_audit.py api/routes/dashboard.py ; \
+    else \
+        echo "Building PAID edition — agent + LOD Auditor + dashboard kept" ; \
+    fi
+
 RUN mkdir -p /app/core/models && chmod +x entrypoint.sh
 
 EXPOSE 18200

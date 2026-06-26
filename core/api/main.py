@@ -8,18 +8,36 @@ from pathlib import Path
 
 from api.middleware import setup_middlewares
 from api.routes import (
-    agent,
     assets,
     config,
-    dashboard,
     health,
     license,
-    lod_audit,
     metrics,
     unity,
     validate,
 )
+
+# NOTE: the paid-only routers (agent, lod_audit, dashboard) are imported
+# lazily in the registration block below — they are physically absent from the
+# free image, so a top-level import here would crash the free Core on boot.
 from api.version import CORE_VERSION
+
+# ── Image edition gate ────────────────────────────────────────────────────────
+#
+# Two published editions of the Core image share this codebase:
+#
+#   free  (default, ghcr …:latest)  — the Fab / free-tier surface only.
+#   paid  (ghcr …:paid)             — adds the Indie + Studio routers: the LLM
+#                                     agent (/agent/*), the LOD Auditor
+#                                     (/assets/lod/*) and dashboard upload
+#                                     (/dashboard/*).
+#
+# The edition is baked into each image via a Docker ARG→ENV (SHINT_CORE_EDITION)
+# so the free image never *exposes* paid endpoints (they 404 rather than 403)
+# and never loads the paid LLM model. Defaults to "free" so any build without
+# the flag is the safe, restricted one.
+SHINT_CORE_EDITION = os.getenv("SHINT_CORE_EDITION", "free").strip().lower()
+_IS_PAID_EDITION = SHINT_CORE_EDITION == "paid"
 
 # (NUEVO: assets, dashboard)
 from fastapi import FastAPI
@@ -104,6 +122,15 @@ async def _load_llm_in_background(app: FastAPI) -> None:
         not_installed     — agent module missing entirely (free-tier image)
     """
     app.state.llm_status = "loading"
+
+    # Free edition ships no paid surface — the LLM agent is Indie+/Studio only.
+    # Skip the ~940 MB download/load entirely rather than warm a model that has
+    # no reachable route in this image.
+    if not _IS_PAID_EDITION:
+        print("INFO: free edition — LLM agent disabled (paid image only)")
+        app.state.llm_status = "not_installed"
+        return
+
     try:
         from modules.agent.llm_backend import is_loaded, load_model
         from modules.agent.model_downloader import download_model
@@ -166,6 +193,10 @@ async def lifespan(app: FastAPI):
     """
     config_path = find_config_path()
     app.state.config_path = config_path
+
+    # Surface the image edition so /health + /status report it (lets the
+    # launcher/plugin hide paid UI against a free Core instead of 404-probing).
+    app.state.edition = SHINT_CORE_EDITION
 
     if config_path:
         print(f"Config found at: {config_path}")
@@ -238,17 +269,39 @@ app = FastAPI(
 setup_middlewares(app)
 
 # Register routes
+# ── Free-tier surface (both editions) ─────────────────────────────────────────
+# Code Validator, Asset Naming, license + config + health. These serve free
+# users too and stay runtime tier-gated (resolve_tier / filter_issues_by_tier).
 app.include_router(health.router)  # GET /health  GET /ping  GET /status
 app.include_router(config.router)  # GET/POST /config
 app.include_router(validate.router)  # POST /validate/*
 app.include_router(
     assets.router
 )  # POST /assets/scan  POST /assets/fix  POST /assets/unity/scan
-app.include_router(lod_audit.router)  # POST /assets/lod/audit
-app.include_router(dashboard.router)  # POST /dashboard/report
 app.include_router(
     metrics.router
 )  # GET /metrics/score/latest  GET /metrics/score/history
-app.include_router(agent.router)  # POST /agent/*
 app.include_router(license.router)  # POST /license
 app.include_router(unity.router)  # POST /validate/unity/scan
+
+# ── Paid surface (Indie + Studio) — paid image only ───────────────────────────
+# Registered solely when SHINT_CORE_EDITION=paid. The paid sources are *physically
+# stripped* from the free image (see Dockerfile), so the guarded import is the
+# real gate: setting `-e SHINT_CORE_EDITION=paid` on a free image can't unlock
+# anything because the modules aren't there to import. A free user hitting these
+# routes gets 404, and the paid LLM agent never loads (see _load_llm_in_background).
+if _IS_PAID_EDITION:
+    try:
+        from api.routes import agent, dashboard, lod_audit
+
+        app.include_router(agent.router)  # POST /agent/*            (Indie+)
+        app.include_router(lod_audit.router)  # POST /assets/lod/*       (Studio)
+        app.include_router(dashboard.router)  # POST /dashboard/report   (Indie+)
+    except ImportError as exc:
+        # Paid edition requested but the paid sources are absent (free image
+        # with the env flipped). Fall back to free so /health reports honestly.
+        print(f"WARNING: paid routers unavailable — running as free ({exc})")
+        SHINT_CORE_EDITION = "free"
+        _IS_PAID_EDITION = False
+
+print(f"INFO: ShintTools Core edition = {SHINT_CORE_EDITION}")

@@ -22,10 +22,12 @@ async def get_health(request: Request):
     db_connected = getattr(request.app.state, "db_connected", False)
     commit_sha = getattr(request.app.state, "commit_sha", "unknown")
     llm_status = getattr(request.app.state, "llm_status", "disabled")
+    edition = getattr(request.app.state, "edition", "free")
     return {
         "status": "ok",
         "version": CORE_VERSION,
         "commit": commit_sha,
+        "edition": edition,
         "database": "ok" if db_connected else "unavailable",
         "llm_status": llm_status,
     }
@@ -51,11 +53,13 @@ async def get_status(request: Request):
     modules = getattr(request.app.state, "modules", [])
     commit_sha = getattr(request.app.state, "commit_sha", "unknown")
     llm_status = getattr(request.app.state, "llm_status", "disabled")
+    edition = getattr(request.app.state, "edition", "free")
 
     return {
         "status": "ok",
         "version": CORE_VERSION,
         "commit": commit_sha,
+        "edition": edition,
         "modules": modules,
         "database": {
             "connected": db_connected,

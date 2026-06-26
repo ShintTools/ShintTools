@@ -4,9 +4,17 @@
 #   * Tag push matching v*.*.* (production release)
 #   * workflow_dispatch (manual smoke runs from the Actions tab)
 #
-# Output:
-#   ghcr.io/noctxas97dev/shinttools-core:<semver tag>   (immutable)
-#   ghcr.io/noctxas97dev/shinttools-core:latest         (mutable, points to last)
+# Output (two editions, same Dockerfile, selected by SHINT_CORE_EDITION):
+#   FREE  (Fab / free tier — paid sources physically stripped):
+#     ghcr.io/noctxas97dev/shinttools-core:<semver tag>   (immutable)
+#     ghcr.io/noctxas97dev/shinttools-core:latest         (mutable, last build)
+#   PAID  (Indie + Studio — LLM agent + LOD Auditor + dashboard):
+#     ghcr.io/noctxas97dev/shinttools-core:<semver tag>-paid
+#     ghcr.io/noctxas97dev/shinttools-core:paid           (mutable, last build)
+#
+# The marketplace/free plugin pulls :latest; the paid launcher pipeline pulls
+# :paid. The free image cannot be unlocked at runtime — the paid modules are
+# absent, not merely unrouted.
 #
 # The image is PUBLIC and pulled anonymously by the ShintTools marketplace
 # plugin (UE5 Fab + Unity AS) on first install via FShintCoreInstaller.
@@ -86,12 +94,16 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.licenses=Proprietary
 
-      - name: Build & push
+      - name: Build & push (FREE edition)
         uses: docker/build-push-action@v6
         with:
           context: ./core
           file: ./core/Dockerfile
           push: true
+          # Free is the Dockerfile default (SHINT_CORE_EDITION=free) — the
+          # paid sources are stripped during this build.
+          build-args: |
+            SHINT_CORE_EDITION=free
           # amd64 only for now -- UE5/Unity editors on macOS arm64 will
           # use Rosetta or skip Docker via the native fallback that
           # the marketplace plugin's installer falls back to.
@@ -100,6 +112,40 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           # GitHub Actions cache reduces rebuild time from ~6 min to
           # ~90 s when the Dockerfile layers haven't changed.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Paid edition: same Dockerfile + context, SHINT_CORE_EDITION=paid keeps
+      # the agent / LOD Auditor / dashboard. Tags get a -paid suffix; the
+      # convenience :paid tag is suffix-cleared so it isn't ":paid-paid".
+      - name: Derive PAID image metadata
+        id: meta_paid
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/noctxas97dev/shinttools-core
+          flavor: |
+            latest=false
+            suffix=-paid
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=paid,suffix=
+          labels: |
+            org.opencontainers.image.title=ShintTools Core (paid)
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.licenses=Proprietary
+
+      - name: Build & push (PAID edition)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./core
+          file: ./core/Dockerfile
+          push: true
+          build-args: |
+            SHINT_CORE_EDITION=paid
+          platforms: linux/amd64
+          tags: ${{ steps.meta_paid.outputs.tags }}
+          labels: ${{ steps.meta_paid.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
