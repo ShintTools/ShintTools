@@ -389,7 +389,9 @@ async def _enforce_studio(api_key: str, route_label: str) -> str:
     """
     tier, reason = await resolve_tier_detailed(api_key)
     logger.info("%s: tier=%s reason=%s", route_label, tier, reason or "-")
-    if tier != "studio":
+    # Studio AND Enterprise unlock the LOD Auditor — Enterprise is a superset of
+    # Studio, so gating on `!= "studio"` wrongly 403'd Enterprise users (GH #37).
+    if tier not in ("studio", "enterprise"):
         logger.info(
             "%s: denied tier=%s reason=%s — Studio required",
             route_label, tier, reason or "-",
