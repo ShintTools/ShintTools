@@ -33,7 +33,11 @@ echo "Starting at $(date)"
 if [ -f "modules/agent/model_downloader.py" ]; then
     if [ "$SHINTTOOLS_AGENT_ENABLED" = "1" ]; then
         echo ""
-        echo "→ Agent module detected and enabled (Indie tier)"
+        # NOTE: the entrypoint only knows agent is enabled (a paid-tier image),
+        # not the signed-in account's exact tier — that's resolved per-request
+        # from the api_key. Don't print "Indie tier" here: it made Studio /
+        # Enterprise customers think they'd been downgraded to Indie.
+        echo "→ Agent module detected and enabled (paid tier)"
         echo "→ Checking LLM model..."
         if python -m modules.agent.model_downloader; then
             echo "✓ LLM model ready"
@@ -46,7 +50,7 @@ if [ -f "modules/agent/model_downloader.py" ]; then
             fi
         fi
     else
-        echo "→ Agent module present but disabled (SHINTTOOLS_AGENT_ENABLED!=1). LLM agent is an Indie feature; skipping ~3 GB model download."
+        echo "→ Agent module present but disabled (SHINTTOOLS_AGENT_ENABLED!=1). LLM agent is a paid-tier feature; skipping ~3 GB model download."
     fi
 else
     echo "→ Agent module not available (main branch only, not develop)"
