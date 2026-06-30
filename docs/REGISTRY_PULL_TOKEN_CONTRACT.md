@@ -108,3 +108,130 @@ different machine).
 The migration does **not** cut over (workflow stays publishing paid to the old
 public package, clients keep the flag off) until this endpoint is live in
 production and smoke-tested. See the migration checklist in the PR description.
+
+---
+
+# Appendix A — Implementing Option A (GitHub App installation token)
+
+The `token` returned to the client MUST be a credential GHCR accepts. GHCR's
+`docker login` does a basic-auth → token-exchange, so the password has to be a
+real GitHub credential (`ghs_…` App token or `github_pat_…` fine-grained PAT) —
+an opaque/custom token is rejected with `denied: denied`.
+
+Option A mints a **short-lived (~1 h) GitHub App installation token** per
+request from an App private key held only on the server. Nothing is pre-shared
+with the client.
+
+## A.1 Create the GitHub App
+1. Go to **https://github.com/settings/apps/new** (signed in as the account that
+   owns the package — `Noctxas97Dev`).
+2. **GitHub App name:** `ShintTools Core Pull` · **Homepage URL:** `https://shint.tools`
+3. **Webhook:** uncheck **Active** (none needed).
+4. **Permissions → Repository permissions → Packages: Read-only.** (Leave
+   everything else "No access".)
+5. **Where can this GitHub App be installed?** → **Only on this account.**
+6. **Create GitHub App.** On the App's **General** page, note the **App ID**.
+
+## A.2 Generate the private key
+On the App's **General** page → **Private keys** → **Generate a private key** →
+downloads a `.pem`. This is the server secret — never commit it, never send it
+to a client.
+
+## A.3 Install the App + confirm package access
+1. App page → **Install App** → install on **Noctxas97Dev**.
+2. "Only select repositories" → select **ShintTools** (the repo whose Actions
+   publish the package). Confirm.
+3. Get the **Installation ID** from the URL after install:
+   `https://github.com/settings/installations/{INSTALLATION_ID}`
+   (or `GET /app/installations` with an App JWT).
+4. The package `shinttools-core-paid` is published by the ShintTools repo's
+   workflow, so it's owned by `Noctxas97Dev` and reachable by an installation
+   with `packages: read`. (If you ever down-scope by `repositories`, the package
+   must be linked to that repo: Package → settings → "Repository access".)
+
+## A.4 Store server secrets (dashboard env)
+```
+GH_APP_ID                = <App ID>
+GH_APP_INSTALLATION_ID   = <Installation ID>
+GH_APP_PRIVATE_KEY       = <full PEM contents, real newlines>
+```
+> ⚠️ The #1 cause of a 500 here is PEM newlines. If your host stores the key
+> with literal `\n`, convert back to real newlines before signing:
+> `privateKey.replace(/\\n/g, "\n")`.
+
+## A.5 Mint logic (inside the already-validated handler)
+After the paid + machine-binding check passes:
+1. Build a JWT (RS256) signed with the private key: `iss = App ID`,
+   `iat = now-60`, `exp = now+600` (≤ 10 min).
+2. `POST https://api.github.com/app/installations/{INSTALLATION_ID}/access_tokens`
+   with `Authorization: Bearer <JWT>`, `Accept: application/vnd.github+json`,
+   body `{"permissions": {"packages": "read"}}`.
+3. The response is `{"token": "ghs_…", "expires_at": "…"}`.
+4. Return the contract shape (see §Response — 200).
+
+### Node.js (recommended — `@octokit/auth-app` handles JWT + exchange + cache)
+```js
+import { createAppAuth } from "@octokit/auth-app";
+
+const auth = createAppAuth({
+  appId:          process.env.GH_APP_ID,
+  privateKey:     process.env.GH_APP_PRIVATE_KEY,        // real newlines
+  installationId: process.env.GH_APP_INSTALLATION_ID,
+});
+
+// in the POST /api/public/registry/pull-token handler, AFTER license validation:
+const { token, expiresAt } = await auth({
+  type: "installation",
+  permissions: { packages: "read" },
+});
+
+return res.json({
+  valid:      true,
+  registry:   "ghcr.io",
+  username:   "x-access-token",                          // any non-empty string
+  token,                                                 // ghs_…
+  image:      "ghcr.io/noctxas97dev/shinttools-core-paid",
+  expires_at: expiresAt,                                 // ISO-8601
+});
+```
+
+### Python (PyJWT + requests)
+```python
+import time, jwt, requests   # PyJWT, with cryptography installed for RS256
+
+def installation_token():
+    now = int(time.time())
+    assertion = jwt.encode(
+        {"iat": now - 60, "exp": now + 600, "iss": GH_APP_ID},
+        GH_APP_PRIVATE_KEY, algorithm="RS256")
+    r = requests.post(
+        f"https://api.github.com/app/installations/{GH_APP_INSTALLATION_ID}/access_tokens",
+        headers={"Authorization": f"Bearer {assertion}",
+                 "Accept": "application/vnd.github+json"},
+        json={"permissions": {"packages": "read"}}, timeout=10)
+    r.raise_for_status()
+    d = r.json()
+    return d["token"], d["expires_at"]      # ghs_…, ISO-8601
+```
+Then return `{valid, registry:"ghcr.io", username:"x-access-token", token,
+image:"ghcr.io/noctxas97dev/shinttools-core-paid", expires_at}`.
+
+> `username` is ignored by GHCR for token auth — any non-empty string works.
+
+## A.6 Verify
+```
+echo <token> | docker login ghcr.io -u x-access-token --password-stdin   # Login Succeeded
+docker pull ghcr.io/noctxas97dev/shinttools-core-paid:latest
+docker logout ghcr.io
+```
+A correct token starts with `ghs_`. (Then ping the launcher dev to re-run the
+client verification: token → login → manifest.)
+
+## A.7 500 troubleshooting
+| Symptom | Cause |
+|---|---|
+| 500, "error:0909006C" / PEM/ASN.1 parse | `GH_APP_PRIVATE_KEY` newlines mangled — un-escape `\n` |
+| 401 from `/access_tokens` ("integration not found" / bad JWT) | wrong App ID, JWT `exp` > 10 min, or clock skew |
+| 404 from `/access_tokens` | wrong Installation ID |
+| 403 / 422 from `/access_tokens` | App lacks `packages: read`, not installed, or `repositories[]` names a repo outside the install |
+| 200 token but GHCR `denied` | token isn't `ghs_…` (still returning the opaque token) |
