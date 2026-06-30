@@ -52,7 +52,7 @@ from .llm_backend import _resolved_model_path
 #   require authentication and return 404 to anonymous clients, which
 #   breaks the on-prem install flow for studio customers (their
 #   Launcher has no GitHub credentials and shouldn't need any).
-#   `Noctxas97Dev/ShintTools-Models` is a separate, public repo that
+#   `ShintTools/ShintTools-Models` is a separate, public repo that
 #   contains ONLY model assets in Releases — no source code, no IP.
 #   That keeps anonymous downloads working without compromising the
 #   privacy of the main codebase.
@@ -68,7 +68,7 @@ from .llm_backend import _resolved_model_path
 #                print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" \
 #         path/to/file.gguf
 DEFAULT_MODEL_URL = (
-    "https://github.com/Noctxas97Dev/ShintTools-Models/releases/download/"
+    "https://github.com/ShintTools/ShintTools-Models/releases/download/"
     "v2.0-models/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf"
 )
 DEFAULT_MODEL_SHA256 = (

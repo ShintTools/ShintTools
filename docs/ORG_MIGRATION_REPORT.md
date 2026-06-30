@@ -23,11 +23,12 @@ Launcher + UE5** (Unity paused per standing rule — flagged below).
 READMEs, CHANGELOGs, handoff guides, build scripts (`sync_payload.ps1`,
 `build_docs_docx.py`, `run_bug_hunt.ps1`) swept of legacy owner/namespace refs.
 
-### Intentionally NOT migrated
-- **`Noctxas97Dev/ShintTools-Models`** — the model GGUF release repo is **not**
-  under the org (`ShintTools/ShintTools-Models` 404s). `LLM_MODEL_REPO`, the
-  compose `SHINTTOOLS_MODEL_URL`, and `model_downloader.py` keep that reference
-  on purpose. *Action item: migrate that repo too, then flip these refs.*
+### Model repo — migrated (2026-07-01)
+- **`ShintTools/ShintTools-Models`** — the model GGUF release repo was
+  transferred to the org (legacy `Noctxas97Dev/ShintTools-Models` now 301-redirects;
+  the `v2.0-models` release + GGUF asset carried over). `LLM_MODEL_REPO`, the
+  compose `SHINTTOOLS_MODEL_URL`, and `model_downloader.py` (launcher + payload +
+  Core) repointed to the org. No legacy owner refs remain in functional code.
 
 ## Verification
 - Launcher unit tests: **41 passing** post-migration.
