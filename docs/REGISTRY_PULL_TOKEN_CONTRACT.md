@@ -235,3 +235,71 @@ client verification: token → login → manifest.)
 | 404 from `/access_tokens` | wrong Installation ID |
 | 403 / 422 from `/access_tokens` | App lacks `packages: read`, not installed, or `repositories[]` names a repo outside the install |
 | 200 token but GHCR `denied` | token isn't `ghs_…` (still returning the opaque token) |
+| 200 + `ghs_` token, `docker login` OK, but `pull` = **403 Forbidden** | the package is **user-account-owned**. GitHub App / fine-grained package access only works for **org-owned** packages — see Appendix B |
+
+---
+
+# Appendix B — Move the paid package to an organization
+
+**Why:** a GitHub App installation token authenticates fine against a
+**user-account**-owned GHCR package (`docker login` succeeds) but GHCR returns
+**403** on pull — fine-grained package access (Apps, fine-grained PATs) is only
+honored for **org-owned** packages. So the paid package must live under an org:
+```
+ghcr.io/<ORG>/shinttools-core-paid     (PRIVATE, org-owned)
+```
+The **free** package stays where it is (`ghcr.io/noctxas97dev/shinttools-core`,
+public, user-owned, GITHUB_TOKEN-published) — only paid moves.
+
+## B.1 GitHub side (you)
+
+**1. Create / pick the org**
+- github.com → **+** → **New organization** (Free plan is fine for private
+  packages). Choose a slug → this is `<ORG>`.
+
+**2. Install the GitHub App on the org**
+- The existing **ShintTools Core Pull** App is installed on the *user* account;
+  it must also be installed on **`<ORG>`**.
+- App settings → **Install App** → install on `<ORG>` (any repo selection).
+- Get the **org installation ID**: `GET /app/installations` (with an App JWT)
+  → the entry whose `account.login == <ORG>`; or the URL
+  `https://github.com/organizations/<ORG>/settings/installations/{ID}`.
+- **Update the dashboard secret `GH_APP_INSTALLATION_ID`** to this org
+  installation ID. (`GH_APP_ID` + `GH_APP_PRIVATE_KEY` stay the same — same App.)
+
+**3. Create the workflow publish token**
+- An org **owner** creates a PAT that can write to the org's GHCR:
+  - classic PAT with **`write:packages`** (+ `read:packages`), **or**
+  - fine-grained PAT, resource owner **`<ORG>`**, **Packages: Read and write**.
+- Add it to `Noctxas97Dev/ShintTools` → Settings → Secrets and variables →
+  Actions → **New repository secret**, name **`GHCR_ORG_TOKEN`**, value = the PAT.
+- CI-only secret; never shipped to clients.
+
+**4. After the first publish — grant the App + confirm private**
+- `https://github.com/orgs/<ORG>/packages/container/shinttools-core-paid/settings`
+- Visibility = **Private**.
+- **Manage Actions access / Package access → add the GitHub App** ("ShintTools
+  Core Pull") with **Read**. *(This is the step user-owned packages don't allow
+  and is what fixes the 403.)*
+
+## B.2 Code side (I do once you give me `<ORG>`)
+- `publish-core.yml` — before the **paid** build-push, log in to ghcr.io with
+  `GHCR_ORG_TOKEN`; paid image namespace → `ghcr.io/<ORG>/shinttools-core-paid`;
+  point the assert-private step at the org package. Free push + free public
+  marking stay on `GITHUB_TOKEN`, unchanged.
+- launcher `app/constants.py` — `CORE_IMAGE_REMOTE_PAID_PRIVATE` →
+  `ghcr.io/<ORG>/shinttools-core-paid:latest` (`requires_registry_auth` still
+  matches the `shinttools-core-paid` substring).
+- this doc + the dashboard's returned `image` field → org namespace (the client
+  pulls the constants ref, so `image` is informational, but keep it consistent).
+
+## B.3 Re-publish + verify
+- Bump `CORE_VERSION` → 2.0.8, tag `v2.0.8` → workflow publishes
+  `ghcr.io/<ORG>/shinttools-core-paid`.
+- After B.1 step 4 (grant the App), re-run the client check: token →
+  `docker login` → **pull** must now succeed.
+
+## B.4 Then the rest of the cutover
+- Launcher: flip `SHINTTOOLS_PAID_PRIVATE` default on, merge `develop`→`main`, release.
+- Plugin: merge `develop-paid`→`main`.
+- Delete the legacy public `:paid` / `*-paid` tags from `shinttools-core`.
