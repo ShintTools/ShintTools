@@ -47,7 +47,7 @@ from .llm_backend import _resolved_model_path
 # the exact bytes of the uploaded file).
 #
 # Why a SEPARATE public repo for the model:
-#   The main `Noctxas97Dev/ShintTools` repo is private (it holds the
+#   The main `ShintTools/ShintTools` repo is private (it holds the
 #   product source code). GitHub release-asset URLs on private repos
 #   require authentication and return 404 to anonymous clients, which
 #   breaks the on-prem install flow for studio customers (their

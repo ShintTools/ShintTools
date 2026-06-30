@@ -6,7 +6,7 @@ this endpoint (behind a feature flag) but it does not exist yet.
 
 ## Why this exists
 
-The free Core image (`ghcr.io/noctxas97dev/shinttools-core`) is a **public**
+The free Core image (`ghcr.io/shinttools/shinttools-core`) is a **public**
 package — the Fab marketplace plugin pulls it anonymously on first install.
 
 GHCR visibility is **per-package, not per-tag**: you cannot keep `:latest`
@@ -14,7 +14,7 @@ public while making `:paid` private inside the same package. So the paid edition
 moves to its **own private package**:
 
 ```
-ghcr.io/noctxas97dev/shinttools-core-paid      (PRIVATE)
+ghcr.io/shinttools/shinttools-core-paid      (PRIVATE)
 ```
 
 A private package cannot be pulled anonymously. Paid clients therefore need a
@@ -47,7 +47,7 @@ Content-Type: application/json
   "registry": "ghcr.io",
   "username": "shinttools-pull",
   "token": "<short-lived GHCR pull token>",
-  "image": "ghcr.io/noctxas97dev/shinttools-core-paid",
+  "image": "ghcr.io/shinttools/shinttools-core-paid",
   "expires_at": "2026-06-30T12:15:00Z"
 }
 ```
@@ -190,7 +190,7 @@ return res.json({
   registry:   "ghcr.io",
   username:   "x-access-token",                          // any non-empty string
   token,                                                 // ghs_…
-  image:      "ghcr.io/noctxas97dev/shinttools-core-paid",
+  image:      "ghcr.io/shinttools/shinttools-core-paid",
   expires_at: expiresAt,                                 // ISO-8601
 });
 ```
@@ -214,14 +214,14 @@ def installation_token():
     return d["token"], d["expires_at"]      # ghs_…, ISO-8601
 ```
 Then return `{valid, registry:"ghcr.io", username:"x-access-token", token,
-image:"ghcr.io/noctxas97dev/shinttools-core-paid", expires_at}`.
+image:"ghcr.io/shinttools/shinttools-core-paid", expires_at}`.
 
 > `username` is ignored by GHCR for token auth — any non-empty string works.
 
 ## A.6 Verify
 ```
 echo <token> | docker login ghcr.io -u x-access-token --password-stdin   # Login Succeeded
-docker pull ghcr.io/noctxas97dev/shinttools-core-paid:latest
+docker pull ghcr.io/shinttools/shinttools-core-paid:latest
 docker logout ghcr.io
 ```
 A correct token starts with `ghs_`. (Then ping the launcher dev to re-run the
@@ -248,7 +248,7 @@ honored for **org-owned** packages. So the paid package must live under an org:
 ```
 ghcr.io/<ORG>/shinttools-core-paid     (PRIVATE, org-owned)
 ```
-The **free** package stays where it is (`ghcr.io/noctxas97dev/shinttools-core`,
+The **free** package stays where it is (`ghcr.io/shinttools/shinttools-core`,
 public, user-owned, GITHUB_TOKEN-published) — only paid moves.
 
 ## B.1 GitHub side (you)
@@ -271,7 +271,7 @@ public, user-owned, GITHUB_TOKEN-published) — only paid moves.
 - An org **owner** creates a PAT that can write to the org's GHCR:
   - classic PAT with **`write:packages`** (+ `read:packages`), **or**
   - fine-grained PAT, resource owner **`<ORG>`**, **Packages: Read and write**.
-- Add it to `Noctxas97Dev/ShintTools` → Settings → Secrets and variables →
+- Add it to `ShintTools/ShintTools` → Settings → Secrets and variables →
   Actions → **New repository secret**, name **`GHCR_ORG_TOKEN`**, value = the PAT.
 - CI-only secret; never shipped to clients.
 

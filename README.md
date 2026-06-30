@@ -14,7 +14,7 @@ Automates code validation, asset optimization, and QA for game studios.
 **Only requirement: Docker Desktop installed and running.**
 
 ```bash
-git clone https://github.com/Noctxas97Dev/ShintTools.git
+git clone https://github.com/ShintTools/ShintTools.git
 cd ShintTools
 docker compose -f docker-compose.plugin-dev.yml up --build
 ```
