@@ -6,11 +6,11 @@
 #
 # Output (two editions, same Dockerfile, selected by SHINT_CORE_EDITION):
 #   FREE  (Fab / free tier — paid sources physically stripped):
-#     ghcr.io/noctxas97dev/shinttools-core:<semver tag>   (immutable)
-#     ghcr.io/noctxas97dev/shinttools-core:latest         (mutable, last build)
+#     ghcr.io/shinttools/shinttools-core:<semver tag>   (immutable)
+#     ghcr.io/shinttools/shinttools-core:latest         (mutable, last build)
 #   PAID  (Indie + Studio — LLM agent + LOD Auditor + dashboard):
-#     ghcr.io/noctxas97dev/shinttools-core:<semver tag>-paid
-#     ghcr.io/noctxas97dev/shinttools-core:paid           (mutable, last build)
+#     ghcr.io/shinttools/shinttools-core:<semver tag>-paid
+#     ghcr.io/shinttools/shinttools-core:paid           (mutable, last build)
 #
 # The marketplace/free plugin pulls :latest; the paid launcher pipeline pulls
 # :paid. The free image cannot be unlocked at runtime — the paid modules are
@@ -78,7 +78,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/noctxas97dev/shinttools-core
+          images: ghcr.io/shinttools/shinttools-core
           # Semver tag (v1.2.3 -> 1.2.3) for immutable refs + latest for
           # the mutable convenience tag the marketplace plugin pulls.
           tags: |
@@ -138,7 +138,7 @@ jobs:
         if: vars.PAID_PRIVATE_ENABLED != 'true'
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/noctxas97dev/shinttools-core
+          images: ghcr.io/shinttools/shinttools-core
           flavor: |
             latest=false
             suffix=-paid
@@ -174,7 +174,7 @@ jobs:
         if: vars.PAID_PRIVATE_ENABLED == 'true'
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/noctxas97dev/shinttools-core-paid
+          images: ghcr.io/shinttools/shinttools-core-paid
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -206,7 +206,7 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           gh api -X PATCH \
-            "/user/packages/container/shinttools-core/visibility" \
+            "/orgs/ShintTools/packages/container/shinttools-core/visibility" \
             -f visibility=public \
             || echo "Package may already be public, continuing."
         env:
@@ -219,7 +219,7 @@ jobs:
         if: ${{ github.event_name != 'pull_request' && vars.PAID_PRIVATE_ENABLED == 'true' }}
         run: |
           gh api -X PATCH \
-            "/user/packages/container/shinttools-core-paid/visibility" \
+            "/orgs/ShintTools/packages/container/shinttools-core-paid/visibility" \
             -f visibility=private \
             || echo "Paid package visibility patch skipped (may not exist yet)."
         env:
