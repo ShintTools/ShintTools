@@ -115,11 +115,27 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Paid edition: same Dockerfile + context, SHINT_CORE_EDITION=paid keeps
-      # the agent / LOD Auditor / dashboard. Tags get a -paid suffix; the
-      # convenience :paid tag is suffix-cleared so it isn't ":paid-paid".
-      - name: Derive PAID image metadata
-        id: meta_paid
+      # ── PAID edition ────────────────────────────────────────────────────────
+      # MIGRATION (see docs/REGISTRY_PULL_TOKEN_CONTRACT.md): the paid edition is
+      # moving OUT of the public `shinttools-core` package into its own PRIVATE
+      # package `shinttools-core-paid`, pulled with a dashboard-minted token.
+      # GHCR visibility is per-package, so a public `:latest` and a private
+      # `:paid` cannot coexist in one package — hence a second package.
+      #
+      # The cutover is gated on the repo variable PAID_PRIVATE_ENABLED so that
+      # committing this workflow changes NOTHING in production until (1) the
+      # dashboard token endpoint is live and (2) the launcher/plugin token-login
+      # releases have shipped. Flip the variable to 'true' to cut over.
+      #
+      #   PAID_PRIVATE_ENABLED != 'true' (default) → legacy: paid stays in the
+      #     public `shinttools-core` package with -paid tags (current behavior).
+      #   PAID_PRIVATE_ENABLED == 'true'           → paid goes to the private
+      #     `shinttools-core-paid` package; the public package is free-only.
+
+      # Legacy (default): paid in the public package, -paid suffixed.
+      - name: Derive PAID image metadata (legacy public)
+        id: meta_paid_public
+        if: vars.PAID_PRIVATE_ENABLED != 'true'
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/noctxas97dev/shinttools-core
@@ -135,7 +151,8 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.licenses=Proprietary
 
-      - name: Build & push (PAID edition)
+      - name: Build & push (PAID edition, legacy public)
+        if: vars.PAID_PRIVATE_ENABLED != 'true'
         uses: docker/build-push-action@v6
         with:
           context: ./core
@@ -144,20 +161,66 @@ jobs:
           build-args: |
             SHINT_CORE_EDITION=paid
           platforms: linux/amd64
-          tags: ${{ steps.meta_paid.outputs.tags }}
-          labels: ${{ steps.meta_paid.outputs.labels }}
+          tags: ${{ steps.meta_paid_public.outputs.tags }}
+          labels: ${{ steps.meta_paid_public.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Make the package public on first publish. This is idempotent --
-      # subsequent runs noop. Without this step the first published
-      # version lands as PRIVATE and anonymous pulls fail.
-      - name: Mark package public
+      # Target state: paid in its OWN private package. Convenience tag is
+      # :latest WITHIN this private package (the old :paid tag has no meaning
+      # once free and paid no longer share a package).
+      - name: Derive PAID image metadata (private package)
+        id: meta_paid_private
+        if: vars.PAID_PRIVATE_ENABLED == 'true'
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/noctxas97dev/shinttools-core-paid
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.title=ShintTools Core (paid)
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.licenses=Proprietary
+
+      - name: Build & push (PAID edition, private package)
+        if: vars.PAID_PRIVATE_ENABLED == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./core
+          file: ./core/Dockerfile
+          push: true
+          build-args: |
+            SHINT_CORE_EDITION=paid
+          platforms: linux/amd64
+          tags: ${{ steps.meta_paid_private.outputs.tags }}
+          labels: ${{ steps.meta_paid_private.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The FREE package must be public (anonymous Fab pulls). Idempotent --
+      # subsequent runs noop. Without this the first published version lands
+      # PRIVATE and anonymous pulls fail.
+      - name: Mark free package public
         if: github.event_name != 'pull_request'
         run: |
           gh api -X PATCH \
             "/user/packages/container/shinttools-core/visibility" \
             -f visibility=public \
             || echo "Package may already be public, continuing."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # The PAID package must stay PRIVATE. First publish already lands private;
+      # this asserts it explicitly so it can never drift public. Only runs once
+      # the migration is enabled (the private package exists).
+      - name: Assert paid package private
+        if: ${{ github.event_name != 'pull_request' && vars.PAID_PRIVATE_ENABLED == 'true' }}
+        run: |
+          gh api -X PATCH \
+            "/user/packages/container/shinttools-core-paid/visibility" \
+            -f visibility=private \
+            || echo "Paid package visibility patch skipped (may not exist yet)."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
