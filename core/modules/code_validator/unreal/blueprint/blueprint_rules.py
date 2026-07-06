@@ -59,7 +59,26 @@ def detect_missing_bp_prefix(
     bp_path = blueprint.get("path", "")
     bp_name = blueprint.get("name", "")
 
-    if not bp_name.startswith("BP_"):
+    # The exporter sends every UBlueprint subclass through this rule —
+    # widgets, anim BPs, interfaces, function/macro libraries — and each has
+    # its OWN canonical prefix. Demanding literally "BP_" flagged every
+    # correctly-named WBP_/ABP_ asset (and the auto-fix would have produced
+    # "BP_WBP_..."). Accept the standard UE prefix family.
+    _BP_PREFIX_FAMILY = (
+        "BP_",    # actor/object blueprint
+        "WBP_",   # widget blueprint
+        "ABP_",   # animation blueprint
+        "BPI_",   # blueprint interface
+        "BPFL_",  # blueprint function library
+        "BPML_",  # blueprint macro library
+        "GA_",    # gameplay ability
+        "GE_",    # gameplay effect
+        "BTT_", "BTS_", "BTD_",  # behavior tree task/service/decorator
+        "AN_", "ANS_",           # anim notify / notify state
+        "EQS_",   # environment query
+    )
+
+    if not bp_name.startswith(_BP_PREFIX_FAMILY):
         issues.append(
             {
                 "asset_path": bp_path,
@@ -129,7 +148,11 @@ def detect_generic_variable_name(
     bp_path = blueprint.get("path", "")
     variables = blueprint.get("variables", [])
 
-    # Generic variable name patterns — case-insensitive check
+    # Generic variable name patterns — case-insensitive check.
+    # Deliberately restricted to true PLACEHOLDER names. "Value", "Data",
+    # "Item", "Object" and "Default" were removed: they are idiomatic exact
+    # names in real graphs (a slider's Value, a ForEach Item, a data-asset
+    # ref) and produced steady false positives on well-kept projects.
     _GENERIC_VAR_WORDS: frozenset = frozenset(
         [
             "newvar",
@@ -145,11 +168,6 @@ def detect_generic_variable_name(
             "untitled",
             "placeholder",
             "dummy",
-            "default",
-            "value",
-            "data",
-            "item",
-            "object",
         ]
     )
 
@@ -210,26 +228,50 @@ def detect_tick_enabled(
     bp_path = blueprint.get("path", "")
     tick_enabled = blueprint.get("stats", {}).get("tick_enabled", False)
 
-    if tick_enabled:
-        issues.append(
-            {
-                "asset_path": bp_path,
-                "graph": "Class Defaults",
-                "severity": "warning",
-                "rule_id": "BPP001",
-                "category": "Performance",
-                "message": (
-                    "Tick is enabled in this Blueprint — "
-                    "disable it in Class Defaults if per-frame "
-                    "updates are not needed. Use timers or "
-                    "events instead."
-                ),
-                "fix_suggestion": (
-                    "Set 'Start with Tick Enabled' to false in Class Defaults"
-                ),
-                "is_auto_fixable": True,
-            }
-        )
+    if not tick_enabled:
+        return issues
+
+    # Characters, pawns and movement-driven actors legitimately tick —
+    # warning on EVERY tick-enabled Blueprint was the single loudest false
+    # positive. Only the unambiguous waste stays a warning: tick enabled
+    # while the EventTick graph is absent or a bare stub (<= 1 node). A
+    # tick that is actually USED becomes an informational advisory (the UI
+    # excludes info from its error/warning counts).
+    tick_nodes = 0
+    for graph in blueprint.get("graphs", []):
+        if graph.get("name", "").lower() in ("eventtick", "tick"):
+            tick_nodes = max(tick_nodes, graph.get("nodes_count", 0))
+
+    tick_unused = tick_nodes <= 1
+
+    issues.append(
+        {
+            "asset_path": bp_path,
+            "graph": "Class Defaults",
+            "severity": "warning" if tick_unused else "info",
+            "rule_id": "BPP001",
+            "category": "Performance",
+            "message": (
+                (
+                    "Tick is enabled but the EventTick graph is empty — "
+                    "this pays the per-frame cost for nothing. Disable "
+                    "'Start with Tick Enabled' in Class Defaults."
+                )
+                if tick_unused
+                else (
+                    "Tick is enabled in this Blueprint — fine if "
+                    "per-frame updates are required; otherwise prefer "
+                    "timers or events."
+                )
+            ),
+            "fix_suggestion": (
+                "Set 'Start with Tick Enabled' to false in Class Defaults"
+                if tick_unused
+                else ""
+            ),
+            "is_auto_fixable": tick_unused,
+        }
+    )
     return issues
 
 
@@ -495,11 +537,13 @@ def detect_disconnected_nodes(
     disconnected_count = blueprint.get("stats", {}).get("disconnected_nodes", 0)
 
     if disconnected_count > 0:
+        # One or two parked nodes are routine mid-iteration workflow, not a
+        # defect — advisory only. Three or more is genuine graph clutter.
         issues.append(
             {
                 "asset_path": bp_path,
                 "graph": "EventGraph",
-                "severity": "warning",
+                "severity": "warning" if disconnected_count >= 3 else "info",
                 "rule_id": "BPM002",
                 "category": "Maintainability",
                 "message": (
@@ -649,12 +693,18 @@ def detect_blueprint_no_functions(
     # Small Blueprints with no functions are acceptable.
     _MIN_NODES_TO_REQUIRE_FUNCTIONS: int = 30
 
-    if not functions and total_nodes >= _MIN_NODES_TO_REQUIRE_FUNCTIONS:
+    # BPB002 already fires a warning for >= 50 nodes without functions —
+    # this rule used to fire alongside it, double-reporting the exact same
+    # condition on the same asset. BPM006 now covers only the 30-49 band,
+    # as a soft advisory.
+    if not functions and (
+        _MIN_NODES_TO_REQUIRE_FUNCTIONS <= total_nodes < 50
+    ):
         issues.append(
             {
                 "asset_path": bp_path,
                 "graph": "All Graphs",
-                "severity": "warning",
+                "severity": "info",
                 "rule_id": "BPM006",
                 "category": "Maintainability",
                 "message": (
@@ -691,12 +741,16 @@ def detect_abandoned_blueprint(
     if variable_count < 3:
         return issues
 
+    # Data-container Blueprints (config holders, item definitions) are
+    # idiomatic: many variables, little or no graph logic. "More variables
+    # than nodes" cannot distinguish them from abandoned work, so this stays
+    # an informational hint rather than a warning.
     if variable_count > total_nodes:
         issues.append(
             {
                 "asset_path": bp_path,
                 "graph": "All Graphs",
-                "severity": "warning",
+                "severity": "info",
                 "rule_id": "BPM007",
                 "category": "Maintainability",
                 "message": (

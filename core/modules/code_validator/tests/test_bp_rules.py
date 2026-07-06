@@ -193,10 +193,25 @@ class TestBPB007:
 
 class TestBPP001:
 
-    def test_detects_tick_enabled(self):
+    def test_used_tick_is_info_advisory(self):
+        # bp_all_bad has tick enabled AND a 45-node EventTick — the tick is
+        # in use, so the finding is an advisory (info), not a warning, and
+        # NOT auto-fixable (auto-disabling a used tick would break the BP).
         issues = detect_tick_enabled(_bad())
         assert len(issues) == 1
         assert issues[0]["rule_id"] == "BPP001"
+        assert issues[0]["severity"] == "info"
+        assert issues[0]["is_auto_fixable"] is False
+
+    def test_unused_tick_is_warning_and_fixable(self):
+        bp = _bad()
+        bp["graphs"] = [
+            g for g in bp["graphs"]
+            if g.get("name", "").lower() not in ("eventtick", "tick")
+        ]
+        issues = detect_tick_enabled(bp)
+        assert len(issues) == 1
+        assert issues[0]["severity"] == "warning"
         assert issues[0]["is_auto_fixable"] is True
 
     def test_no_false_positive(self):
@@ -204,7 +219,12 @@ class TestBPP001:
         assert len(issues) == 0
 
     def test_fix_instruction(self):
-        issues = detect_tick_enabled(_bad())
+        bp = _bad()
+        bp["graphs"] = [
+            g for g in bp["graphs"]
+            if g.get("name", "").lower() not in ("eventtick", "tick")
+        ]
+        issues = detect_tick_enabled(bp)
         fix = build_bp_fix_instruction(issues[0])
         assert fix["action"] == "set_property"
         assert fix["property"] == "bCanEverTick"
@@ -335,12 +355,23 @@ class TestBPM005:
 
 class TestBPM006:
 
-    def test_detects_no_functions(self):
+    def test_detects_no_functions_mid_band(self):
+        # BPM006 covers only the 30-49 node band as an info advisory;
+        # >= 50 nodes is BPB002's warning (firing both double-reported
+        # the same condition on the same asset).
         bp = _bad()
         bp["functions"] = []
+        bp["stats"]["total_nodes"] = 40
         issues = detect_blueprint_no_functions(bp)
         assert len(issues) == 1
         assert issues[0]["rule_id"] == "BPM006"
+        assert issues[0]["severity"] == "info"
+
+    def test_defers_to_bpb002_above_50_nodes(self):
+        bp = _bad()
+        bp["functions"] = []
+        assert bp["stats"]["total_nodes"] >= 50
+        assert len(detect_blueprint_no_functions(bp)) == 0
 
     def test_no_false_positive_with_functions(self):
         issues = detect_blueprint_no_functions(_bad())
