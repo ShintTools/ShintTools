@@ -28,7 +28,11 @@ import json
 import threading
 from typing import AsyncIterator, Callable, Iterator
 
-from api.database import resolve_tier_detailed
+from api.database import (
+    get_cached_explanation,
+    resolve_tier_detailed,
+    save_cached_explanation,
+)
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -453,8 +457,14 @@ async def explain(payload: AgentExplainRequest) -> AgentExplainResponse:
     without crashing the UX.
     """
     import time
+    from datetime import datetime, timezone
 
-    from modules.agent.explainer import explain_issue
+    from modules.agent.explainer import (
+        DEFAULT_MODEL_ID,
+        build_explainer_prompt,
+        compute_cache_key,
+        explain_issue,
+    )
     from modules.agent.llm_backend import is_loaded
 
     tier, reason = await resolve_tier_detailed(payload.api_key)
@@ -469,10 +479,29 @@ async def explain(payload: AgentExplainRequest) -> AgentExplainResponse:
     # added (context_before, snippet, asset_path, graph) survive.
     issue_payload_dict = payload.issue.model_dump(mode="json")
 
-    # Always generate fresh — prefab and MongoDB cache both disabled.
-    # Explanations are logged to local JSONL for fine-tuning instead.
+    # MongoDB cache: instant return for a prompt we've already generated.
+    # The key is sha1(model_id + rendered prompt), so a rule-docstring edit,
+    # a prompt-template change, or a model swap all invalidate it automatically.
+    #
+    # The PREFAB cache stays OFF on purpose: every UNIQUE prompt must still hit
+    # the live model once so its real-context generation is logged to JSONL for
+    # fine-tuning. This cache only ever short-circuits an exact repeat of a
+    # prompt we've already logged — which adds nothing to the training set — so
+    # re-enabling it speeds up repeats with zero fine-tuning-data loss.
+    cache_key = compute_cache_key(build_explainer_prompt(issue_payload_dict))
+    cached_doc = await get_cached_explanation(cache_key)
+    if cached_doc and cached_doc.get("explanation"):
+        return AgentExplainResponse(
+            success=True,
+            explanation=cached_doc["explanation"],
+            generation_seconds=0.0,
+            cached=True,
+            source="cache",
+            tier=tier,
+            error_message="",
+        )
 
-    # 3) Live LLM call (always).
+    # 3) Live LLM call (cache miss).
     if not is_loaded():
         return AgentExplainResponse(
             success=False,
@@ -524,6 +553,21 @@ async def explain(payload: AgentExplainRequest) -> AgentExplainResponse:
         generation_seconds=generation_seconds,
     )
 
+    # Persist for next time so an exact repeat returns instantly. Best-effort:
+    # a write failure never blocks the response we already produced. `created_at`
+    # drives the 90-day TTL in get_cached_explanation.
+    if generated_text:
+        await save_cached_explanation(
+            cache_key,
+            {
+                "explanation": generated_text,
+                "model_id": DEFAULT_MODEL_ID,
+                "rule_id": payload.issue.rule_id,
+                "generation_seconds": generation_seconds,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
     return AgentExplainResponse(
         success=True,
         explanation=generated_text,
@@ -565,15 +609,37 @@ async def _explain_stream_events(
     — no LLM call.
     """
     import time
+    from datetime import datetime, timezone
 
-    from modules.agent.explainer import explain_issue_stream
+    from modules.agent.explainer import (
+        DEFAULT_MODEL_ID,
+        build_explainer_prompt,
+        compute_cache_key,
+        explain_issue_stream,
+    )
     from modules.agent.llm_backend import is_loaded
 
-    # Always generate fresh — prefab and MongoDB cache both disabled.
     issue_payload_dict = payload.issue.model_dump(mode="json")
 
-    # 2) MongoDB cache DISABLED — always generate fresh.
-    # Explanations are logged to local JSONL for fine-tuning instead.
+    # MongoDB cache hit → replay the stored text as one chunk + done, no LLM.
+    # Prefab cache stays OFF (see /explain): only exact repeats are served from
+    # here, so unique real-context prompts still generate live and get logged
+    # for fine-tuning.
+    cache_key = compute_cache_key(build_explainer_prompt(issue_payload_dict))
+    cached_doc = await get_cached_explanation(cache_key)
+    if cached_doc and cached_doc.get("explanation"):
+        cached_text = cached_doc["explanation"]
+        yield "data: " + json.dumps({"chunk": cached_text}) + "\n\n"
+        yield "data: " + json.dumps(
+            {
+                "done": True,
+                "full_text": cached_text,
+                "cached": True,
+                "source": "cache",
+                "generation_seconds": 0.0,
+            }
+        ) + "\n\n"
+        return
 
     if not is_loaded():
         yield "data: " + json.dumps(
@@ -632,6 +698,19 @@ async def _explain_stream_events(
             explanation_generated=accumulated_text,
             issue_payload=issue_payload_dict,
             generation_seconds=generation_seconds,
+        )
+
+        # Persist so an exact repeat replays instantly (see /explain). Only
+        # after a clean completion with real text — never cache a half-stream.
+        await save_cached_explanation(
+            cache_key,
+            {
+                "explanation": accumulated_text,
+                "model_id": DEFAULT_MODEL_ID,
+                "rule_id": payload.issue.rule_id,
+                "generation_seconds": generation_seconds,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
         )
 
     yield (
