@@ -18,4 +18,10 @@ jobs:
       - name: Install dependencies
         run: pip install -r core/requirements-ci.txt
       - name: Run pytest
+        # The suite exercises the PAID surface (dashboard, LOD audit) —
+        # without the edition flag the app imports as free, the paid routers
+        # never mount, and 24 tests 404. The paid container passes the same
+        # suite; CI must match that environment.
+        env:
+          SHINT_CORE_EDITION: paid
         run: pytest core/tests/

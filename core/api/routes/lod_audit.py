@@ -425,7 +425,7 @@ async def lod_audit(payload: LodAuditRequest):
     from lod_auditor.config import load_profile
 
     t0 = time.perf_counter()
-    tier = await _enforce_studio(payload.api_key, "/assets/lod/audit")
+    await _enforce_studio(payload.api_key, "/assets/lod/audit")
 
     # Pre-warm the chosen threshold profile so every rule reads the same YAML.
     # load_profile is cached, so the cost is one yaml.safe_load per process.

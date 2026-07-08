@@ -92,7 +92,8 @@ public class PlayerController : MonoBehaviour
 
     private void FixedUpdate()
     {
-        Vector3 input = new Vector3(Input.GetAxis("Horizontal"), 0f, Input.GetAxis("Vertical"));
+        Vector3 input = new Vector3(
+            Input.GetAxis("Horizontal"), 0f, Input.GetAxis("Vertical"));
         _rb.AddForce(input * moveSpeed);
     }
 }
