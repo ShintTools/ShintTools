@@ -224,7 +224,7 @@ def detect_tick_enabled(
     does not need per-frame updates. Use timers or events
     instead whenever possible.
     """
-    issues = []
+    issues: List[Issue] = []
     bp_path = blueprint.get("path", "")
     tick_enabled = blueprint.get("stats", {}).get("tick_enabled", False)
 
