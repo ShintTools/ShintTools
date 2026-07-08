@@ -294,13 +294,12 @@ class CSharpFixer:
 
         start = idx
         if marker:
-            start = None
             for offset in (0, 1, -1, 2, -2):
                 j = idx + offset
                 if 0 <= j < len(lines) and marker in lines[j]:
                     start = j
                     break
-            if start is None:
+            else:
                 return code, "", [f"marker '{marker}' not on lines {line_number}±2"]
 
         end = self._statement_end(lines, start)

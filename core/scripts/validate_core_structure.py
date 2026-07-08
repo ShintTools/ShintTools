@@ -154,7 +154,7 @@ class Report:
 
 def check_imports(r: Report) -> dict:
     print("\n[1] Import smoke")
-    mods = {}
+    mods: dict = {}
     try:
         from code_validator.unreal.cpp.cpp_orchestrator import run_all_cpp_rules
         from code_validator.unity.csharp.csharp_orchestrator import (
