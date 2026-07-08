@@ -88,7 +88,7 @@ async def _resolve_tier_via_dashboard(api_key: str) -> tuple[str, str]:
     cannot read the host fingerprint. The 1:1 binding is owned by the
     Launcher, which calls /activate with the real machine_id at install.
     """
-    from api.dashboard_license import validate_license  # lazy import — avoids circular dep
+    from api.dashboard_license import validate_license  # lazy — circular dep
 
     try:
         result = await validate_license(api_key)

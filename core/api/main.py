@@ -21,6 +21,7 @@ from api.routes import (
 # lazily in the registration block below — they are physically absent from the
 # free image, so a top-level import here would crash the free Core on boot.
 from api.version import CORE_VERSION
+from fastapi import FastAPI
 
 # ── Image edition gate ────────────────────────────────────────────────────────
 #
@@ -38,9 +39,6 @@ from api.version import CORE_VERSION
 # the flag is the safe, restricted one.
 SHINT_CORE_EDITION = os.getenv("SHINT_CORE_EDITION", "free").strip().lower()
 _IS_PAID_EDITION = SHINT_CORE_EDITION == "paid"
-
-# (NUEVO: assets, dashboard)
-from fastapi import FastAPI
 
 
 def find_config_path() -> Path | None:

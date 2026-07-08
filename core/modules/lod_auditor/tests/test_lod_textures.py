@@ -21,6 +21,7 @@ def _thresholds(**overrides) -> dict:
     t.update(overrides)
     return t
 
+
 # ── Base fixture ──────────────────────────────────────────────────────────────
 
 _BASE: dict = {
