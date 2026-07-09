@@ -102,3 +102,42 @@ def estimate_texture_vram_mb(
     base_bytes = width * height * bpp
     total_bytes = base_bytes * MIP_MULTIPLIER if with_mips else base_bytes
     return round(total_bytes / BYTES_PER_MB, 2)
+
+
+# ── Mesh buffer estimator (Part-2 LG/LD rules) ────────────────────────────────
+
+# Bytes per vertex for a typical static-mesh vertex buffer:
+#   position float3 (12) + packed normal (4) + packed tangent (4)
+#   + UV0 half2 (4) + vertex color (4) + a second UV half2 (4) = 32.
+# A representative average; rules that need an exact per-channel figure (e.g.
+# LG011's 8 B/vertex/UV-channel) compute it inline. Used for "excess geometry"
+# VRAM estimates (LG001/LG002/LG005/LG009, LD005 trailing-LOD savings).
+MESH_VERTEX_STRIDE_BYTES: int = 32
+
+# Bytes per lightmap texel. UE5 stores each lightmap as a pair of low-bpp
+# textures (AB coefficients); ~2 B/texel amortised is a defensible estimate.
+LIGHTMAP_BYTES_PER_TEXEL: float = 2.0
+
+
+def mesh_buffer_mb(vertex_count: int) -> float:
+    """Estimate the vertex-buffer VRAM cost of *vertex_count* vertices in MB.
+
+    Pure arithmetic (MESH_VERTEX_STRIDE_BYTES × verts). Callers pass a vertex
+    delta (excess/duplicate/removed verts) to price a geometry saving.
+    """
+    if vertex_count <= 0:
+        return 0.0
+    return round(vertex_count * MESH_VERTEX_STRIDE_BYTES / BYTES_PER_MB, 2)
+
+
+def lightmap_mb(resolution: int, with_mips: bool = True) -> float:
+    """Estimate the VRAM cost of a square lightmap of edge *resolution* in MB.
+
+    Monotonic in resolution² — used by LW006 to price the win from repacking a
+    lightmap to a smaller resolution once packing efficiency improves.
+    """
+    if resolution <= 0:
+        return 0.0
+    base_bytes = resolution * resolution * LIGHTMAP_BYTES_PER_TEXEL
+    total_bytes = base_bytes * MIP_MULTIPLIER if with_mips else base_bytes
+    return round(total_bytes / BYTES_PER_MB, 2)

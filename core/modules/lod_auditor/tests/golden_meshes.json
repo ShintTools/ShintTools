@@ -1,0 +1,79 @@
+[
+  {
+    "name": "clean",
+    "expect_empty": true,
+    "asset": {
+      "asset_path": "/Game/Clean", "asset_type": "StaticMesh", "lod_count": 3,
+      "lods": [
+        {"index": 0, "triangles": 8000, "screen_size": 1.0, "uv_channel_count": 1, "section_count": 1, "material_slots_used": [0]},
+        {"index": 1, "triangles": 4000, "screen_size": 0.5, "uv_channel_count": 1, "section_count": 1, "material_slots_used": [0]},
+        {"index": 2, "triangles": 2000, "screen_size": 0.25, "uv_channel_count": 1, "section_count": 1, "material_slots_used": [0]}
+      ],
+      "bounds_radius": 100.0, "used_in_levels": 1, "triangle_count": 8000, "vertex_count": 5000,
+      "material_slot_count": 1, "section_count": 1, "uv_channel_count": 1, "shadow_lod_index": 1,
+      "collision": {"has_simple_collision": true, "primitive_count": 2}
+    }
+  },
+  {
+    "name": "degenerate",
+    "expect_contains": ["LG004"],
+    "asset": {"asset_path": "/Game/Degen", "asset_type": "StaticMesh", "lod_count": 2, "triangle_count": 50000, "degenerate_triangle_count": 2000, "vertex_count": 30000, "bounds_radius": 100.0}
+  },
+  {
+    "name": "non_manifold",
+    "expect_contains": ["LG007"],
+    "asset": {"asset_path": "/Game/NonMan", "asset_type": "StaticMesh", "lod_count": 2, "triangle_count": 20000, "non_manifold_edge_count": 40, "uses_static_lighting": true, "bounds_radius": 100.0}
+  },
+  {
+    "name": "unwelded",
+    "expect_contains": ["LG005"],
+    "asset": {"asset_path": "/Game/Unweld", "asset_type": "StaticMesh", "lod_count": 2, "triangle_count": 20000, "vertex_count": 40000, "duplicate_vertex_count": 5000, "bounds_radius": 100.0}
+  },
+  {
+    "name": "kit_piece",
+    "expect_contains": ["LG010"],
+    "asset": {"asset_path": "/Game/SM_Wall", "asset_type": "StaticMesh", "lod_count": 2, "triangle_count": 5000, "is_kit_piece": true, "internal_face_ratio": 0.3, "bounds_radius": 100.0}
+  },
+  {
+    "name": "scan_import",
+    "expect_contains": ["LG002"],
+    "asset": {"asset_path": "/Game/Scan", "asset_type": "StaticMesh", "lod_count": 2, "triangle_count": 40000, "vertex_count": 120000, "bounds_radius": 200.0}
+  },
+  {
+    "name": "nanite_good",
+    "expect_absent": ["LD013"],
+    "asset": {"asset_path": "/Game/NanGood", "asset_type": "StaticMesh", "lod_count": 1, "nanite_enabled": true, "nanite_fallback_triangle_percent": 5.0, "used_material_blend_modes": ["Opaque"], "triangle_count": 200000, "bounds_radius": 300.0}
+  },
+  {
+    "name": "nanite_bad_material",
+    "expect_contains": ["LD013"],
+    "asset": {"asset_path": "/Game/NanBad", "asset_type": "StaticMesh", "lod_count": 1, "nanite_enabled": true, "used_material_blend_modes": ["Opaque", "Translucent"], "triangle_count": 200000, "bounds_radius": 300.0}
+  },
+  {
+    "name": "skeletal_missing_normals",
+    "expect_contains": ["LN001"],
+    "asset": {"asset_path": "/Game/SK_Char", "asset_type": "SkeletalMesh", "lod_count": 2, "triangle_count": 30000, "bounds_radius": 100.0, "normal_stats": {"has_normals": false, "recompute_normals": false}}
+  },
+  {
+    "name": "no_lightmap_uv",
+    "expect_contains": ["LW010"],
+    "asset": {"asset_path": "/Game/NoLM", "asset_type": "StaticMesh", "lod_count": 2, "triangle_count": 10000, "uv_channel_count": 1, "uses_static_lighting": true, "lightmap_uv_index": -1, "bounds_radius": 100.0}
+  },
+  {
+    "name": "over_budget_chain",
+    "expect_contains": ["LD006"],
+    "asset": {
+      "asset_path": "/Game/BadChain", "asset_type": "StaticMesh", "lod_count": 2, "bounds_radius": 100.0,
+      "lods": [
+        {"index": 0, "triangles": 10000, "screen_size": 1.0},
+        {"index": 1, "triangles": 9500, "screen_size": 0.5}
+      ]
+    }
+  },
+  {
+    "name": "mobile_fail",
+    "profile": "mobile",
+    "expect_contains": ["LG001"],
+    "asset": {"asset_path": "/Game/MobFail", "asset_type": "StaticMesh", "lod_count": 2, "triangle_count": 50000, "vertex_count": 30000, "bounds_radius": 100.0}
+  }
+]

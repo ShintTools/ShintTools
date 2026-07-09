@@ -477,3 +477,203 @@ def check_lt008(
         auto_fixable=True,
         guidance=None,
     )
+
+
+# ── Shared helper for the texture-completion rules (LT009–LT016) ───────────────
+
+
+def _conf(recommended: dict, level: str) -> dict:
+    recommended["confidence"] = level
+    return recommended
+
+
+# Groups that always minify (guaranteed shimmer without mips).
+_MINIFYING_GROUPS = frozenset({"World", "Environment", "Terrain"})
+
+
+# ── LT009 ─────────────────────────────────────────────────────────────────────
+
+
+def check_lt009(
+    asset: dict, engine: str = "unreal", thresholds: dict | None = None
+) -> Finding | None:
+    """LT009: Missing mipmaps on a 3D-sampled texture (minification shimmer)."""
+    T = thresholds if thresholds is not None else THRESHOLDS
+    usage = asset.get("usage", "")
+    if usage == "UI":
+        return None  # UI renders at a fixed pixel size — mips are wasteful (LT002)
+    width = int(asset.get("width", 0) or 0)
+    height = int(asset.get("height", 0) or 0)
+    mips_enabled = asset.get("mips_enabled", True)
+    mip_count = int(asset.get("mip_count", 0) or 0)
+    missing = (not mips_enabled) or (
+        mip_count == 1 and width * height > T["LT009_MIN_PIXELS"]
+    )
+    if not missing:
+        return None
+    lod_group = asset.get("lod_group", "World")
+    severity = "error" if lod_group in _MINIFYING_GROUPS else "warning"
+    return Finding(
+        asset_path=asset["asset_path"],
+        rule_id="LT009",
+        category="Texture",
+        severity=severity,
+        message=(
+            f"{width}×{height} '{usage or lod_group}' texture has no mip chain — "
+            "guaranteed minification shimmer and full-res sampling at distance "
+            "(mips add ~33% VRAM but cut average sampled bandwidth)."
+        ),
+        current={"mips_enabled": bool(mips_enabled), "mip_count": mip_count},
+        recommended=_conf({"mips_enabled": True}, "high"),
+        estimated_saving=Saving(vram_mb=0.0),
+        auto_fixable=True,
+        guidance=None,
+    )
+
+
+# ── LT010 ─────────────────────────────────────────────────────────────────────
+
+
+def check_lt010(
+    asset: dict, engine: str = "unreal", thresholds: dict | None = None
+) -> Finding | None:
+    """LT010: Texture LOD group inconsistent with the texture's usage."""
+    T = thresholds if thresholds is not None else THRESHOLDS
+    usage = asset.get("usage", "")
+    expected_map: dict = T["LT010_EXPECTED_GROUP"]
+    expected = expected_map.get(usage)
+    if not expected:
+        return None
+    lod_group = asset.get("lod_group", "")
+    # Glob-ish substring match ("NormalMap" matches "WorldNormalMap").
+    if any(token and token in lod_group for token in expected.split("|")):
+        return None
+    return Finding(
+        asset_path=asset["asset_path"],
+        rule_id="LT010",
+        category="Texture",
+        severity="warning",
+        message=(
+            f"'{usage}' texture is in LOD group '{lod_group or 'None'}' — expected a "
+            f"'{expected}' group. Wrong group means wrong streaming priority and "
+            "the wrong resolution budget."
+        ),
+        current={"lod_group": lod_group, "usage": usage},
+        recommended=_conf({"lod_group": expected}, "high"),
+        estimated_saving=Saving(),
+        auto_fixable=True,
+        guidance=None,
+    )
+
+
+# ── LT013 ─────────────────────────────────────────────────────────────────────
+
+
+def check_lt013(
+    asset: dict, engine: str = "unreal", thresholds: dict | None = None
+) -> Finding | None:
+    """LT013: Single-channel masks that could pack into one RGBA texture."""
+    T = thresholds if thresholds is not None else THRESHOLDS
+    if asset.get("usage") not in ("Mask", "Data"):
+        return None
+    # The client precomputes the pack set via the material cross-join and sends
+    # it as pack_candidates; per-asset we can't join, so we abstain without it.
+    candidates = asset.get("pack_candidates", []) or []
+    if len(candidates) < T["LT013_MIN_PACK_CANDIDATES"]:
+        return None
+    return Finding(
+        asset_path=asset["asset_path"],
+        rule_id="LT013",
+        category="Texture",
+        severity="info",
+        message=(
+            f"{len(candidates)} single-channel mask/data textures on the same "
+            "material could pack into one RGBA texture (4× fewer fetches)."
+        ),
+        current={"pack_candidates": list(candidates)},
+        recommended=_conf({"packed_into": "single RGBA texture"}, "medium"),
+        estimated_saving=Saving(),
+        auto_fixable=False,
+        guidance=None,
+    )
+
+
+# ── LT014 ─────────────────────────────────────────────────────────────────────
+
+
+def check_lt014(
+    asset: dict, engine: str = "unreal", thresholds: dict | None = None
+) -> Finding | None:
+    """LT014: A single texture exceeds the absolute per-asset VRAM ceiling."""
+    T = thresholds if thresholds is not None else THRESHOLDS
+    width = int(asset.get("width", 0) or 0)
+    height = int(asset.get("height", 0) or 0)
+    if width <= 0 or height <= 0:
+        return None
+    compression = normalize_compression(asset.get("compression", "RGBA8"))
+    mips = asset.get("mips_enabled", True)
+    ceiling = T["LT014_MAX_SINGLE_TEXTURE_MB"]
+    current_vram = estimate_texture_vram_mb(width, height, compression, with_mips=mips)
+    if current_vram <= ceiling:
+        return None
+    # Largest power-of-two square that fits under the ceiling.
+    long_edge = max(width, height)
+    target_edge = long_edge
+    while (
+        target_edge > 1
+        and estimate_texture_vram_mb(
+            target_edge, target_edge, compression, with_mips=mips
+        )
+        > ceiling
+    ):
+        target_edge //= 2
+    recommended_vram = estimate_texture_vram_mb(
+        target_edge, target_edge, compression, with_mips=mips
+    )
+    return Finding(
+        asset_path=asset["asset_path"],
+        rule_id="LT014",
+        category="Texture",
+        severity="error",
+        message=(
+            f"{width}×{height} {compression} texture costs {current_vram} MB — over "
+            f"the {ceiling} MB single-texture ceiling regardless of group."
+        ),
+        current={"max_texture_size": long_edge, "vram_mb": current_vram},
+        recommended=_conf(
+            {"max_texture_size": target_edge, "vram_mb": recommended_vram}, "high"
+        ),
+        estimated_saving=Saving(vram_mb=round(current_vram - recommended_vram, 2)),
+        auto_fixable=True,
+        guidance=None,
+    )
+
+
+# ── LT016 ─────────────────────────────────────────────────────────────────────
+
+
+def check_lt016(
+    asset: dict, engine: str = "unreal", thresholds: dict | None = None
+) -> Finding | None:
+    """LT016: Always-resident UI/effects texture left in the streaming pool."""
+    usage = asset.get("usage", "")
+    lod_group = asset.get("lod_group", "")
+    if not asset.get("streaming", False):
+        return None
+    if not (usage == "UI" or lod_group in ("UI", "Effects")):
+        return None
+    return Finding(
+        asset_path=asset["asset_path"],
+        rule_id="LT016",
+        category="Texture",
+        severity="info",
+        message=(
+            f"Always-resident '{usage or lod_group}' texture is in the streaming "
+            "pool — it churns the pool with no benefit (it never streams out)."
+        ),
+        current={"streaming": True, "usage": usage, "lod_group": lod_group},
+        recommended=_conf({"never_stream": True}, "high"),
+        estimated_saving=Saving(),
+        auto_fixable=True,
+        guidance=None,
+    )

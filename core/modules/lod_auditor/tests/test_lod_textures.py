@@ -381,9 +381,7 @@ class TestThresholdParam:
     def test_lt006_raised_min_edge_silences_small_npot(self):
         tex = _tex(width=300, height=300, lod_group="World")
         assert check_lt006(tex) is not None  # default min 128 → fires
-        assert (
-            check_lt006(tex, thresholds=_thresholds(LT006_NPOT_MIN_EDGE=512)) is None
-        )
+        assert check_lt006(tex, thresholds=_thresholds(LT006_NPOT_MIN_EDGE=512)) is None
 
     def test_lt005_lowered_min_edge_flags_smaller_texture(self):
         # 1024 non-streaming is below the default 2048 streaming min → silent;

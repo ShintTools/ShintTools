@@ -168,7 +168,8 @@ class TestAuditAssets:
 
     def test_findings_have_valid_severity_values(self):
         result = audit_assets([_BAD_TEXTURE, _BAD_MATERIAL, _BAD_MESH])
-        valid_severities = {"warning", "info"}
+        # Part 2 (§13.3) adds "error" to the ladder (e.g. LT014 memory ceiling).
+        valid_severities = {"error", "warning", "info"}
         for finding in result.results:
             assert finding.severity in valid_severities
 
@@ -190,9 +191,7 @@ class TestProfileAndOverrides:
 
     def test_override_oversized_max_size_caps_lt003(self):
         assert audit_assets([_GOOD_TEXTURE]).summary.issues_found == 0
-        capped = audit_assets(
-            [_GOOD_TEXTURE], overrides={"oversized_max_size": 1024}
-        )
+        capped = audit_assets([_GOOD_TEXTURE], overrides={"oversized_max_size": 1024})
         lt003 = [f for f in capped.results if f.rule_id == "LT003"]
         assert lt003, "global ceiling should make the 2K texture over budget"
         assert lt003[0].recommended["max_texture_size"] == 1024

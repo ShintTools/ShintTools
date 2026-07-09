@@ -211,3 +211,207 @@ def check_lx003_duplicate_meshes(
                 )
             )
     return findings
+
+
+_TEXTURE_TYPES = frozenset(
+    {"Texture2D", "Texture", "Texture2DArray", "TextureCube", "VolumeTexture"}
+)
+_MATERIAL_INSTANCE_TYPES = frozenset(
+    {"MaterialInstance", "MaterialInstanceConstant", "MaterialInstanceDynamic"}
+)
+
+
+# ── LX004 ─────────────────────────────────────────────────────────────────────
+
+
+def check_lx004_unused_material_instance(
+    assets: list[dict], engine: str = "unreal"
+) -> list[Finding]:
+    """LX004: Material instance with no primitive references and no child instances.
+
+    A dead leaf in the instance tree — safe to delete (distinct from LX002's
+    general "not rendered": this one confirms nothing inherits from it either).
+    """
+    findings: list[Finding] = []
+    for asset in assets:
+        if asset.get("asset_type") not in _MATERIAL_INSTANCE_TYPES:
+            continue
+        if int(asset.get("used_by_primitives", -1)) != 0:
+            continue
+        if int(asset.get("child_instance_count", 0)) != 0:
+            continue
+        findings.append(
+            Finding(
+                asset_path=asset["asset_path"],
+                rule_id="LX004",
+                category="Material",
+                severity="info",
+                message=(
+                    "Material instance has no primitive references and no child "
+                    "instances — a dead leaf that still cooks into the build."
+                ),
+                current={"used_by_primitives": 0, "child_instance_count": 0},
+                recommended={"action": "delete"},
+                estimated_saving=Saving(
+                    build_size_mb=round(float(asset.get("size_kb", 0.0)) / 1024.0, 2)
+                ),
+                auto_fixable=False,
+                guidance=None,
+            )
+        )
+    return findings
+
+
+# ── LX005 ─────────────────────────────────────────────────────────────────────
+
+
+def check_lx005_duplicate_textures(
+    assets: list[dict], engine: str = "unreal", thresholds: dict | None = None
+) -> list[Finding]:
+    """LX005: Two or more textures share an identical content hash (LT011)."""
+    T = thresholds if thresholds is not None else THRESHOLDS
+    min_size_kb: float = T["LX003_MIN_DUPLICATE_SIZE_KB"]
+    by_hash: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for asset in assets:
+        if asset.get("asset_type") not in _TEXTURE_TYPES:
+            continue
+        content_hash = asset.get("content_hash", "")
+        if content_hash and float(asset.get("size_kb", 0.0)) >= min_size_kb:
+            by_hash[content_hash].append(asset)
+
+    findings: list[Finding] = []
+    for content_hash, dupes in by_hash.items():
+        if len(dupes) < 2:
+            continue
+        dupes.sort(key=lambda a: a["asset_path"])
+        keeper = dupes[0]
+        w = int(keeper.get("width", 0) or 0)
+        h = int(keeper.get("height", 0) or 0)
+        fmt = normalize_compression(keeper.get("compression", "RGBA8"))
+        per_copy_mb = estimate_texture_vram_mb(
+            w, h, fmt, with_mips=keeper.get("mips_enabled", True)
+        )
+        for copy in dupes[1:]:
+            findings.append(
+                Finding(
+                    asset_path=copy["asset_path"],
+                    rule_id="LX005",
+                    category="Texture",
+                    severity="warning",
+                    message=(
+                        f"Duplicate texture content of {keeper['asset_path']} "
+                        f"(identical hash). Consolidating saves ~{per_copy_mb} MB."
+                    ),
+                    current={
+                        "content_hash": content_hash,
+                        "duplicate_of": keeper["asset_path"],
+                    },
+                    recommended={
+                        "action": "redirector_to_keeper",
+                        "keeper": keeper["asset_path"],
+                    },
+                    estimated_saving=Saving(vram_mb=per_copy_mb),
+                    auto_fixable=False,
+                    guidance=None,
+                )
+            )
+    return findings
+
+
+# ── LX006 ─────────────────────────────────────────────────────────────────────
+
+
+def check_lx006_same_source_multisize(
+    assets: list[dict], engine: str = "unreal"
+) -> list[Finding]:
+    """LX006: Textures from the same source imported at different max sizes."""
+    by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for asset in assets:
+        if asset.get("asset_type") not in _TEXTURE_TYPES:
+            continue
+        source_guid = asset.get("source_guid", "")
+        if source_guid:
+            by_source[source_guid].append(asset)
+
+    findings: list[Finding] = []
+    for source_guid, group in by_source.items():
+        sizes = {int(a.get("max_texture_size", 0) or 0) for a in group}
+        if len(group) < 2 or len(sizes) < 2:
+            continue
+        largest = max(group, key=lambda a: int(a.get("max_texture_size", 0) or 0))
+        for asset in group:
+            if asset is largest:
+                continue
+            findings.append(
+                Finding(
+                    asset_path=asset["asset_path"],
+                    rule_id="LX006",
+                    category="Texture",
+                    severity="info",
+                    message=(
+                        "Shares a source image with another texture imported at a "
+                        f"different max size ({sorted(sizes)}) — usually a forgotten "
+                        "per-asset override."
+                    ),
+                    current={
+                        "source_guid": source_guid,
+                        "max_texture_size": int(asset.get("max_texture_size", 0) or 0),
+                    },
+                    recommended={"max_texture_size": "align sizes or confirm intent"},
+                    estimated_saving=Saving(),
+                    auto_fixable=False,
+                    guidance=None,
+                )
+            )
+    return findings
+
+
+# ── LT015 (project-level streaming pool share) ────────────────────────────────
+
+
+def check_lt015_streaming_pool(
+    assets: list[dict], engine: str = "unreal", thresholds: dict | None = None
+) -> list[Finding]:
+    """LT015: Total streaming-texture VRAM in the batch exceeds the pool budget."""
+    T = thresholds if thresholds is not None else THRESHOLDS
+    budget_mb: float = T["LT015_POOL_BUDGET_MB"]
+    consumers: list[tuple[str, float]] = []
+    total_mb = 0.0
+    for asset in assets:
+        if asset.get("asset_type") not in _TEXTURE_TYPES:
+            continue
+        if not asset.get("streaming", False):
+            continue
+        w = int(asset.get("width", 0) or 0)
+        h = int(asset.get("height", 0) or 0)
+        if w <= 0 or h <= 0:
+            continue
+        fmt = normalize_compression(asset.get("compression", "RGBA8"))
+        mb = estimate_texture_vram_mb(
+            w, h, fmt, with_mips=asset.get("mips_enabled", True)
+        )
+        total_mb += mb
+        consumers.append((asset["asset_path"], mb))
+
+    total_mb = round(total_mb, 2)
+    if total_mb <= budget_mb:
+        return []
+    consumers.sort(key=lambda c: c[1], reverse=True)
+    top = [{"asset_path": p, "vram_mb": mb} for p, mb in consumers[:10]]
+    return [
+        Finding(
+            asset_path="<project>",
+            rule_id="LT015",
+            category="Texture",
+            severity="warning",
+            message=(
+                f"Streaming textures total {total_mb} MB — over the "
+                f"{budget_mb} MB pool budget. Over-budget pools thrash and pop."
+            ),
+            current={"streaming_total_mb": total_mb, "top_consumers": top},
+            recommended={"streaming_total_mb": f"<= {budget_mb}"},
+            estimated_saving=Saving(vram_mb=round(total_mb - budget_mb, 2)),
+            auto_fixable=False,
+            guidance=None,
+        )
+    ]

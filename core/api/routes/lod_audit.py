@@ -13,7 +13,7 @@ from typing import Any
 
 from api.database import resolve_tier_detailed
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger("shinttools.lod_audit")
 
@@ -45,6 +45,13 @@ class LodAssetFile(BaseModel):
     discrimination. Individual rules access fields via dict.get() with
     safe defaults, so omitted fields simply skip the rule.
     """
+
+    # Contract v2 adds ~40 optional mesh/material/shader fields (schema.py).
+    # extra="allow" forwards any of them through model_dump() to the rules
+    # without re-declaring each here — rules read via dict.get(), so a field
+    # the client sends but this model doesn't name still reaches its detector.
+    # A handful of the most-used v2 scalars are named below for readability.
+    model_config = ConfigDict(extra="allow")
 
     asset_path: str = ""
     asset_type: str = ""
@@ -82,6 +89,15 @@ class LodAssetFile(BaseModel):
     vert_count: int = 0
     content_hash: str = ""
     size_kb: float = 0.0
+    # ── Meshes (Contract v2 — most-used scalars; the rest pass via extra="allow")
+    triangle_count: int = 0
+    vertex_count: int = 0
+    material_slot_count: int = 1
+    uv_channel_count: int = 1
+    lightmap_uv_index: int = -1
+    uses_static_lighting: bool = False
+    nanite_enabled: bool = False
+    used_in_levels: int = 1
 
     # ── Animations
     anim_source: str = ""
@@ -127,11 +143,11 @@ class LodAuditRequest(BaseModel):
     # Optional. Each layers over the selected `profile` for this one request;
     # None = use the profile default. Friendly names map to threshold keys in
     # lod_orchestrator._OVERRIDE_TO_THRESHOLD.
-    oversized_max_size: int | None = None      # global px ceiling for LT003
-    uncompressed_min_size: int | None = None   # LT007 min edge (below = silent)
-    uncompressed_max_size: int | None = None   # LT007 warn-escalation edge
-    npot_min_size: int | None = None           # LT006 min edge
-    streaming_min_size: int | None = None      # LT005 min edge
+    oversized_max_size: int | None = None  # global px ceiling for LT003
+    uncompressed_min_size: int | None = None  # LT007 min edge (below = silent)
+    uncompressed_max_size: int | None = None  # LT007 warn-escalation edge
+    npot_min_size: int | None = None  # LT006 min edge
+    streaming_min_size: int | None = None  # LT005 min edge
 
     assets: list[LodAssetFile] = Field(default_factory=list)
 
@@ -394,7 +410,9 @@ async def _enforce_studio(api_key: str, route_label: str) -> str:
     if tier not in ("studio", "enterprise"):
         logger.info(
             "%s: denied tier=%s reason=%s — Studio required",
-            route_label, tier, reason or "-",
+            route_label,
+            tier,
+            reason or "-",
         )
         # When the tier simply isn't high enough (valid key, lower plan)
         # there's no reason code — that's a genuine upgrade prompt. When a

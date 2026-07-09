@@ -66,6 +66,95 @@ LOD_RULE_NAMES: dict[str, str] = {
     "LX001": "Unreferenced (dead) texture",
     "LX002": "Unused (dead) material",
     "LX003": "Duplicate mesh content",
+    "LX004": "Unused material instance",
+    "LX005": "Duplicate texture content",
+    "LX006": "Same source, multiple sizes",
+    # ── Mesh geometry (LG) ───────────────────────────────
+    "LG001": "Triangle count over cap",
+    "LG002": "Vertex count over budget",
+    "LG003": "Vertex density too high",
+    "LG004": "Degenerate triangles",
+    "LG005": "Duplicate vertices",
+    "LG006": "Overlapping unwelded vertices",
+    "LG007": "Non-manifold geometry",
+    "LG008": "Open edges on closed hull",
+    "LG009": "Hidden interior geometry",
+    "LG010": "Interior faces in kit piece",
+    "LG011": "Excessive UV channels",
+    "LG012": "Draw-section explosion",
+    "LG013": "Pivot outside bounds",
+    "LG014": "Import scale not 1.0",
+    "LG015": "Negative-scale instances",
+    # ── UV / texel density (LW) ──────────────────────────
+    "LW001": "UV overlap (texture channel)",
+    "LW002": "Lightmap UV overlap",
+    "LW003": "UV stretching",
+    "LW004": "UV distortion",
+    "LW005": "Excessive UV islands",
+    "LW006": "Low UV packing efficiency",
+    "LW007": "Texel density out of band",
+    "LW008": "Texel density inconsistent",
+    "LW009": "UV outside 0-1 range",
+    "LW010": "Missing UV channel",
+    # ── Normals & tangents (LN) ──────────────────────────
+    "LN001": "Missing normals",
+    "LN002": "Invalid (zero/NaN) normals",
+    "LN003": "Tangent issues",
+    "LN004": "Hard-edge overuse",
+    "LN005": "Smoothing group problems",
+    "LN006": "Recompute discards normals",
+    # ── LOD chain completion (LD) ────────────────────────
+    "LD004": "Too few LODs for size",
+    "LD005": "Excessive LODs",
+    "LD006": "Bad reduction ratios",
+    "LD007": "Bad screen-size progression",
+    "LD008": "Material grows along chain",
+    "LD009": "UV dropped along chain",
+    "LD010": "No dedicated shadow LOD",
+    "LD011": "Collision disproportionate",
+    "LD012": "Nanite candidate (disabled)",
+    "LD013": "Nanite misconfigured",
+    # ── Material completion (LM) ─────────────────────────
+    "LM004": "Sampler count over budget",
+    "LM005": "Material graph too complex",
+    "LM006": "Material function too deep",
+    "LM007": "Too many material layers",
+    "LM008": "Layered blend near budget",
+    "LM009": "RVT underused",
+    "LM010": "Too many dynamic params",
+    "LM011": "Permutation explosion",
+    "LM012": "Unused usage flags",
+    "LM013": "Expensive material nodes",
+    "LM014": "Vertex shader too costly",
+    # ── Texture completion (LT) ──────────────────────────
+    "LT009": "Missing mipmaps",
+    "LT010": "Wrong texture group",
+    "LT013": "Packable single-channel maps",
+    "LT014": "Texture over memory ceiling",
+    "LT015": "Streaming pool over budget",
+    "LT016": "UI/FX texture streaming on",
+    # ── Rendering cost (LR) ──────────────────────────────
+    "LR001": "Opaque reads scene color",
+    "LR002": "Masked overuse (mobile)",
+    "LR003": "Translucent reads depth",
+    "LR004": "Additive fill-rate stacking",
+    "LR005": "Expensive decal",
+    "LR006": "Two-sided opaque",
+    "LR007": "WPO on heavy mesh",
+    "LR008": "Pixel depth offset cost",
+    # ── Shader (LS) ──────────────────────────────────────
+    "LS001": "Shader over instruction budget",
+    "LS002": "Too many texture fetches",
+    "LS003": "High branch count",
+    "LS004": "Dynamic branching",
+    "LS005": "Unbounded shader loop",
+    "LS006": "High register pressure",
+    "LS007": "Variant count over budget",
+    "LS008": "Full-float on mobile",
+    "LS009": "Shader dead code",
+    "LS010": "Unused shader parameters",
+    "LS011": "Expensive shader math",
+    "LS012": "Dependent texture reads",
 }
 
 # "LT003: ..." → strip the leading id so the explanation reads cleanly.
@@ -100,18 +189,7 @@ def _build_explanations() -> dict[str, str]:
     """
     from lod_auditor import lod_orchestrator as orch
 
-    all_rule_fns = (
-        orch.TEXTURE_RULES
-        + orch.MATERIAL_RULES
-        + orch.MESH_RULES
-        + orch.ANIM_RULES
-        + orch.PARTICLE_RULES
-        + orch.AUDIO_RULES
-        + orch.LIGHTING_RULES
-        + orch.CROSS_RULES
-        + orch.MOBILE_RULES_BY_TYPE.get("Material", [])
-        + orch.MOBILE_RULES_BY_TYPE.get("Texture", [])
-    )
+    all_rule_fns = orch.ALL_RULES
 
     explanations: dict[str, str] = {}
     for fn in all_rule_fns:

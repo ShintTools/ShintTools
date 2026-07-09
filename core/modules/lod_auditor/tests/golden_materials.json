@@ -1,0 +1,52 @@
+[
+  {
+    "name": "clean",
+    "expect_empty": true,
+    "asset": {"asset_path": "/Game/M_Clean", "asset_type": "Material", "blend_mode": "Opaque", "instruction_count": 120, "sampler_count": 4, "used_by_primitives": 1, "is_material_instance": true}
+  },
+  {
+    "name": "over_instructions",
+    "expect_contains": ["LM001"],
+    "asset": {"asset_path": "/Game/M_Heavy", "asset_type": "Material", "blend_mode": "Opaque", "instruction_count": 800, "used_by_primitives": 1}
+  },
+  {
+    "name": "too_many_samplers",
+    "expect_contains": ["LM004"],
+    "asset": {"asset_path": "/Game/M_Samp", "asset_type": "Material", "blend_mode": "Opaque", "sampler_count": 20, "used_by_primitives": 1}
+  },
+  {
+    "name": "permutation_explosion",
+    "expect_contains": ["LM011"],
+    "asset": {"asset_path": "/Game/M_Perm", "asset_type": "Material", "blend_mode": "Opaque", "static_switch_count": 12, "static_permutation_estimate": 500, "used_by_primitives": 1}
+  },
+  {
+    "name": "unused_flags",
+    "expect_contains": ["LM012"],
+    "asset": {"asset_path": "/Game/M_Flags", "asset_type": "Material", "blend_mode": "Opaque", "usage_flags_unused": ["bUsedWithSkeletalMesh", "bUsedWithParticleSystem"], "used_by_primitives": 1}
+  },
+  {
+    "name": "expensive_nodes",
+    "expect_contains": ["LM013"],
+    "asset": {"asset_path": "/Game/M_Nodes", "asset_type": "Material", "blend_mode": "Opaque", "expensive_node_counts": {"SceneColor": 2, "Noise": 1}, "used_by_primitives": 1}
+  },
+  {
+    "name": "two_sided_opaque",
+    "expect_contains": ["LR006"],
+    "asset": {"asset_path": "/Game/M_TwoSided", "asset_type": "Material", "blend_mode": "Opaque", "two_sided": true, "used_by_primitives": 50}
+  },
+  {
+    "name": "opaque_scene_read",
+    "expect_contains": ["LR001"],
+    "asset": {"asset_path": "/Game/M_Scene", "asset_type": "Material", "blend_mode": "Opaque", "uses_scene_color": true, "used_by_primitives": 1}
+  },
+  {
+    "name": "wpo_heavy",
+    "expect_contains": ["LR007", "LM014"],
+    "asset": {"asset_path": "/Game/M_WPO", "asset_type": "Material", "blend_mode": "Opaque", "uses_wpo": true, "max_referencer_vertex_count": 200000, "vertex_shader_instructions": 300, "used_by_primitives": 1}
+  },
+  {
+    "name": "dead_shader_params",
+    "expect_contains": ["LS010"],
+    "asset": {"asset_path": "/Game/M_Dead", "asset_type": "Material", "blend_mode": "Opaque", "used_by_primitives": 1, "shader_stats": {"dead_parameter_count": 10}}
+  }
+]

@@ -82,3 +82,164 @@ LA003_MAX_KEYS_PER_SECOND: 30
 # ── Cross-detection ───────────────────────────────────────────────────────────
 
 LX003_MIN_DUPLICATE_SIZE_KB: 100.0
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Part 2 — geometry / UV / normals / LOD-chain / material / texture / rendering /
+# shader thresholds. Every key is prefixed by its rule id (§13.1). Full copies:
+# thresholds_mobile.yaml overrides the ones that differ, defaults apply elsewhere.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── Mesh geometry (LG) ────────────────────────────────────────────────────────
+
+LG001_MAX_TRIANGLES: 150000
+LG001_ERROR_TRIANGLES: 500000
+LG002_MIN_VERTS: 5000
+LG002_MAX_VERTEX_RATIO: 2.2
+# verts/cm² ceiling per size class (radius <= limit -> max density).
+LG003_MAX_DENSITY:
+  - [50.0, 3.0]
+  - [150.0, 1.5]
+  - [500.0, 0.5]
+  - [.inf, 0.2]
+LG004_ERROR_RATIO: 0.01
+LG005_MIN_COUNT: 50
+LG005_WARN_RATIO: 0.05
+LG006_RATIO: 0.10
+LG006_MAX_HARD_EDGE_RATIO: 0.15
+LG008_MAX_OPEN_EDGES: 0
+LG009_MAX_INTERNAL_RATIO: 0.25
+LG009_MIN_TRIS: 10000
+LG010_MAX_INTERNAL_RATIO: 0.10
+LG011_MIN_KEEP: 1
+LG012_MAX_SECTIONS: 8
+LG012_MAX_SLOTS: 6
+LG013_MAX_OFFSET_RATIO: 1.5
+LG014_TOLERANCE: 0.01
+LG015_MIN_LEVELS: 1
+
+# ── UV / texel density (LW) ───────────────────────────────────────────────────
+
+LW001_MAX_OVERLAP: 0.35
+LW002_MAX_OVERLAP: 0.001
+LW003_MAX_STRETCH: 3.0
+LW003_AVG_STRETCH: 1.5
+LW004_AVG_STRETCH: 1.25
+LW005_MAX_ISLANDS_PER_10K: 80
+LW006_MIN_EFFICIENCY: 0.55
+LW006_LIGHTMAP_MIN_EFFICIENCY: 0.65
+LW007_TARGET_DENSITY:
+  Character: 10.0
+  World: 5.0
+  Environment: 5.0
+  Prop: 7.0
+  _default: 5.0
+LW007_HIGH_FACTOR: 2.0
+LW007_LOW_FACTOR: 0.4
+LW008_MAX_CV: 0.6
+LW009_INFO_RATIO: 0.05
+
+# ── Normals & tangents (LN) ───────────────────────────────────────────────────
+
+LN002_ERROR_RATIO: 0.01
+LN004_MAX_RATIO: 0.5
+LN004_MIN_VERTS: 3000
+LN005_MIN_TRIS: 1000
+
+# ── LOD chain completion (LD004-LD013) ────────────────────────────────────────
+
+LD004_EXPECTED_LODS:
+  - [50.0, 2]
+  - [150.0, 3]
+  - [500.0, 4]
+  - [.inf, 4]
+LD005_MAX_LODS: 6
+LD005_MIN_SCREEN_SIZE: 0.01
+LD006_MIN_RATIO: 0.20
+LD006_MAX_RATIO: 0.75
+LD006_TARGET_RATIO: 0.5
+LD007_MAX_LOD1_SS: 0.9
+LD007_MIN_LOD1_SS: 0.1
+LD007_MAX_STEP: 0.9
+LD007_DEFAULT_LADDER: [1.0, 0.5, 0.25, 0.12, 0.06]
+LD010_MIN_TRIS: 20000
+LD011_MAX_PRIMS: 16
+LD011_MAX_COMPLEX_TRIS: 50000
+LD012_MIN_TRIS: 50000
+LD013_MAX_FALLBACK_PCT: 10.0
+
+# ── Material complexity completion (LM004-LM014) ──────────────────────────────
+
+LM004_MAX_SAMPLERS:
+  Opaque: 12
+  Masked: 12
+  Translucent: 8
+  Additive: 8
+  Modulate: 8
+LM004_ERROR_SAMPLERS: 16
+LM005_MAX_NODES: 400
+LM005_MAX_DEPTH: 48
+LM006_MAX_DEPTH: 5
+LM007_MAX_LAYERS:
+  Opaque: 4
+  _default: 2
+LM008_BUDGET_FACTOR: 0.8
+LM009_MIN_PRIMITIVES: 10
+LM010_MAX_DYNAMIC: 8
+LM011_MAX_SWITCHES: 8
+LM011_ERROR_PERMUTATIONS: 256
+LM011_MB_PER_PERMUTATION: 0.05
+LM013_NODE_SEVERITY:
+  SceneColor: warning
+  SceneDepth: info
+  Noise: warning
+  DDX: info
+  DDY: info
+  Fresnel: info
+  CustomExpression: info
+  DistanceToNearestSurface: warning
+  ParticleColor: info
+LM014_MAX_VS_INSTRUCTIONS: 150
+
+# ── Texture validation completion (LT009-LT016) ───────────────────────────────
+
+LT009_MIN_PIXELS: 65536
+LT010_EXPECTED_GROUP:
+  Normal: NormalMap
+  UI: UI
+  HDR: Skybox
+LT013_MIN_PACK_CANDIDATES: 3
+LT014_MAX_SINGLE_TEXTURE_MB: 64.0
+LT015_POOL_BUDGET_MB: 2000.0
+
+# ── Rendering cost (LR) ───────────────────────────────────────────────────────
+
+LR002_MIN_PRIMS: 50
+LR004_MAX_PRIMS: 100
+LR005_MAX_INSTRUCTIONS: 200
+LR006_MIN_PRIMS: 20
+LR007_MIN_VERTS: 100000
+LR008_MIN_PRIMS: 20
+
+# ── Shader (LS) ───────────────────────────────────────────────────────────────
+
+LS001_MAX_INSTRUCTIONS: 500
+LS001_ERROR_INSTRUCTIONS: 1000
+LS002_MAX_FETCHES: 16
+LS003_MAX_BRANCHES: 24
+LS004_MAX_DYNAMIC_BRANCHES: 8
+LS005_MAX_LOOP_ITERATIONS: 32
+LS006_MAX_REGISTER_PRESSURE: 64
+LS007_MAX_VARIANTS: 256
+LS007_ERROR_VARIANTS: 1024
+LS008_MIN_HALF_RATIO: 0.3
+LS009_MAX_DEAD_CODE_RATIO: 0.15
+LS010_MAX_DEAD_PARAMS: 4
+LS011_OP_BUDGET:
+  pow: 8
+  sin: 8
+  cos: 8
+  tan: 2
+  rsqrt: 16
+  exp: 8
+  log: 8
+LS012_MAX_DEPENDENT_READS: 2

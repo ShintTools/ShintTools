@@ -261,8 +261,7 @@ def check_fixer_pattern_map(r: Report, mods: dict) -> None:
     if not mods:
         return
     fixer_src = (
-        _CORE
-        / "modules/code_validator/unreal/parsers/fixers/cpp_fixer.py"
+        _CORE / "modules/code_validator/unreal/parsers/fixers/cpp_fixer.py"
     ).read_text(encoding="utf-8")
     handled = set(re.findall(r'pattern_name == "([a-z_]+)"', fixer_src))
     handled.add("mark_for_review")  # always handled
@@ -280,6 +279,69 @@ def check_fixer_pattern_map(r: Report, mods: dict) -> None:
         r.ok(f"all {len(mods['cpp_patterns'])} rule->pattern entries are handled")
 
 
+def check_lod_auditor(r: Report) -> None:
+    """LOD Auditor rule / metadata / threshold / guidance consistency (Part 2).
+
+    Enforces the contract-lockstep discipline (§22.2): every registered rule has
+    a humanised name; every guided rule carries all three engine keys; the two
+    threshold profiles are full copies of the same key set (so a key a rule reads
+    on default can never KeyError on mobile); and the LM008 suppression table
+    only references real rule ids.
+    """
+    print("\n[6] LOD Auditor rule/metadata/threshold consistency")
+    try:
+        from lod_auditor import lod_orchestrator as orch
+        from lod_auditor.config import load_profile
+        from lod_auditor.guidance import LOD_GUIDANCE
+        from lod_auditor.rule_metadata import LOD_RULE_NAMES, _build_explanations
+    except Exception as e:  # noqa: BLE001
+        r.fail(f"lod_auditor import error: {e}")
+        return
+
+    rule_ids = set(_build_explanations().keys())
+
+    missing_names = sorted(rid for rid in rule_ids if rid not in LOD_RULE_NAMES)
+    if missing_names:
+        r.fail(f"LOD rules with no LOD_RULE_NAMES title: {missing_names}")
+    else:
+        r.ok(f"all {len(rule_ids)} LOD rules have a humanised name")
+
+    missing_keys = []
+    for rid, by_engine in LOD_GUIDANCE.items():
+        for key in ("unreal", "unity", "_default"):
+            if key not in by_engine:
+                missing_keys.append(f"{rid}:{key}")
+    if missing_keys:
+        r.fail(f"LOD_GUIDANCE entries missing engine keys: {missing_keys}")
+    else:
+        r.ok(f"all {len(LOD_GUIDANCE)} guided rules have unreal/unity/_default")
+
+    meta = {"profile", "description"}
+    default_keys = set(load_profile("default")) - meta
+    mobile_keys = set(load_profile("mobile")) - meta
+    only_default = sorted(default_keys - mobile_keys)
+    only_mobile = sorted(mobile_keys - default_keys)
+    if only_default or only_mobile:
+        r.fail(
+            "threshold profiles diverge — "
+            f"default-only={only_default} mobile-only={only_mobile}"
+        )
+    else:
+        r.ok(f"default/mobile profiles share all {len(default_keys)} threshold keys")
+
+    bad_supp = set()
+    for suppressed, suppressors in orch._SUPPRESSED_BY.items():
+        if suppressed not in rule_ids:
+            bad_supp.add(suppressed)
+        bad_supp.update(s for s in suppressors if s not in rule_ids)
+    if bad_supp:
+        r.fail(f"_SUPPRESSED_BY references unknown rule ids: {sorted(bad_supp)}")
+    else:
+        r.ok(
+            f"suppression table references resolve ({len(orch._SUPPRESSED_BY)} rule(s))"
+        )
+
+
 def main() -> int:
     print("=" * 64)
     print("ShintTools Core — structural health check")
@@ -290,6 +352,7 @@ def main() -> int:
     check_severity_validity(r, mods)
     check_autofix_safety(r, mods)
     check_fixer_pattern_map(r, mods)
+    check_lod_auditor(r)
 
     print("\n" + "=" * 64)
     print(
