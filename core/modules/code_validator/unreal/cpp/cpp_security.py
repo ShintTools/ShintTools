@@ -482,7 +482,7 @@ def detect_array_no_bounds_check(
                     content,
                     _char_pos_for_line(source_lines, line_no),
                 ),
-                "severity": "warning",
+                "severity": "info",
                 "rule_id": "CS005",
                 "category": "Security",
                 "message": (

@@ -2,11 +2,14 @@
 Strict tests for CM006 (deep nesting) and CP003 (large Tick).
 
 CM006 — detect_deep_nesting:
-  Flags lines nested >4 brace levels deep.
+  Flags lines nested >6 brace levels deep. (Threshold raised from 4 to 6:
+  total brace depth already includes namespace/class/method structural braces,
+  so 4 fired on nearly every real method — Epic's CitySample tripped it 1100+
+  times.)
   Must NOT fire on:
     - Comments containing braces
     - String literals with braces
-    - Exactly 4 levels (threshold is >4, not >=4)
+    - Exactly 4 levels (threshold is >6)
     - Non-C++ files
     - Braces inside block comments
 
@@ -135,7 +138,7 @@ print("\n=== CM006: DEEP NESTING — DETECTION ===")
 # --- Should fire ---
 
 assert_issues(
-    "CM006-01: 5 levels of nesting fires",
+    "CM006-01: 7 levels of nesting fires",
     detect_deep_nesting(
         """\
 void AMyActor::BeginPlay()
@@ -148,7 +151,13 @@ void AMyActor::BeginPlay()
             {
                 if (Items[i] != nullptr)
                 {
-                    Items[i]->Activate();
+                    if (Items[i]->IsActive())
+                    {
+                        if (bExtra)
+                        {
+                            Items[i]->Activate();
+                        }
+                    }
                 }
             }
         }
@@ -162,7 +171,7 @@ void AMyActor::BeginPlay()
 )
 
 assert_issues(
-    "CM006-02: 6 levels fires once (not per line)",
+    "CM006-02: deep nesting fires per opening line past threshold",
     detect_deep_nesting(
         """\
 void Foo()
@@ -177,7 +186,13 @@ void Foo()
                 {
                     if (e)
                     {
-                        DoSomething();
+                        if (f)
+                        {
+                            if (g)
+                            {
+                                DoSomething();
+                            }
+                        }
                     }
                 }
             }
@@ -187,7 +202,7 @@ void Foo()
 """,
         "test.cpp",
     ),
-    expected_count=2,  # fires at level 5 and level 6
+    expected_count=2,  # fires at level 7 and level 8
     expected_rule="CM006",
 )
 
@@ -197,16 +212,16 @@ assert_issues(
         """\
 void Foo()
 {
-    if (a) { if (b) { if (c) { if (d) { if (e) { x(); } } } } }
+    if (a) { if (b) { if (c) { if (d) { if (e) { if (f) { x(); } } } } } }
 }
 void Bar()
 {
-    if (a) { if (b) { if (c) { if (d) { if (e) { y(); } } } } }
+    if (a) { if (b) { if (c) { if (d) { if (e) { if (f) { y(); } } } } } }
 }
 """,
         "test.cpp",
     ),
-    expected_count=2,  # one per function at level 5
+    expected_count=2,  # one per function past the threshold
     expected_rule="CM006",
 )
 
@@ -297,7 +312,10 @@ void Foo()
 {
     if (a)
     {
-        FString S = TEXT("{{{{}}}}}");
+        if (b)
+        {
+            FString S = TEXT("{{{{}}}}}");
+        }
     }
 }
 """,
@@ -315,7 +333,7 @@ assert_issues(
         """\
 void Foo()
 {
-    if (a) { if (b) { if (c) { if (d) { if (e) {} } } } }
+    if (a) { if (b) { if (c) { if (d) { if (e) { if (f) {} } } } } }
 }
 """,
         "test.h",

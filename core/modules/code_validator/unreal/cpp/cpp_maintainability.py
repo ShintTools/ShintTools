@@ -352,7 +352,13 @@ def detect_deep_nesting(
     issues: List[Issue] = []
     source_lines = content.splitlines()
 
-    _MAX_NESTING: int = 4
+    # Counts total brace depth, which already includes the structural
+    # namespace/class/method braces (2-3 levels of baseline in idiomatic UE5
+    # code before any control flow). A threshold of 4 fired on essentially
+    # every non-trivial method — Epic's CitySample tripped it 1100+ times. 6
+    # allows ~3-4 levels of *real* control-flow nesting inside a class method
+    # before flagging genuinely deep code.
+    _MAX_NESTING: int = 6
     brace_depth = 0
     reported_lines: set = set()
 

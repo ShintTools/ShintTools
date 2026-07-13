@@ -264,13 +264,14 @@ def detect_raw_delete(
                         content,
                         _char_pos_for_line(source_lines, line_no),
                     ),
-                    "severity": "error",
+                    "severity": "warning",
                     "rule_id": "CB004",
                     "category": "Best Practices",
                     "message": (
-                        "Raw 'delete' detected — UObjects are "
-                        "garbage-collected; manual delete will "
-                        "crash."
+                        "Raw 'delete' detected. If this frees a UObject it "
+                        "will crash (UObjects are garbage-collected). For "
+                        "plain C++ objects prefer a smart pointer "
+                        "(TUniquePtr/MakeShared) over manual delete."
                     ),
                     "snippet": source_line.strip(),
                     "fix_suggestion": "Comment out raw delete",
@@ -729,7 +730,7 @@ def detect_c_style_cast(
                         content,
                         _char_pos_for_line(source_lines, line_no),
                     ),
-                    "severity": "warning",
+                    "severity": "info",
                     "rule_id": "CB012",
                     "category": "Best Practices",
                     "message": (
@@ -1265,7 +1266,7 @@ def detect_lambda_implicit_capture(
                         content,
                         _char_pos_for_line(source_lines, line_no),
                     ),
-                    "severity": "warning",
+                    "severity": "info",
                     "rule_id": "CB021",
                     "category": "Best Practices",
                     "message": (
@@ -1979,13 +1980,15 @@ def detect_blueprint_pure_side_effects(
                         content,
                         _char_pos_for_line(source_lines, line_no),
                     ),
-                    "severity": "error",
+                    "severity": "info",
                     "rule_id": "CB031",
                     "category": "Best Practices",
                     "message": (
                         f"BlueprintPure function '{func_name}' is not "
-                        "const — pure functions must not have side "
-                        "effects. Add 'const' or remove BlueprintPure."
+                        "const. BlueprintPure does not require const in C++, "
+                        "but marking read-only accessors const is good "
+                        "const-correctness (Epic's own code has many "
+                        "non-const BlueprintPure functions)."
                     ),
                     "snippet": func_line.strip(),
                     "fix_suggestion": "Add const qualifier to function",
@@ -2185,14 +2188,15 @@ def detect_raw_pointer_in_uproperty(
                     content,
                     _char_pos_for_line(source_lines, line_no),
                 ),
-                "severity": "warning",
+                "severity": "info",
                 "rule_id": "CB034",
                 "category": "Best Practices",
                 "message": (
                     f"UPROPERTY raw pointer '{class_type}* "
-                    f"{var_name}' — use "
-                    f"TObjectPtr<{class_type}> for lazy "
-                    "loading and access tracking (UE5.1+)."
+                    f"{var_name}' — consider "
+                    f"TObjectPtr<{class_type}> for access tracking "
+                    "(UE5.1+). Raw UPROPERTY pointers are still valid and "
+                    "GC-safe; this is an optional modernisation."
                 ),
                 "snippet": source_line.strip(),
                 "fix_suggestion": (

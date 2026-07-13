@@ -23,6 +23,7 @@ __all__ = [
     "_fixer",
     "_CPP_EXT",
     "_is_cpp",
+    "_is_commandlet_context",
     "_is_header",
     "_is_source",
     "_code_part",
@@ -54,6 +55,24 @@ _CPP_EXT = {".cpp", ".h", ".hpp", ".cc"}
 def _is_cpp(file_path: str) -> bool:
     """Returns True if the file is any kind of C++ file."""
     return Path(file_path).suffix.lower() in _CPP_EXT
+
+
+def _is_commandlet_context(file_path: str, content: str = "") -> bool:
+    """True when the file is a commandlet / editor-batch tool rather than
+    runtime gameplay code.
+
+    Commandlets and editor utilities run headless on a cooker/CLI thread, not
+    the live game thread, so game-thread-only prohibitions (blocking Sleep,
+    manual CollectGarbage) do not apply — forcing GC between processing
+    thousands of assets, or sleeping in a validation pass, is idiomatic there.
+    Epic's own CitySample commandlets do exactly this. Recognised by path
+    ("Commandlet", "/Commandlets/") or by deriving from UCommandlet.
+    """
+    low = file_path.lower().replace("\\", "/")
+    if "commandlet" in low or "/commandlets/" in low:
+        return True
+    return bool(re.search(r"\bpublic\s+UCommandlet\b|:\s*public\s+UCommandlet",
+                          content))
 
 
 def _is_header(file_path: str) -> bool:

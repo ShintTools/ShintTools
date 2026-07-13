@@ -32,6 +32,7 @@ from code_validator.unreal.cpp._cpp_helpers import (
     _char_pos_for_line,
     _extract_class_name,
     _get_line_number,
+    _is_commandlet_context,
     _is_cpp,
     _is_fixable,
     _is_header,
@@ -482,6 +483,12 @@ def detect_sleep_on_game_thread(
     Use timers, async tasks or latent actions instead.
     """
     if not _is_cpp(file_path):
+        return []
+
+    # Commandlets / editor batch tools don't run on the live game thread —
+    # a blocking Sleep in a headless cooker pass is idiomatic (Epic's own
+    # content-validation commandlet does it). Don't flag it there.
+    if _is_commandlet_context(file_path, content):
         return []
 
     issues: List[Issue] = []
@@ -1167,6 +1174,10 @@ def detect_garbage_collect_call(
         if re.search(r"\bCollectGarbage\s*\(", source_line):
             # Skip if inside test file
             if "test" in file_path.lower():
+                continue
+            # Commandlets / editor batch tools legitimately force GC between
+            # processing thousands of assets — not a runtime frame hitch.
+            if _is_commandlet_context(file_path, content):
                 continue
             issues.append(
                 {
