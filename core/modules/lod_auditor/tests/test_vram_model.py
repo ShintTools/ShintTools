@@ -73,7 +73,23 @@ class TestEstimateTextureVramMb:
         assert abs(ratio - 4 / 3) < 0.01
 
     def test_unknown_format_falls_back_to_rgba8_cost(self):
-        # Unknown format uses RGBA8 bpp (4.0) as the safe default
-        result_unknown = estimate_texture_vram_mb(512, 512, "ASTC_8x8")
+        # A genuinely unrecognised format uses RGBA8 bpp (4.0) as the safe
+        # default. (Known Unity/mobile names like ASTC_8x8 are mapped explicitly
+        # and must NOT fall back — see test_unity_formats_are_recognised.)
+        result_unknown = estimate_texture_vram_mb(512, 512, "NOT_A_REAL_FORMAT")
         result_rgba8 = estimate_texture_vram_mb(512, 512, "RGBA8")
         assert result_unknown == result_rgba8
+
+    def test_unity_formats_are_recognised(self):
+        # Regression: Unity TextureFormat names must map to their block-
+        # compressed bpp, not the RGBA8 fallback (that over-estimated VRAM ~8×
+        # and produced negative "potential size" in the panel).
+        rgba8 = estimate_texture_vram_mb(4000, 2664, "RGBA8")
+        assert estimate_texture_vram_mb(4000, 2664, "DXT1") < rgba8
+        # DXT1 == BC1 (0.5 bpp) → exactly 1/8 of RGBA8 (4.0 bpp).
+        assert estimate_texture_vram_mb(1024, 1024, "DXT1") == estimate_texture_vram_mb(
+            1024, 1024, "BC1"
+        )
+        assert estimate_texture_vram_mb(1024, 1024, "DXT5") == estimate_texture_vram_mb(
+            1024, 1024, "BC3"
+        )

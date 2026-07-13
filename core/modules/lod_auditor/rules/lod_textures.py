@@ -183,9 +183,14 @@ def check_lt003(
         category="Texture",
         severity="warning",
         message=(
-            f"{width}×{height} texture in LOD group '{lod_group}' "
-            f"exceeds the {budget} px slot budget. "
-            f"Estimated saving: {vram_saved} MB VRAM."
+            (
+                f"{width}×{height} texture in LOD group '{lod_group}' "
+                f"exceeds the {budget} px slot budget. "
+                if engine != "unity"
+                else f"{width}×{height} texture exceeds the {budget} px "
+                f"max-size budget. "
+            )
+            + f"Estimated saving: {vram_saved} MB VRAM."
         ),
         current={"max_texture_size": long_edge, "vram_mb": current_vram},
         recommended={"max_texture_size": budget, "vram_mb": recommended_vram},
@@ -350,9 +355,15 @@ def check_lt006(
         category="Texture",
         severity="warning",
         message=(
-            f"{width}×{height} is not power-of-two — UE5 pads it on the GPU. "
-            f"Resize to {rec_width}×{rec_height} to drop the padding "
-            f"(≈ {vram_saved} MB VRAM)."
+            (
+                f"{width}×{height} is not power-of-two — UE5 pads it on the GPU. "
+                f"Resize to {rec_width}×{rec_height} to drop the padding "
+                if engine != "unity"
+                else f"{width}×{height} is not power-of-two — this wastes memory "
+                f"and can disable block compression. Resize to "
+                f"{rec_width}×{rec_height} "
+            )
+            + f"(≈ {vram_saved} MB VRAM)."
         ),
         current={"width": width, "height": height},
         recommended={"width": rec_width, "height": rec_height},
@@ -538,6 +549,8 @@ def check_lt010(
     asset: dict, engine: str = "unreal", thresholds: dict | None = None
 ) -> Finding | None:
     """LT010: Texture LOD group inconsistent with the texture's usage."""
+    if engine == "unity":
+        return None  # texture LOD groups are a UE5 concept (§13.9)
     T = thresholds if thresholds is not None else THRESHOLDS
     usage = asset.get("usage", "")
     expected_map: dict = T["LT010_EXPECTED_GROUP"]

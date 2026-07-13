@@ -24,6 +24,19 @@ BYTES_PER_PIXEL: dict[str, float] = {
     "BC5": 1.0,  # ATI2  — 8 bpp; two channels (normal maps XY)
     "BC6H": 1.0,  # HDR   — 8 bpp; signed/unsigned half-float
     "BC7": 1.0,  # BC7   — 8 bpp; high-quality RGBA
+    # Uncompressed low-bpp formats (mostly Unity mobile import outputs).
+    "RGB565": 2.0,  # 16-bit RGB, no alpha
+    "RGBA4444": 2.0,  # 16-bit RGBA
+    "R8": 1.0,  # 8-bit single channel
+    # Mobile block formats — canonical bpp for the common block sizes. ASTC
+    # varies with block size; these cover the import presets Unity emits by name.
+    "ETC2_RGB": 0.5,  # 4 bpp
+    "ETC2_RGBA": 1.0,  # 8 bpp
+    "ASTC_4x4": 1.0,  # 8.00 bpp
+    "ASTC_6x6": 0.5,  # 3.56 bpp → nearest canonical
+    "ASTC_8x8": 0.25,  # 2.00 bpp
+    "PVRTC_RGB4": 0.5,  # 4 bpp
+    "PVRTC_RGBA4": 0.5,  # 4 bpp
 }
 
 # Full mip chain adds 1/3 on top of the base-level cost.
@@ -52,6 +65,36 @@ _FORMAT_ALIASES: dict[str, str] = {
     "TC_VectorDisplacementmap": "RGBA8",
     "TC_EditorIcon": "RGBA8",
     "TC_EncodedVelocity": "BC5",
+    # Unity TextureFormat / import names → canonical. Without these, a Unity
+    # "DXT1" fell through to the RGBA8 default (4 bpp) and every texture's VRAM
+    # was over-estimated ~8×, producing savings larger than the source file and
+    # negative "potential size" figures in the panel.
+    "DXT1": "BC1",
+    "DXT1Crunched": "BC1",
+    "DXT5": "BC3",
+    "DXT5Crunched": "BC3",
+    "RGB24": "RGBA8",  # uploaded as 32-bit on the GPU
+    "RGBA32": "RGBA8",
+    "ARGB32": "RGBA8",
+    "BGRA32": "RGBA8",
+    "RGBAHalf": "BC6H",  # 8 bpp half-float equivalent for the estimate
+    "RGB565": "RGB565",
+    "RGBA4444": "RGBA4444",
+    "ARGB4444": "RGBA4444",
+    "Alpha8": "R8",
+    "R8": "R8",
+    "R16": "RGB565",  # 2 bytes/px
+    "BC4": "BC4",
+    "BC5": "BC5",
+    "BC6H": "BC6H",
+    "ETC2_RGB": "ETC2_RGB",
+    "ETC2_RGBA8": "ETC2_RGBA",
+    "ETC2_RGBA8Crunched": "ETC2_RGBA",
+    "ASTC_4x4": "ASTC_4x4",
+    "ASTC_6x6": "ASTC_6x6",
+    "ASTC_8x8": "ASTC_8x8",
+    "PVRTC_RGB4": "PVRTC_RGB4",
+    "PVRTC_RGBA4": "PVRTC_RGBA4",
     # canonical pass-through
     "RGBA8": "RGBA8",
     "BC1": "BC1",
