@@ -367,10 +367,25 @@ def detect_empty_if_body(content: str, file_path: str) -> List[Issue]:
 
 
 def detect_event_not_unsubscribed(content: str, file_path: str) -> List[Issue]:
-    """CSB012: event += subscription without matching -= in OnDestroy - listener memory leak."""  # noqa: E501
+    """CSB012: event += subscription without matching -= in OnDestroy/OnDisable."""
+    # Only MonoBehaviour/NetworkBehaviour classes have the OnDestroy/OnDisable
+    # lifecycle this rule keys on. Editor windows, plain classes,
+    # ScriptableObjects and static utilities do not — flagging their `+=` is a
+    # false positive. Unity's own packages tripped this 1000+ times, almost all
+    # of it plain `count += 1` arithmetic in non-component classes.
+    if not re.search(
+        r"class\s+\w+\s*:[^{\n]*\b(?:MonoBehaviour|NetworkBehaviour)\b", content
+    ):
+        return []
+
     subscriptions: List[tuple] = []
-    for m in re.finditer(r"(\w+)\s*\+=\s*\w+\s*;", content):
+    # A real event subscription's RHS is a handler: a PascalCase / On* / Handle*
+    # method name. `count += 1`, `total += delta` (numeric or lowercase
+    # accumulators) are arithmetic, not subscriptions — the old `\w+ += \w+`
+    # pattern swept those in.
+    for m in re.finditer(r"(\w+)\s*\+=\s*([A-Za-z_]\w*)\s*;", content):
         event_name = m.group(1)
+        handler = m.group(2)
         if event_name.lower() in {
             "onclick",
             "onvaluechanged",
@@ -378,18 +393,26 @@ def detect_event_not_unsubscribed(content: str, file_path: str) -> List[Issue]:
             "ontrigger",
         }:
             continue
+        if not (
+            handler[0].isupper()
+            or handler.startswith("On")
+            or handler.startswith("Handle")
+        ):
+            continue
         subscriptions.append((event_name, _line_number(content, m.start())))
     if not subscriptions:
         return []
-    ondestroy_span = _find_method_body(
-        content, r"\b(?:override\s+)?void\s+OnDestroy\s*\(\s*\)"
-    )
-    ondestroy_body = (
-        content[ondestroy_span[0] : ondestroy_span[1]] if ondestroy_span else ""
-    )
+    # Unsubscription in OnDestroy OR OnDisable is idiomatic — accept both.
+    cleanup_body = ""
+    for method in ("OnDestroy", "OnDisable"):
+        span = _find_method_body(
+            content, rf"\b(?:override\s+)?void\s+{method}\s*\(\s*\)"
+        )
+        if span:
+            cleanup_body += content[span[0] : span[1]]
     out: List[Issue] = []
     for event_name, sub_line in subscriptions:
-        if re.search(rf"\b{re.escape(event_name)}\s*-=\s*\w+", ondestroy_body):
+        if re.search(rf"\b{re.escape(event_name)}\s*-=\s*\w+", cleanup_body):
             continue
         out.append(
             _emit(
@@ -399,8 +422,8 @@ def detect_event_not_unsubscribed(content: str, file_path: str) -> List[Issue]:
                 rule_id="CSB012",
                 category="BestPractices",
                 severity="warning",
-                message=f"Event `{event_name} +=` has no matching `-=` in OnDestroy - listener leak.",  # noqa: E501
-                fix_suggestion=f"In OnDestroy: `{event_name} -= <HandlerName>;`",
+                message=f"Event `{event_name} +=` has no matching `-=` in OnDestroy/OnDisable - listener leak.",  # noqa: E501
+                fix_suggestion=f"In OnDestroy/OnDisable: `{event_name} -= <HandlerName>;`",  # noqa: E501
             )
         )
     return out
