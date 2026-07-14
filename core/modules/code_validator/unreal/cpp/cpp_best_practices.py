@@ -202,7 +202,16 @@ def detect_raw_new(
         if _is_comment_line(stripped):
             continue
         code = _code_part(source_line)
-        if re.search(r"\bnew\s+\w", code):
+        new_match = re.search(r"\bnew\s+([A-Za-z_]\w*)", code)
+        if new_match:
+            type_name = new_match.group(1)
+            # UObject-derived types (U*/A* prefix) MUST go through NewObject<T>()
+            # / CreateDefaultSubobject<T>() — raw new leaks and breaks GC, a real
+            # error. Plain C++ types (FVector, TArray, primitives, ...) are
+            # legitimately heap-allocated with new; Epic's own code does this
+            # 100+ times in CitySample. For those, raw new is only a style smell
+            # (prefer a smart pointer), so it drops to info.
+            is_uobject_like = bool(re.match(r"[UA][A-Z]", type_name))
             issues.append(
                 {
                     "asset_path": file_path,
@@ -211,15 +220,28 @@ def detect_raw_new(
                         content,
                         _char_pos_for_line(source_lines, line_no),
                     ),
-                    "severity": "warning",
+                    "severity": "warning" if is_uobject_like else "info",
                     "rule_id": "CB003",
                     "category": "Best Practices",
                     "message": (
-                        "Raw 'new' detected — use NewObject<T>()"
-                        " or CreateDefaultSubobject<T>() instead."
+                        (
+                            f"Raw 'new {type_name}' — UObject types must use "
+                            "NewObject<T>() or CreateDefaultSubobject<T>(), "
+                            "never raw new (raw new leaks and breaks GC)."
+                        )
+                        if is_uobject_like
+                        else (
+                            f"Raw 'new {type_name}' — for plain C++ objects "
+                            "prefer a smart pointer (TUniquePtr/MakeShared) "
+                            "over manual new/delete."
+                        )
                     ),
                     "snippet": source_line.strip(),
-                    "fix_suggestion": "Replace raw new with NewObject<T>(this)",
+                    "fix_suggestion": (
+                        "Replace raw new with NewObject<T>(this)"
+                        if is_uobject_like
+                        else "Prefer TUniquePtr<T> / MakeShared<T>()"
+                    ),
                     "is_auto_fixable": _is_fixable("CB003"),
                 }
             )
@@ -264,13 +286,14 @@ def detect_raw_delete(
                         content,
                         _char_pos_for_line(source_lines, line_no),
                     ),
-                    "severity": "error",
+                    "severity": "warning",
                     "rule_id": "CB004",
                     "category": "Best Practices",
                     "message": (
-                        "Raw 'delete' detected — UObjects are "
-                        "garbage-collected; manual delete will "
-                        "crash."
+                        "Raw 'delete' detected. If this frees a UObject it "
+                        "will crash (UObjects are garbage-collected). For "
+                        "plain C++ objects prefer a smart pointer "
+                        "(TUniquePtr/MakeShared) over manual delete."
                     ),
                     "snippet": source_line.strip(),
                     "fix_suggestion": "Comment out raw delete",
@@ -729,7 +752,7 @@ def detect_c_style_cast(
                         content,
                         _char_pos_for_line(source_lines, line_no),
                     ),
-                    "severity": "warning",
+                    "severity": "info",
                     "rule_id": "CB012",
                     "category": "Best Practices",
                     "message": (
@@ -1265,7 +1288,7 @@ def detect_lambda_implicit_capture(
                         content,
                         _char_pos_for_line(source_lines, line_no),
                     ),
-                    "severity": "warning",
+                    "severity": "info",
                     "rule_id": "CB021",
                     "category": "Best Practices",
                     "message": (
@@ -1979,13 +2002,15 @@ def detect_blueprint_pure_side_effects(
                         content,
                         _char_pos_for_line(source_lines, line_no),
                     ),
-                    "severity": "error",
+                    "severity": "info",
                     "rule_id": "CB031",
                     "category": "Best Practices",
                     "message": (
                         f"BlueprintPure function '{func_name}' is not "
-                        "const — pure functions must not have side "
-                        "effects. Add 'const' or remove BlueprintPure."
+                        "const. BlueprintPure does not require const in C++, "
+                        "but marking read-only accessors const is good "
+                        "const-correctness (Epic's own code has many "
+                        "non-const BlueprintPure functions)."
                     ),
                     "snippet": func_line.strip(),
                     "fix_suggestion": "Add const qualifier to function",
@@ -2185,14 +2210,15 @@ def detect_raw_pointer_in_uproperty(
                     content,
                     _char_pos_for_line(source_lines, line_no),
                 ),
-                "severity": "warning",
+                "severity": "info",
                 "rule_id": "CB034",
                 "category": "Best Practices",
                 "message": (
                     f"UPROPERTY raw pointer '{class_type}* "
-                    f"{var_name}' — use "
-                    f"TObjectPtr<{class_type}> for lazy "
-                    "loading and access tracking (UE5.1+)."
+                    f"{var_name}' — consider "
+                    f"TObjectPtr<{class_type}> for access tracking "
+                    "(UE5.1+). Raw UPROPERTY pointers are still valid and "
+                    "GC-safe; this is an optional modernisation."
                 ),
                 "snippet": source_line.strip(),
                 "fix_suggestion": (
