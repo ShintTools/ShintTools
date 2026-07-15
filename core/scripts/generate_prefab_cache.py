@@ -1,4 +1,4 @@
-"""Generate data/prefabricated_explanations.json — 228 prefab explanations.
+"""Generate core/data/prefabricated_explanations.json — 228 prefab explanations.
 
 Two examples per rule, for the 114 detectors registered in
 code_validator/rules/_rule_metadata.py. The result is loaded at server
@@ -3902,8 +3902,10 @@ def main() -> int:
                 }
             )
 
+    # core/data/ — inside the Docker build context so the image ships it
+    # (prefab_explanations.py resolves the same location at runtime).
     output_path = (
-        Path(__file__).resolve().parent.parent.parent
+        Path(__file__).resolve().parent.parent
         / "data"
         / ("prefabricated_explanations.json")
     )

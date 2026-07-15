@@ -156,7 +156,7 @@ def load_template(module: str, engine: str, version: str = "latest") -> PromptTe
         system=str(data["system"]).rstrip(),
         few_shots=str(data.get("few_shots", "")).rstrip(),
         stop_tokens=tuple(data.get("stop_tokens") or []),
-        max_tokens=int(generation.get("max_tokens", 220)),
+        max_tokens=int(generation.get("max_tokens", 150)),
         temperature=float(generation.get("temperature", 0.2)),
         source_path=yaml_path,
     )

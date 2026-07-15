@@ -6,6 +6,7 @@
 #
 # Both endpoints share the same scan and tier gate.
 
+import asyncio
 import logging
 import os
 import time
@@ -26,7 +27,7 @@ _explain_issue = None
 
 if os.getenv("SHINTTOOLS_AGENT_ENABLED") == "1":
     try:
-        from agent.explainer import explain_issue as _explain
+        from modules.agent.explainer import explain_issue as _explain
 
         _explain_issue = _explain
         _EXPLAINER_AVAILABLE = True
@@ -281,7 +282,7 @@ def _enrich_top_findings(
     # The model lives in the agent process; if it hasn't finished loading we
     # skip enrichment entirely rather than blocking on a cold load.
     try:
-        from agent.llm_backend import is_loaded, lod_adapter
+        from modules.agent.llm_backend import is_loaded, lod_adapter
 
         if not is_loaded():
             logger.info("/assets/lod/audit: explain skipped — LLM not loaded")
@@ -290,7 +291,7 @@ def _enrich_top_findings(
         return
 
     try:
-        from agent.finetuning_logger import log_explanation
+        from modules.agent.finetuning_logger import log_explanation
     except Exception:
         log_explanation = None  # logging is optional
 
@@ -298,20 +299,40 @@ def _enrich_top_findings(
     by_finding = dict(zip(findings, result_dicts))
     ranked = sorted(findings, key=_saving_score, reverse=True)[:n]
 
-    # Apply the LOD LoRA adapter (if configured) for the whole enrichment
-    # batch and detach it on exit — set once, clear once. Outside this block
-    # the Deep Code Validator keeps serving the unmodified Coder. A no-op when
-    # no adapter is configured (plain Coder, today's behaviour).
-    with lod_adapter() as lora_applied:
-        if lora_applied:
-            logger.info("/assets/lod/audit: LOD LoRA adapter active for enrichment")
-        _explain_ranked(
-            ranked=ranked,
-            by_finding=by_finding,
-            registry_engine=registry_engine,
-            explain_issue=_explain_issue,
-            log_explanation=log_explanation,
-        )
+    # Hold the shared llama lock for the whole batch: llama-cpp is not
+    # reentrant-safe, and without the lock a concurrent /agent/explain
+    # could race these generations (this path historically skipped it).
+    from modules.agent.llm_backend import _LLAMA_LOCK
+
+    with _LLAMA_LOCK:
+        # Apply the LOD LoRA adapter (if configured) for the whole enrichment
+        # batch and detach it on exit — set once, clear once. Outside this block
+        # the Deep Code Validator keeps serving the unmodified Coder. A no-op when
+        # no adapter is configured (plain Coder, today's behaviour).
+        with lod_adapter() as lora_applied:
+            if lora_applied:
+                logger.info(
+                    "/assets/lod/audit: LOD LoRA adapter active for enrichment"
+                )
+            _explain_ranked(
+                ranked=ranked,
+                by_finding=by_finding,
+                registry_engine=registry_engine,
+                explain_issue=_explain_issue,
+                log_explanation=log_explanation,
+            )
+
+        # The enrichment prompts evicted the explainer's shared KV prefix
+        # (~900 tokens), so the NEXT Explain click would re-pay the full
+        # prefill. Re-prime it now, at the tail of an already-long request,
+        # instead of on the user's next interaction. Best-effort.
+        if ranked:
+            try:
+                from modules.agent.explainer import warmup
+
+                warmup()
+            except Exception:
+                logger.debug("post-enrichment explainer re-warm failed", exc_info=True)
 
 
 def _explain_ranked(
@@ -508,8 +529,15 @@ async def lod_audit(payload: LodAuditRequest):
     # Bounded LLM enrichment — Unreal only, opt-in, top-N by estimated saving.
     # Off by default; never runs for Unity (no unity6 LOD template) and never
     # blocks the deterministic results if the model is slow or not loaded.
+    #
+    # Runs in a worker thread: each explanation is 20-40 s of blocking CPU
+    # inference, and up to 10 of them run back-to-back — inline in this async
+    # endpoint they would starve the event loop for minutes, so /health would
+    # time out and the plugin's connection indicator would flip to
+    # "disconnected" mid-audit.
     if payload.explain and engine == "unreal":
-        _enrich_top_findings(
+        await asyncio.to_thread(
+            _enrich_top_findings,
             findings=audit_response.results,
             result_dicts=results,
             registry_engine=_REGISTRY_ENGINE[engine],

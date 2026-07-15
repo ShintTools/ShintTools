@@ -68,9 +68,10 @@ few_shots: |-
   Your `BP_PlayerCharacter` Tick graph contains a Print String node that formats and allocates a string every single frame, even when the screen output is turned off. Over many actors this adds up to measurable frame cost. Delete the node or guard it with a development-only branch so it never runs in packaged builds. ShintTools' Auto-Fix can apply it for you.
 
 stop_tokens:
+  - "\nINPUT"
   - "\n\n"
   - "\n```"
 
 generation:
-  max_tokens: 220
+  max_tokens: 150
   temperature: 0.2

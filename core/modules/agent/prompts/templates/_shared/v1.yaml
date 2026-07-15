@@ -28,9 +28,10 @@ system: |-
 few_shots: ""
 
 stop_tokens:
+  - "\nINPUT"
   - "\n\n"
   - "\n```"
 
 generation:
-  max_tokens: 220
+  max_tokens: 150
   temperature: 0.2

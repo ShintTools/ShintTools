@@ -80,9 +80,10 @@ few_shots: |-
   Your `ApiHandler` SendRequest graph embeds an API key as a plain string literal inside the node. Because .asset files are stored as JSON in version control, anyone with access to the repository can read that value — and git history preserves it even after you delete the node. Move the secret out of the graph into a ScriptableObject or an encrypted config and read it at runtime instead. You must fix this manually.
 
 stop_tokens:
+  - "\nINPUT"
   - "\n\n"
   - "\n```"
 
 generation:
-  max_tokens: 220
+  max_tokens: 150
   temperature: 0.2

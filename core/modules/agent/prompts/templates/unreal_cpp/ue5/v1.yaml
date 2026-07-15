@@ -71,9 +71,10 @@ few_shots: |-
   Your `Tick` searches the component list for `UHealthComponent` on every frame, which adds up fast once you have many enemies. Cache the pointer in `BeginPlay` into a member variable and read that in `Tick` instead. ShintTools' Auto-Fix can apply it for you.
 
 stop_tokens:
+  - "\nINPUT"
   - "\n\n"
   - "\n```"
 
 generation:
-  max_tokens: 220
+  max_tokens: 150
   temperature: 0.2

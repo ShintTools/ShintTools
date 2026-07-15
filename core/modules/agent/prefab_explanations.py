@@ -28,15 +28,29 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
 logger = logging.getLogger("shinttools.agent.prefab")
 
-# data/prefabricated_explanations.json lives at the project root.
-# This file is at core/modules/agent/prefab_explanations.py so we go
-# up three parents to reach the repo root.
+
+def _default_prefab_file() -> Path:
+    # core/data/prefabricated_explanations.json — INSIDE the Docker build
+    # context (`./core`), so the file actually ships in the image. It used
+    # to live at the repo root (`parents[3]/data`), which the image build
+    # never copied — prefab serving was dead code in every published image.
+    return (
+        Path(__file__).resolve().parents[2]
+        / "data"
+        / "prefabricated_explanations.json"
+    )
+
+
+# SHINTTOOLS_PREFAB_FILE overrides the location (tests / ops).
 _PREFAB_FILE = (
-    Path(__file__).resolve().parents[3] / "data" / "prefabricated_explanations.json"
+    Path(os.environ["SHINTTOOLS_PREFAB_FILE"])
+    if os.environ.get("SHINTTOOLS_PREFAB_FILE")
+    else _default_prefab_file()
 )
 
 # Cached on first access. Each value is the list of prefab entries for
@@ -98,6 +112,19 @@ def _load_index() -> dict[str, list[dict]]:
         _PREFAB_FILE,
     )
     return _PREFAB_INDEX
+
+
+def reset_cache() -> None:
+    """Clear the in-memory index and re-resolve the file path from the
+    environment. Test helper (mirrors prompts.registry.reset_cache)."""
+    global _PREFAB_FILE, _LOAD_ATTEMPTED
+    _PREFAB_INDEX.clear()
+    _LOAD_ATTEMPTED = False
+    _PREFAB_FILE = (
+        Path(os.environ["SHINTTOOLS_PREFAB_FILE"])
+        if os.environ.get("SHINTTOOLS_PREFAB_FILE")
+        else _default_prefab_file()
+    )
 
 
 def lookup_prefab(rule_id: str) -> dict | None:

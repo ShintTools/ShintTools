@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import threading
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
@@ -39,6 +40,14 @@ DEFAULT_MODELS_DIR = (
 # Module-level singleton. Loaded once during FastAPI lifespan; reused
 # across requests. None until load_model() is called.
 _llama: Optional[Any] = None
+
+# Serializes every inference against the single shared llama instance —
+# llama-cpp is not reentrant-safe. Lives here (next to the singleton it
+# guards) so EVERY caller shares the same lock: the /agent/explain
+# endpoints AND the LOD-audit enrichment batch. It used to live in
+# api/routes/agent.py, which the LOD path didn't import — two concurrent
+# code paths could race the model.
+_LLAMA_LOCK = threading.Lock()
 
 # ── Optional LOD LoRA adapter (applied ONLY on LOD enrichment requests) ─────
 #
@@ -76,16 +85,43 @@ def _resolved_model_path() -> Path:
     return models_dir / file_name
 
 
+def _env_int(name: str) -> int | None:
+    """Read an optional int env knob. Unset/blank/garbage ⇒ None ⇒ llama's
+    own default (compose passes these through as empty strings when the user
+    hasn't set them, so blank must mean "unset", not 0)."""
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
 def load_model(*, n_ctx: int = 4096, n_threads: int | None = None) -> None:
     """Load the configured GGUF into memory. Idempotent.
 
     Call once at FastAPI lifespan startup. Subsequent calls are no-ops.
     Raises RuntimeError if the file is missing — caller should run
     `python -m modules.agent.model_downloader` first.
+
+    Optional tuning knobs (unset ⇒ llama-cpp's own defaults, i.e. today's
+    behaviour — inference is CPU-bound, so these are the only levers that
+    move throughput without a GPU build):
+        SHINTTOOLS_LLM_THREADS  n_threads — set to the machine's PHYSICAL
+            core count when hyperthread oversubscription is hurting. Not
+            auto-detected: inside Docker Desktop's VM os.cpu_count() reports
+            the VM's allocation, which is not what llama should size against.
+        SHINTTOOLS_LLM_BATCH    n_batch — prefill batch size.
     """
     global _llama
     if _llama is not None:
         return
+
+    if n_threads is None:
+        n_threads = _env_int("SHINTTOOLS_LLM_THREADS")
+    n_batch = _env_int("SHINTTOOLS_LLM_BATCH")
 
     path = _resolved_model_path()
     if not path.exists():
@@ -98,11 +134,15 @@ def load_model(*, n_ctx: int = 4096, n_threads: int | None = None) -> None:
     # _llama without paying the cost of importing the native library.
     from llama_cpp import Llama
 
+    # n_batch is only passed when explicitly configured — llama-cpp's own
+    # default applies otherwise (passing None would override it with null).
+    extra: dict[str, Any] = {"n_batch": n_batch} if n_batch else {}
     _llama = Llama(
         model_path=str(path),
         n_ctx=n_ctx,
         n_threads=n_threads,
         verbose=False,
+        **extra,
     )
 
     _init_lod_adapter()

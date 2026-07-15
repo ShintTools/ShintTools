@@ -168,15 +168,24 @@ async def _load_llm_in_background(app: FastAPI) -> None:
         app.state.llm_status = "load_failed"
         return
 
-    try:
-        from modules.agent.explainer import warmup as _warmup
+    # Warm-up primes the KV cache with the ~900-token prompt prefix every
+    # explanation shares, so a real request only prefills its own ~100-token
+    # suffix. Without it the first Explain re-processes the whole prompt on
+    # CPU — tens of seconds. Worth one retry: the usual failure is transient
+    # (a cold container still contending for CPU with the model load itself).
+    for attempt in (1, 2):
+        try:
+            from modules.agent.explainer import warmup as _warmup
 
-        elapsed = _warmup()
-        print(f"✓ LLM warm-up done ({elapsed:.1f}s) — KV cache primed")
-        app.state.llm_status = "ready"
-    except Exception as e:
-        print(f"WARNING: LLM warm-up failed: {e}")
-        app.state.llm_status = "loaded_no_warmup"
+            elapsed = _warmup()
+            print(f"✓ LLM warm-up done ({elapsed:.1f}s) — KV cache primed")
+            app.state.llm_status = "ready"
+            return
+        except Exception as e:
+            print(f"WARNING: LLM warm-up attempt {attempt} failed: {e}")
+            app.state.llm_status = "loaded_no_warmup"
+            if attempt == 1:
+                await asyncio.sleep(30)
 
 
 @asynccontextmanager

@@ -71,9 +71,10 @@ few_shots: |-
   Your `InventoryManager` runs a LINQ `Where` and `ToList` inside `Update`, which allocates a new enumerator and closure object every frame. Over time that constant allocation triggers GC pauses that show up as frame spikes. Cache the filtered list in a field and rebuild it only when the inventory actually changes. You must fix this manually.
 
 stop_tokens:
+  - "\nINPUT"
   - "\n\n"
   - "\n```"
 
 generation:
-  max_tokens: 220
+  max_tokens: 150
   temperature: 0.2

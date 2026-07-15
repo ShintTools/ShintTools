@@ -30,6 +30,11 @@ services:
       SHINTTOOLS_MODEL_FILE: "Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf"
       SHINTTOOLS_MODEL_URL: "https://github.com/ShintTools/ShintTools-Models/releases/download/v2.0-models/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf"
       SHINTTOOLS_MODEL_SHA256: "f530705d447660a4336c329981af164b471b60b974b1d808d57e8ec9fe23b239"
+      # Optional CPU-inference tuning. Blank ⇒ llama-cpp's own defaults.
+      # THREADS: set to the host's PHYSICAL core count if hyperthread
+      # oversubscription is hurting throughput. BATCH: prefill batch size.
+      SHINTTOOLS_LLM_THREADS: "${SHINTTOOLS_LLM_THREADS:-}"
+      SHINTTOOLS_LLM_BATCH: "${SHINTTOOLS_LLM_BATCH:-}"
     depends_on:
       mongodb:
         condition: service_healthy
