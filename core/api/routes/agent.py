@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import threading
+import os
 from typing import AsyncIterator, Callable, Iterator
 
 from api.database import (
@@ -44,9 +44,42 @@ router = APIRouter(prefix="/agent", tags=["agent"])
 # The explain endpoints run the blocking ~20-40 s CPU inference OFF the event
 # loop (asyncio.to_thread / a producer thread) so the loop stays free to answer
 # /health — otherwise the connection indicator falsely flips to "disconnected"
-# while an explanation is generating. This lock guarantees only one inference
-# touches llama at a time (llama-cpp is single-instance / not reentrant-safe).
-_LLAMA_LOCK = threading.Lock()
+# while an explanation is generating. The lock itself lives in llm_backend
+# (next to the singleton it guards) so the LOD-audit enrichment path shares
+# it too; re-exported here for existing imports.
+from modules.agent.llm_backend import _LLAMA_LOCK  # noqa: E402
+
+
+def _prefab_lookup_text(rule_id: str) -> str:
+    """Curated prefab explanation for *rule_id*, or "" when prefab serving
+    is disabled (SHINTTOOLS_PREFAB_SERVE=0) or the rule has no prefab."""
+    if os.environ.get("SHINTTOOLS_PREFAB_SERVE", "1") == "0":
+        return ""
+    from modules.agent.prefab_explanations import lookup_prefab
+
+    entry = lookup_prefab(rule_id)
+    return (entry or {}).get("explanation", "") or ""
+
+
+def _log_prefab_served(issue, issue_payload_dict: dict, prefab_text: str) -> None:
+    """Log the real-context prompt to the fine-tuning JSONL even though the
+    answer came from a prefab. source="prefab" lets the training pipeline
+    exclude these pairs (the text describes a synthetic snippet, not the
+    user's code). Best-effort — never blocks the response."""
+    try:
+        from modules.agent.finetuning_logger import log_explanation
+
+        log_explanation(
+            rule_id=issue.rule_id,
+            rule_name=issue.rule_name,
+            rule_explanation=issue.rule_explanation,
+            explanation_generated=prefab_text,
+            issue_payload=issue_payload_dict,
+            generation_seconds=0.0,
+            source="prefab",
+        )
+    except Exception:
+        pass
 
 
 async def _aiter_in_thread(
@@ -479,15 +512,30 @@ async def explain(payload: AgentExplainRequest) -> AgentExplainResponse:
     # added (context_before, snippet, asset_path, graph) survive.
     issue_payload_dict = payload.issue.model_dump(mode="json")
 
+    # PREFAB cache first: curated per-rule explanations served in ~µs. The
+    # unique real-context prompt is STILL logged to JSONL (source="prefab")
+    # so the fine-tuning set keeps growing; only the live generation is
+    # skipped. Prefab text describes a synthetic snippet, not the user's
+    # exact code — the `source` field lets the client label it and lets the
+    # fine-tune pipeline exclude prefab pairs. Opt out per-deploy with
+    # SHINTTOOLS_PREFAB_SERVE=0 (e.g. internal machines collecting fresh
+    # live generations).
+    prefab_text = _prefab_lookup_text(payload.issue.rule_id)
+    if prefab_text:
+        _log_prefab_served(payload.issue, issue_payload_dict, prefab_text)
+        return AgentExplainResponse(
+            success=True,
+            explanation=prefab_text,
+            generation_seconds=0.0,
+            cached=True,
+            source="prefab",
+            tier=tier,
+            error_message="",
+        )
+
     # MongoDB cache: instant return for a prompt we've already generated.
     # The key is sha1(model_id + rendered prompt), so a rule-docstring edit,
     # a prompt-template change, or a model swap all invalidate it automatically.
-    #
-    # The PREFAB cache stays OFF on purpose: every UNIQUE prompt must still hit
-    # the live model once so its real-context generation is logged to JSONL for
-    # fine-tuning. This cache only ever short-circuits an exact repeat of a
-    # prompt we've already logged — which adds nothing to the training set — so
-    # re-enabling it speeds up repeats with zero fine-tuning-data loss.
     cache_key = compute_cache_key(build_explainer_prompt(issue_payload_dict))
     cached_doc = await get_cached_explanation(cache_key)
     if cached_doc and cached_doc.get("explanation"):
@@ -621,10 +669,25 @@ async def _explain_stream_events(
 
     issue_payload_dict = payload.issue.model_dump(mode="json")
 
+    # Prefab cache first (see /explain): curated answer streamed as one chunk
+    # in ~µs; the real-context prompt is still logged (source="prefab") for
+    # fine-tuning. Opt out with SHINTTOOLS_PREFAB_SERVE=0.
+    prefab_text = _prefab_lookup_text(payload.issue.rule_id)
+    if prefab_text:
+        _log_prefab_served(payload.issue, issue_payload_dict, prefab_text)
+        yield "data: " + json.dumps({"chunk": prefab_text}) + "\n\n"
+        yield "data: " + json.dumps(
+            {
+                "done": True,
+                "full_text": prefab_text,
+                "cached": True,
+                "source": "prefab",
+                "generation_seconds": 0.0,
+            }
+        ) + "\n\n"
+        return
+
     # MongoDB cache hit → replay the stored text as one chunk + done, no LLM.
-    # Prefab cache stays OFF (see /explain): only exact repeats are served from
-    # here, so unique real-context prompts still generate live and get logged
-    # for fine-tuning.
     cache_key = compute_cache_key(build_explainer_prompt(issue_payload_dict))
     cached_doc = await get_cached_explanation(cache_key)
     if cached_doc and cached_doc.get("explanation"):
@@ -682,7 +745,12 @@ async def _explain_stream_events(
         ) + "\n\n"
 
     generation_seconds = round(time.perf_counter() - started_at, 2)
-    accumulated_text = "".join(accumulated_parts).strip()
+    # Trim to the last complete sentence like the sync path does (explain_issue
+    # trims before returning) — otherwise the stream path caches/logs a dangling
+    # fragment that an exact-repeat request then replays verbatim.
+    from modules.agent.explainer import _trim_to_last_sentence
+
+    accumulated_text = _trim_to_last_sentence("".join(accumulated_parts).strip())
 
     # Persist the new explanation IF the stream completed cleanly and
     # we actually produced text. Best-effort — a write failure does

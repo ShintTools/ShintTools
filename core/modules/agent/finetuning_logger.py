@@ -32,6 +32,7 @@ def log_explanation(
     explanation_generated: str,
     issue_payload: Mapping[str, Any],
     generation_seconds: float,
+    source: str = "live",
 ) -> None:
     """Log a generated explanation to a JSONL file for fine-tuning.
 
@@ -45,6 +46,11 @@ def log_explanation(
         explanation_generated: the LLM's generated explanation
         issue_payload: the full issue dict sent to the explainer
         generation_seconds: how long the LLM took (or 0 on prefab)
+        source: "live" (real LLM generation) or "prefab" (curated answer
+            served instantly). The fine-tune pipeline trains only on
+            "live" pairs — prefab text describes a synthetic snippet,
+            not the user's real code, so pairing it with the real
+            issue_payload would teach hallucination.
     """
     log_dir = get_finetuning_log_dir()
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -60,6 +66,7 @@ def log_explanation(
         "rule_explanation": rule_explanation,
         "explanation_generated": explanation_generated,
         "generation_seconds": generation_seconds,
+        "source": source,
         "issue_payload": dict(issue_payload),
     }
 

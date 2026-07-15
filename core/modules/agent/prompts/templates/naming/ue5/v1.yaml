@@ -60,9 +60,10 @@ few_shots: |-
   Your `EnemyPatrol` Behavior Tree has no type prefix. UE5 AI conventions require `BT_` so the Content Browser can distinguish it from tasks, decorators, and data assets at a glance. Rename it to `BT_EnemyPatrol`. ShintTools' Auto-Fix can apply it for you.
 
 stop_tokens:
+  - "\nINPUT"
   - "\n\n"
   - "\n```"
 
 generation:
-  max_tokens: 220
+  max_tokens: 150
   temperature: 0.2

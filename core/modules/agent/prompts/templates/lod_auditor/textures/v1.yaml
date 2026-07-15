@@ -59,6 +59,7 @@ few_shots: |-
 
 # Stop tokens: blank line or markdown fence
 stop_tokens:
+  - "\nINPUT"
   - "\n\n"
   - "---"
 

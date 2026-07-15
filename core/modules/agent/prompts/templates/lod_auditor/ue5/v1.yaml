@@ -185,6 +185,7 @@ few_shots: |-
   Your 1024x1024 lightmap is far over the 32 texels per square meter target — most of those texels are sub-pixel and invisible at runtime. Halve the resolution to 512x512 and rebake the lighting.
 
 stop_tokens:
+  - "\nINPUT"
   - "\n\n"
   - "---"
 
