@@ -77,6 +77,9 @@ def test_lm011_permutations_escalate():
 def test_lm012_unused_flags():
     f = m.check_lm012(_mat(usage_flags_unused=["bUsedWithSkeletalMesh"]))
     assert f and f.auto_fixable is True
+    # Contract v2.1: recommended carries the concrete flags to clear so the
+    # in-editor fixer can apply them directly.
+    assert f.recommended["clear_usage_flags"] == ["bUsedWithSkeletalMesh"]
 
 
 def test_lm013_expensive_nodes_severity():
