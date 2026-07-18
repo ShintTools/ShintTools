@@ -448,7 +448,14 @@ def check_lm012(
             f"{', '.join(unused)} — each doubles the compiled permutation set."
         ),
         current={"usage_flags_unused": list(unused)},
-        recommended=_conf({"usage_flags_unused": []}, "high"),
+        # Contract change (v2.1): recommended carries the CONCRETE flags the
+        # client must clear (as a machine-readable list under `clear_usage_flags`)
+        # so the in-editor fixer can call SetMaterialUsage(flag, false) directly
+        # without re-deriving them. The client is the source of `unused` (it did
+        # the referencer analysis), so we simply echo it back as the action list.
+        recommended=_conf(
+            {"usage_flags_unused": [], "clear_usage_flags": list(unused)}, "high"
+        ),
         estimated_saving=Saving(build_size_mb=build_mb),
         auto_fixable=True,
         guidance=guidance_for("LM012", engine),
