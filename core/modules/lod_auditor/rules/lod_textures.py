@@ -12,7 +12,11 @@ import logging
 
 from lod_auditor.config import load_profile
 from lod_auditor.schema import Finding, Saving
-from lod_auditor.vram_model import estimate_texture_vram_mb, normalize_compression
+from lod_auditor.vram_model import (
+    estimate_texture_vram_mb,
+    normalize_compression,
+    resolve_texture_bpp,
+)
 
 _logger = logging.getLogger("shinttools.lod_auditor")
 
@@ -164,8 +168,15 @@ def check_lt003(
     if long_edge <= budget:
         return None
 
+    # Resolve once at the current size: an unmapped format (Unity reports
+    # "Automatic" unless a platform override is set) is priced from the
+    # client's own measurement rather than guessed.
+    bpp: float = resolve_texture_bpp(
+        compression, width, height, mips_enabled, asset.get("size_kb")
+    )
+
     current_vram: float = estimate_texture_vram_mb(
-        width, height, compression, with_mips=mips_enabled
+        width, height, compression, with_mips=mips_enabled, bpp_override=bpp
     )
 
     # Scale both dimensions uniformly to the budget
@@ -173,7 +184,11 @@ def check_lt003(
     recommended_width: int = max(1, int(width * scale))
     recommended_height: int = max(1, int(height * scale))
     recommended_vram: float = estimate_texture_vram_mb(
-        recommended_width, recommended_height, compression, with_mips=mips_enabled
+        recommended_width,
+        recommended_height,
+        compression,
+        with_mips=mips_enabled,
+        bpp_override=bpp,
     )
     vram_saved: float = round(current_vram - recommended_vram, 2)
 
@@ -268,7 +283,13 @@ def check_lt005(
         return None
 
     resident_vram: float = estimate_texture_vram_mb(
-        width, height, compression, with_mips=True
+        width,
+        height,
+        compression,
+        with_mips=True,
+        bpp_override=resolve_texture_bpp(
+            compression, width, height, True, asset.get("size_kb")
+        ),
     )
 
     return Finding(
@@ -341,11 +362,14 @@ def check_lt006(
     rec_width: int = _floor_pow2(width)
     rec_height: int = _floor_pow2(height)
 
+    bpp: float = resolve_texture_bpp(
+        compression, width, height, mips_enabled, asset.get("size_kb")
+    )
     current_vram: float = estimate_texture_vram_mb(
-        width, height, compression, with_mips=mips_enabled
+        width, height, compression, with_mips=mips_enabled, bpp_override=bpp
     )
     recommended_vram: float = estimate_texture_vram_mb(
-        rec_width, rec_height, compression, with_mips=mips_enabled
+        rec_width, rec_height, compression, with_mips=mips_enabled, bpp_override=bpp
     )
     vram_saved: float = round(current_vram - recommended_vram, 2)
 
@@ -626,7 +650,13 @@ def check_lt014(
     compression = normalize_compression(asset.get("compression", "RGBA8"))
     mips = asset.get("mips_enabled", True)
     ceiling = T["LT014_MAX_SINGLE_TEXTURE_MB"]
-    current_vram = estimate_texture_vram_mb(width, height, compression, with_mips=mips)
+    # Resolve once at the current size — this rule escalates to "error", so an
+    # unmapped format guessed as RGBA8 would fire it on a texture that is
+    # actually well under the ceiling.
+    bpp = resolve_texture_bpp(compression, width, height, mips, asset.get("size_kb"))
+    current_vram = estimate_texture_vram_mb(
+        width, height, compression, with_mips=mips, bpp_override=bpp
+    )
     if current_vram <= ceiling:
         return None
     # Largest power-of-two square that fits under the ceiling.
@@ -635,13 +665,13 @@ def check_lt014(
     while (
         target_edge > 1
         and estimate_texture_vram_mb(
-            target_edge, target_edge, compression, with_mips=mips
+            target_edge, target_edge, compression, with_mips=mips, bpp_override=bpp
         )
         > ceiling
     ):
         target_edge //= 2
     recommended_vram = estimate_texture_vram_mb(
-        target_edge, target_edge, compression, with_mips=mips
+        target_edge, target_edge, compression, with_mips=mips, bpp_override=bpp
     )
     return Finding(
         asset_path=asset["asset_path"],
