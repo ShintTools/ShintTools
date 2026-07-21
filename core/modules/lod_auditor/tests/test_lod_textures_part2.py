@@ -42,6 +42,14 @@ def test_lt010_wrong_group():
     assert t.check_lt010(_tex(usage="Normal", lod_group="WorldNormalMap")) is None
 
 
+def test_lt010_abstains_on_unity():
+    # Texture LOD groups are a UE5 concept — the rule must never fire for
+    # Unity, even for an asset that would trip it under Unreal.
+    tex = _tex(usage="Normal", lod_group="World")
+    assert t.check_lt010(tex, engine="unreal") is not None
+    assert t.check_lt010(tex, engine="unity") is None
+
+
 def test_lt013_pack_candidates():
     f = t.check_lt013(_tex(usage="Mask", pack_candidates=["/A", "/B", "/C"]))
     assert f and f.rule_id == "LT013"

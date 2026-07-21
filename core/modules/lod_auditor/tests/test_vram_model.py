@@ -93,3 +93,41 @@ class TestEstimateTextureVramMb:
         assert estimate_texture_vram_mb(1024, 1024, "DXT5") == estimate_texture_vram_mb(
             1024, 1024, "BC3"
         )
+
+    def test_unity_mobile_block_formats_are_recognised(self):
+        # Same bug class as DXT1 above, for the mobile compression formats
+        # Unity actually emits by default on Android/iOS (ASTC/ETC/PVRTC).
+        # Any of these falling through to the RGBA8 fallback (4.0 bpp)
+        # reproduces the "tamaño incorrecto de texturas" regression.
+        rgba8 = estimate_texture_vram_mb(2048, 2048, "RGBA8")
+        for fmt in (
+            "ASTC_5x5", "ASTC_10x10", "ASTC_12x12",
+            "ETC_RGB4", "ETC1_RGB", "ETC2_RGBA1",
+            "EAC_R", "EAC_RG",
+            "PVRTC_RGB2", "PVRTC_RGBA2",
+        ):
+            result = estimate_texture_vram_mb(2048, 2048, fmt)
+            assert result < rgba8, f"{fmt} fell back to the RGBA8 estimate"
+
+    def test_astc_10x10_regression_matches_reported_bug(self):
+        # ASTC_10x10 is a common Unity mobile preset (1.28 bpp real). Before
+        # the fix it silently fell back to RGBA8 (4.0 bpp) — a ~3.1x
+        # over-estimate. Exact-value regression, not just "smaller than".
+        result = estimate_texture_vram_mb(4096, 4096, "ASTC_10x10", with_mips=False)
+        rgba8 = estimate_texture_vram_mb(4096, 4096, "RGBA8", with_mips=False)
+        assert result == round(rgba8 * (0.16 / 4.0), 2)
+        assert result < rgba8 / 3
+
+    def test_astc_6x6_bpp_is_exact_not_rounded(self):
+        # ASTC_6x6 used to round to the nearest canonical 0.5 bytes/px
+        # (4.0 bpp-equivalent slot) instead of its real 3.56 bpp (~12% error).
+        result = estimate_texture_vram_mb(2048, 2048, "ASTC_6x6", with_mips=False)
+        expected = round(2048 * 2048 * 0.4444 / 1_048_576, 2)
+        assert result == expected
+
+    def test_unknown_format_still_falls_back_to_rgba8_cost(self):
+        # The intentional fallback for genuinely unrecognised formats must
+        # stay intact — only real Unity/UE5 format names get exact mapping.
+        result_unknown = estimate_texture_vram_mb(512, 512, "NOT_A_REAL_FORMAT")
+        result_rgba8 = estimate_texture_vram_mb(512, 512, "RGBA8")
+        assert result_unknown == result_rgba8
