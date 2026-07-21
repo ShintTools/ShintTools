@@ -192,19 +192,86 @@ def normalize_compression(raw: str) -> str:
 # ── VRAM estimator ────────────────────────────────────────────────────────────
 
 
+# Plausibility window for a bytes-per-pixel figure derived from a client
+# measurement: ASTC_12x12 is the thinnest real format at 0.111, RGBA8 the
+# fattest common one at 4.0. Anything outside this is a bad measurement
+# (wrong dimensions, a partially loaded asset, a streaming texture measured
+# mid-eviction) and is discarded rather than trusted.
+_MIN_PLAUSIBLE_BPP: float = 0.1
+_MAX_PLAUSIBLE_BPP: float = 4.0
+
+
+def resolve_texture_bpp(
+    fmt: str,
+    width: int,
+    height: int,
+    with_mips: bool = True,
+    measured_kb: float | None = None,
+) -> float:
+    """Bytes per pixel for *fmt*, falling back to the client's measurement.
+
+    A mapped format always wins. Otherwise, if the caller supplied a size the
+    client measured for the texture *at these dimensions*, back out the real
+    bytes-per-pixel from it — that covers Unity's "Automatic" import setting,
+    which is what the importer reports whenever a platform has no explicit
+    override and which the Core cannot resolve on its own. Only if there is no
+    usable measurement do we assume uncompressed RGBA8.
+
+    Rules pricing a proposed resize should call this once with the asset's
+    current dimensions and pass the result to ``estimate_texture_vram_mb`` as
+    ``bpp_override`` for both the current and the proposed figure — deriving it
+    again at the smaller size would inflate the bytes-per-pixel.
+    """
+    canonical = normalize_compression(fmt)
+    bpp = BYTES_PER_PIXEL.get(canonical)
+    if bpp is not None:
+        return bpp
+
+    if measured_kb and width > 0 and height > 0:
+        pixels = width * height * (MIP_MULTIPLIER if with_mips else 1.0)
+        derived = (measured_kb * 1024.0) / pixels
+        if _MIN_PLAUSIBLE_BPP <= derived <= _MAX_PLAUSIBLE_BPP:
+            _logger.debug(
+                "Format %r unmapped — derived %.3f bytes/px from the client's "
+                "%.1f KB measurement.",
+                fmt,
+                derived,
+                measured_kb,
+            )
+            return derived
+
+    # Nothing usable: assume uncompressed. That is the safe worst case, but it
+    # over-estimates a compressed texture up to 8x, so leave a trace instead of
+    # failing silently — a silent fallback here is what kept the Unity texture
+    # sizes wrong across two separate rounds of this bug.
+    _logger.warning(
+        "VRAM estimate for unmapped texture format %r (canonical %r) with no "
+        "usable size measurement — using the RGBA8 fallback, the figure may "
+        "be too high.",
+        fmt,
+        canonical,
+    )
+    return BYTES_PER_PIXEL["RGBA8"]
+
+
 def estimate_texture_vram_mb(
     width: int,
     height: int,
     fmt: str,
     with_mips: bool = True,
+    bpp_override: float | None = None,
 ) -> float:
     """Estimate texture VRAM cost in megabytes.
 
     Args:
-        width:     Texture width in pixels.
-        height:    Texture height in pixels.
-        fmt:       Format string — canonical (BC7, RGBA8, …) or UE5 TC_*.
-        with_mips: Include the full mip chain cost (default True).
+        width:        Texture width in pixels.
+        height:       Texture height in pixels.
+        fmt:          Format string — canonical (BC7, RGBA8, …) or UE5 TC_*.
+        with_mips:    Include the full mip chain cost (default True).
+        bpp_override: Bytes per pixel to use instead of looking *fmt* up, as
+                      returned by ``resolve_texture_bpp``. Rules pricing a
+                      resize resolve it once at the current dimensions and
+                      reuse it for both figures.
 
     Returns:
         Estimated VRAM in MB, rounded to 2 decimal places.
@@ -213,22 +280,11 @@ def estimate_texture_vram_mb(
         >>> estimate_texture_vram_mb(4096, 4096, "BC7")
         21.33
     """
-    canonical = normalize_compression(fmt)
-    bpp = BYTES_PER_PIXEL.get(canonical)
-    if bpp is None:
-        # Unrecognised format — fall back to uncompressed RGBA8. That is the
-        # safe worst case, but it over-estimates a compressed texture up to 8×,
-        # so leave a trace instead of failing silently. "Automatic" arrives
-        # here whenever a Unity client reports the importer's platform setting
-        # without an explicit per-platform override; the client should send the
-        # resolved TextureFormat instead.
-        _logger.warning(
-            "VRAM estimate for unmapped texture format %r (canonical %r) — "
-            "using the RGBA8 fallback, the figure may be too high.",
-            fmt,
-            canonical,
-        )
-        bpp = BYTES_PER_PIXEL["RGBA8"]
+    bpp = (
+        bpp_override
+        if bpp_override is not None
+        else resolve_texture_bpp(fmt, width, height, with_mips)
+    )
     base_bytes = width * height * bpp
     total_bytes = base_bytes * MIP_MULTIPLIER if with_mips else base_bytes
     return round(total_bytes / BYTES_PER_MB, 2)

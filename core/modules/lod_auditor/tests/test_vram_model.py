@@ -2,7 +2,11 @@
 
 import logging
 
-from lod_auditor.vram_model import estimate_texture_vram_mb, normalize_compression
+from lod_auditor.vram_model import (
+    estimate_texture_vram_mb,
+    normalize_compression,
+    resolve_texture_bpp,
+)
 
 
 class TestNormalizeCompression:
@@ -150,6 +154,34 @@ class TestEstimateTextureVramMb:
             assert estimate_texture_vram_mb(
                 2048, 2048, importer_name
             ) == estimate_texture_vram_mb(2048, 2048, runtime_name), importer_name
+
+    def test_automatic_is_priced_from_the_client_measurement(self):
+        # Unity's importer reports "Automatic" unless a platform override is
+        # set — the common case. The Core cannot resolve it, but the client
+        # sends the size it measured, so back the real bytes-per-pixel out of
+        # that instead of assuming uncompressed RGBA8.
+        # 2048x2048 ASTC_6x6 with mips = 2.37 MB = 2427 KB.
+        measured_kb = estimate_texture_vram_mb(2048, 2048, "ASTC_6x6") * 1024
+        bpp = resolve_texture_bpp("Automatic", 2048, 2048, True, measured_kb)
+        assert abs(bpp - 0.4444) < 0.01
+
+        priced = estimate_texture_vram_mb(
+            2048, 2048, "Automatic", with_mips=True, bpp_override=bpp
+        )
+        assert abs(priced - estimate_texture_vram_mb(2048, 2048, "ASTC_6x6")) < 0.05
+
+    def test_mapped_format_ignores_the_measurement(self):
+        # A known format is authoritative — a bogus measurement must not
+        # override it.
+        assert resolve_texture_bpp("BC7", 1024, 1024, True, 999_999.0) == 1.0
+
+    def test_implausible_measurement_is_discarded(self):
+        # A measurement implying more than uncompressed RGBA8, or less than
+        # the thinnest real block format, is a bad reading (partially loaded
+        # asset, wrong dimensions) — fall back rather than trust it.
+        assert resolve_texture_bpp("Automatic", 1024, 1024, True, 99_999_999.0) == 4.0
+        assert resolve_texture_bpp("Automatic", 1024, 1024, True, 0.001) == 4.0
+        assert resolve_texture_bpp("Automatic", 1024, 1024, True, None) == 4.0
 
     def test_unmapped_format_warns_instead_of_failing_silently(self, caplog):
         # The RGBA8 fallback stays, but it must leave a trace — a silent

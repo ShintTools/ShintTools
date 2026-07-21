@@ -16,7 +16,11 @@ from typing import Any
 
 from lod_auditor.config import load_profile
 from lod_auditor.schema import Finding, Saving
-from lod_auditor.vram_model import estimate_texture_vram_mb, normalize_compression
+from lod_auditor.vram_model import (
+    estimate_texture_vram_mb,
+    normalize_compression,
+    resolve_texture_bpp,
+)
 
 # Thresholds are loaded from YAML — see config/thresholds_default.yaml.
 THRESHOLDS = load_profile()
@@ -56,7 +60,13 @@ def check_lx001_dead_textures(
         compression: str = normalize_compression(compression_raw)
         mips_enabled: bool = asset.get("mips_enabled", True)
         wasted_vram: float = estimate_texture_vram_mb(
-            width, height, compression, with_mips=mips_enabled
+            width,
+            height,
+            compression,
+            with_mips=mips_enabled,
+            bpp_override=resolve_texture_bpp(
+                compression, width, height, mips_enabled, asset.get("size_kb")
+            ),
         )
 
         findings.append(
@@ -289,7 +299,13 @@ def check_lx005_duplicate_textures(
         h = int(keeper.get("height", 0) or 0)
         fmt = normalize_compression(keeper.get("compression", "RGBA8"))
         per_copy_mb = estimate_texture_vram_mb(
-            w, h, fmt, with_mips=keeper.get("mips_enabled", True)
+            w,
+            h,
+            fmt,
+            with_mips=keeper.get("mips_enabled", True),
+            bpp_override=resolve_texture_bpp(
+                fmt, w, h, keeper.get("mips_enabled", True), keeper.get("size_kb")
+            ),
         )
         for copy in dupes[1:]:
             findings.append(
@@ -388,7 +404,13 @@ def check_lt015_streaming_pool(
             continue
         fmt = normalize_compression(asset.get("compression", "RGBA8"))
         mb = estimate_texture_vram_mb(
-            w, h, fmt, with_mips=asset.get("mips_enabled", True)
+            w,
+            h,
+            fmt,
+            with_mips=asset.get("mips_enabled", True),
+            bpp_override=resolve_texture_bpp(
+                fmt, w, h, asset.get("mips_enabled", True), asset.get("size_kb")
+            ),
         )
         total_mb += mb
         consumers.append((asset["asset_path"], mb))
