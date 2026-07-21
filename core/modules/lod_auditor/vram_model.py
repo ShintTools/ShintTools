@@ -13,6 +13,10 @@
 #     Each mip level is 1/4 the area of the previous; total = 4/3 × base.
 #   BYTES_PER_MB = 1 048 576 (= 1024²)
 
+import logging
+
+_logger = logging.getLogger(__name__)
+
 # ── Compression coefficients ──────────────────────────────────────────────────
 
 # Bytes consumed per pixel for each canonical format.
@@ -114,6 +118,56 @@ _FORMAT_ALIASES: dict[str, str] = {
     "PVRTC_RGBA2": "PVRTC_RGBA2",
     "PVRTC_RGB4": "PVRTC_RGB4",
     "PVRTC_RGBA4": "PVRTC_RGBA4",
+    # Unity TextureImporterFormat — the *importer* enum, whose member names
+    # differ from the runtime TextureFormat enum above. The client reads
+    # GetPlatformTextureSettings().format, so these are the names that
+    # actually arrive over the wire; without them every compressed texture
+    # fell back to RGBA8 and was reported ~8× its real size.
+    "ETC2_RGB4": "ETC2_RGB",
+    "ETC2_RGB4_PUNCHTHROUGH_ALPHA": "ETC2_RGBA1",
+    "ETC_RGB4Crunched": "ETC_RGB4",
+    "EAC_R_SIGNED": "EAC_R",
+    "EAC_RG_SIGNED": "EAC_RG",
+    "ASTC_RGB_4x4": "ASTC_4x4",
+    "ASTC_RGB_5x5": "ASTC_5x5",
+    "ASTC_RGB_6x6": "ASTC_6x6",
+    "ASTC_RGB_8x8": "ASTC_8x8",
+    "ASTC_RGB_10x10": "ASTC_10x10",
+    "ASTC_RGB_12x12": "ASTC_12x12",
+    "ASTC_RGBA_4x4": "ASTC_4x4",
+    "ASTC_RGBA_5x5": "ASTC_5x5",
+    "ASTC_RGBA_6x6": "ASTC_6x6",
+    "ASTC_RGBA_8x8": "ASTC_8x8",
+    "ASTC_RGBA_10x10": "ASTC_10x10",
+    "ASTC_RGBA_12x12": "ASTC_12x12",
+    # ASTC HDR shares the block layout (and therefore the bpp) of its LDR
+    # counterpart — only the encoding of the payload differs.
+    "ASTC_HDR_4x4": "ASTC_4x4",
+    "ASTC_HDR_5x5": "ASTC_5x5",
+    "ASTC_HDR_6x6": "ASTC_6x6",
+    "ASTC_HDR_8x8": "ASTC_8x8",
+    "ASTC_HDR_10x10": "ASTC_10x10",
+    "ASTC_HDR_12x12": "ASTC_12x12",
+    "RGB_PVRTC_2Bpp": "PVRTC_RGB2",
+    "RGBA_PVRTC_2Bpp": "PVRTC_RGBA2",
+    "RGB_PVRTC_4Bpp": "PVRTC_RGB4",
+    "RGBA_PVRTC_4Bpp": "PVRTC_RGBA4",
+    "RGB_ETC_4Bpp": "ETC_RGB4",
+    "RGB_ETC2": "ETC2_RGB",
+    "RGBA_ETC2": "ETC2_RGBA",
+    # Uncompressed importer-enum spellings.
+    "RGB16": "RGB565",
+    "RGBA16": "RGBA4444",
+    "RGB48": "RGBA8",
+    "RGBA64": "RGBA8",
+    "RG16": "RGB565",
+    "RG32": "RGBA8",
+    "RGBAFloat": "RGBA8",
+    "RGBAHalf": "BC6H",
+    "RHalf": "R8",
+    "RFloat": "RGB565",
+    "RGHalf": "RGB565",
+    "RGFloat": "RGBA8",
     # canonical pass-through
     "RGBA8": "RGBA8",
     "BC1": "BC1",
@@ -160,7 +214,21 @@ def estimate_texture_vram_mb(
         21.33
     """
     canonical = normalize_compression(fmt)
-    bpp = BYTES_PER_PIXEL.get(canonical, BYTES_PER_PIXEL["RGBA8"])
+    bpp = BYTES_PER_PIXEL.get(canonical)
+    if bpp is None:
+        # Unrecognised format — fall back to uncompressed RGBA8. That is the
+        # safe worst case, but it over-estimates a compressed texture up to 8×,
+        # so leave a trace instead of failing silently. "Automatic" arrives
+        # here whenever a Unity client reports the importer's platform setting
+        # without an explicit per-platform override; the client should send the
+        # resolved TextureFormat instead.
+        _logger.warning(
+            "VRAM estimate for unmapped texture format %r (canonical %r) — "
+            "using the RGBA8 fallback, the figure may be too high.",
+            fmt,
+            canonical,
+        )
+        bpp = BYTES_PER_PIXEL["RGBA8"]
     base_bytes = width * height * bpp
     total_bytes = base_bytes * MIP_MULTIPLIER if with_mips else base_bytes
     return round(total_bytes / BYTES_PER_MB, 2)

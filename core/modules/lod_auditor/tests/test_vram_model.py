@@ -1,5 +1,7 @@
 # core/modules/lod_auditor/tests/test_vram_model.py
 
+import logging
+
 from lod_auditor.vram_model import estimate_texture_vram_mb, normalize_compression
 
 
@@ -124,6 +126,37 @@ class TestEstimateTextureVramMb:
         result = estimate_texture_vram_mb(2048, 2048, "ASTC_6x6", with_mips=False)
         expected = round(2048 * 2048 * 0.4444 / 1_048_576, 2)
         assert result == expected
+
+    def test_texture_importer_format_names_are_recognised(self):
+        # The Unity client reads GetPlatformTextureSettings().format, which is
+        # the TextureImporterFormat enum — its member names differ from the
+        # runtime TextureFormat enum (ASTC_RGBA_6x6 vs ASTC_6x6,
+        # RGBA_PVRTC_4Bpp vs PVRTC_RGBA4, RGBA_ETC2 vs ETC2_RGBA8). All of
+        # them used to fall back to RGBA8 and report ~8x the real size.
+        pairs = [
+            ("ASTC_RGBA_6x6", "ASTC_6x6"),
+            ("ASTC_RGB_6x6", "ASTC_6x6"),
+            ("ASTC_HDR_6x6", "ASTC_6x6"),
+            ("ASTC_RGBA_12x12", "ASTC_12x12"),
+            ("RGBA_PVRTC_4Bpp", "PVRTC_RGBA4"),
+            ("RGB_PVRTC_2Bpp", "PVRTC_RGB2"),
+            ("RGBA_ETC2", "ETC2_RGBA8"),
+            ("RGB_ETC2", "ETC2_RGB"),
+            ("ETC2_RGB4", "ETC2_RGB"),
+            ("ETC2_RGB4_PUNCHTHROUGH_ALPHA", "ETC2_RGBA1"),
+            ("ETC_RGB4Crunched", "ETC_RGB4"),
+        ]
+        for importer_name, runtime_name in pairs:
+            assert estimate_texture_vram_mb(
+                2048, 2048, importer_name
+            ) == estimate_texture_vram_mb(2048, 2048, runtime_name), importer_name
+
+    def test_unmapped_format_warns_instead_of_failing_silently(self, caplog):
+        # The RGBA8 fallback stays, but it must leave a trace — a silent
+        # fallback is what let the Unity mobile formats be wrong for so long.
+        with caplog.at_level(logging.WARNING):
+            estimate_texture_vram_mb(512, 512, "SOME_FUTURE_FORMAT")
+        assert "SOME_FUTURE_FORMAT" in caplog.text
 
     def test_unknown_format_still_falls_back_to_rgba8_cost(self):
         # The intentional fallback for genuinely unrecognised formats must
