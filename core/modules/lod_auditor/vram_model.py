@@ -32,9 +32,18 @@ BYTES_PER_PIXEL: dict[str, float] = {
     # varies with block size; these cover the import presets Unity emits by name.
     "ETC2_RGB": 0.5,  # 4 bpp
     "ETC2_RGBA": 1.0,  # 8 bpp
+    "ETC2_RGBA1": 0.5,  # 4 bpp — punchthrough alpha, distinct from ETC2_RGBA
+    "ETC_RGB4": 0.5,  # ETC1 — 4 bpp
+    "EAC_R": 0.5,  # 4 bpp — single-channel EAC (used for ETC2 alpha too)
+    "EAC_RG": 1.0,  # 8 bpp — two-channel EAC (normal maps)
     "ASTC_4x4": 1.0,  # 8.00 bpp
-    "ASTC_6x6": 0.5,  # 3.56 bpp → nearest canonical
+    "ASTC_5x5": 0.64,  # 5.12 bpp
+    "ASTC_6x6": 0.4444,  # 3.56 bpp
     "ASTC_8x8": 0.25,  # 2.00 bpp
+    "ASTC_10x10": 0.16,  # 1.28 bpp
+    "ASTC_12x12": 0.111,  # 0.89 bpp
+    "PVRTC_RGB2": 0.25,  # 2 bpp
+    "PVRTC_RGBA2": 0.25,  # 2 bpp
     "PVRTC_RGB4": 0.5,  # 4 bpp
     "PVRTC_RGBA4": 0.5,  # 4 bpp
 }
@@ -90,9 +99,19 @@ _FORMAT_ALIASES: dict[str, str] = {
     "ETC2_RGB": "ETC2_RGB",
     "ETC2_RGBA8": "ETC2_RGBA",
     "ETC2_RGBA8Crunched": "ETC2_RGBA",
+    "ETC2_RGBA1": "ETC2_RGBA1",
+    "ETC_RGB4": "ETC_RGB4",
+    "ETC1_RGB": "ETC_RGB4",
+    "EAC_R": "EAC_R",
+    "EAC_RG": "EAC_RG",
     "ASTC_4x4": "ASTC_4x4",
+    "ASTC_5x5": "ASTC_5x5",
     "ASTC_6x6": "ASTC_6x6",
     "ASTC_8x8": "ASTC_8x8",
+    "ASTC_10x10": "ASTC_10x10",
+    "ASTC_12x12": "ASTC_12x12",
+    "PVRTC_RGB2": "PVRTC_RGB2",
+    "PVRTC_RGBA2": "PVRTC_RGBA2",
     "PVRTC_RGB4": "PVRTC_RGB4",
     "PVRTC_RGBA4": "PVRTC_RGBA4",
     # canonical pass-through

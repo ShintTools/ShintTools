@@ -157,6 +157,31 @@ class TestLT003:
         assert result is not None
         assert result.recommended["max_texture_size"] == 2048
 
+    def test_unity_wording_differs_but_budget_matches_unreal(self):
+        # engine only changes the message copy — the numeric budget must be
+        # identical for the same profile (no engine dimension in the YAML).
+        tex = _tex(width=4096, height=4096, lod_group="World")
+        result_ue5 = check_lt003(tex, engine="unreal")
+        result_unity = check_lt003(tex, engine="unity")
+        assert result_ue5 is not None and result_unity is not None
+        assert "slot budget" in result_ue5.message
+        assert "max-size budget" in result_unity.message
+        assert result_ue5.recommended == result_unity.recommended
+
+    def test_mobile_profile_lowers_unity_budget(self):
+        # The mobile threshold profile — not the engine — is what a Unity
+        # mobile project should select to get a stricter budget.
+        tex = _tex(width=2048, height=2048, lod_group="World")
+        default_result = check_lt003(tex, engine="unity")
+        mobile_result = check_lt003(
+            tex, engine="unity", thresholds=_thresholds(LT003_MAX_SIZE_BY_LOD_GROUP={
+                **THRESHOLDS["LT003_MAX_SIZE_BY_LOD_GROUP"], "World": 1024,
+            }),
+        )
+        assert default_result is None
+        assert mobile_result is not None
+        assert mobile_result.recommended["max_texture_size"] == 1024
+
 
 # ── LT004 ─────────────────────────────────────────────────────────────────────
 
@@ -251,6 +276,17 @@ class TestLT006:
         # POT width but NPOT height still pads on the GPU.
         result = check_lt006(_tex(width=1024, height=900, lod_group="World"))
         assert result is not None
+
+    def test_unity_wording_differs_but_recommendation_matches_unreal(self):
+        tex = _tex(width=1500, height=900, lod_group="World")
+        result_ue5 = check_lt006(tex, engine="unreal")
+        result_unity = check_lt006(tex, engine="unity")
+        assert result_ue5 is not None and result_unity is not None
+        assert "UE5 pads it" in result_ue5.message
+        assert "disable block compression" in result_unity.message
+        assert result_ue5.recommended == result_unity.recommended == {
+            "width": 1024, "height": 512,
+        }
 
 
 # ── LT007 ─────────────────────────────────────────────────────────────────────
