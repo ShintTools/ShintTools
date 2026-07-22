@@ -79,28 +79,66 @@ class TestProfiles:
             assert field in baseline
 
 
-# ── Milestone markers ────────────────────────────────────────────────────────
+# ── Analyze (M1: one-shot, assets layer) ─────────────────────────────────────
+
+_ONESHOT = {
+    "api_key": "k",
+    "engine": "UE5",
+    "project_name": "Demo",
+    "platform_profile": "desktop_60",
+    "assets": [
+        {
+            "asset_path": "/Game/T_Big",
+            "asset_type": "Texture2D",
+            "usage": "BaseColor",
+            "width": 4096,
+            "height": 4096,
+            "compression": "BC7",
+            "mips_enabled": True,
+            "streaming": True,
+            "lod_group": "World",
+        }
+    ],
+}
 
 
-class TestNotYetShipped:
-    """analyze/simulate are contract-visible but answer 501 until their
-    milestone lands — clients can integration-test the gate today."""
-
+class TestAnalyze:
     @pytest.mark.anyio
-    async def test_analyze_gated_before_501(self, async_client):
-        # Gate runs first: free tier sees 403, not 501.
+    async def test_analyze_gated_first(self, async_client):
+        # Gate runs before anything else: free tier sees 403.
         resp = await async_client.post("/predict/analyze", json={"api_key": ""})
         assert resp.status_code == 403
 
     @pytest.mark.anyio
-    async def test_analyze_501_for_studio(self, async_client, monkeypatch):
+    async def test_oneshot_returns_full_report(self, async_client, monkeypatch):
         _patch_tier(monkeypatch, "studio")
-        resp = await async_client.post("/predict/analyze", json={"api_key": "k"})
-        assert resp.status_code == 501
-        assert resp.json()["detail"]["milestone"] == "M1"
+        resp = await async_client.post("/predict/analyze", json=_ONESHOT)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["schema_version"] == "1.0"
+        assert data["report_id"].startswith("pr-")
+        # 4096² BC7 + mips = 21.33 MB, exact.
+        vram = data["memory"]["vram"]["predicted"]
+        assert abs(vram["expected"] - 21.33) < 0.05
+        assert vram["confidence"] == "high"
+        # The oversized texture fires LT003 → a simulator-ready item.
+        assert data["top_issues"]
+        assert data["top_issues"][0]["remediation"]["recovery"]
+        assert data["stats"]["assets_analyzed"] == 1
 
     @pytest.mark.anyio
-    async def test_simulate_501_for_studio(self, async_client, monkeypatch):
+    async def test_session_mode_still_501_until_m3(
+        self, async_client, monkeypatch
+    ):
+        _patch_tier(monkeypatch, "studio")
+        resp = await async_client.post(
+            "/predict/analyze", json={"api_key": "k", "session_id": "s-1"}
+        )
+        assert resp.status_code == 501
+        assert resp.json()["detail"]["milestone"] == "M3"
+
+    @pytest.mark.anyio
+    async def test_simulate_501_until_m4(self, async_client, monkeypatch):
         _patch_tier(monkeypatch, "studio")
         resp = await async_client.post(
             "/predict/simulate", json={"api_key": "k", "report_id": "x"}

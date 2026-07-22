@@ -13,6 +13,13 @@
 # the contract shape before the engine lands.
 
 import logging
+import sys
+from pathlib import Path
+
+# modules/ on sys.path BEFORE the predictive imports — same pattern as
+# assets.py/validate.py. Never rely on another route having done it first
+# (the agent.* import trap: resolves under pytest, breaks under uvicorn).
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "modules"))
 
 from api.tier_guard import enforce_studio
 from fastapi import APIRouter, HTTPException
@@ -48,16 +55,27 @@ async def predict_profiles(api_key: str = "") -> ProfilesResponse:
 
 @router.post("/predict/analyze")
 async def predict_analyze(payload: AnalyzeRequest):
-    """Full predictive analysis. Lands in M1 (assets) → M3 (all layers)."""
+    """Predictive analysis (one-shot mode).
+
+    M1 covers the assets section: exact VRAM totals, cooked-size bands,
+    memory/build risk scores, and audit-driven cost items the Impact
+    Simulator will replay. Scene/code sections are accepted but recorded as
+    uncovered in ``stats`` until M2/M3; batched sessions land in M3.
+    """
     await enforce_studio(payload.api_key, "/predict/analyze", _FEATURE)
-    raise HTTPException(
-        status_code=501,
-        detail={
-            "error": "Predictive analysis ships in a later Core release.",
-            "milestone": "M1",
-            "schema_version": SCHEMA_VERSION,
-        },
-    )
+    if payload.session_id:
+        raise HTTPException(
+            status_code=501,
+            detail={
+                "error": "Batched sessions ship in a later Core release — "
+                "use one-shot mode (inline assets) meanwhile.",
+                "milestone": "M3",
+                "schema_version": SCHEMA_VERSION,
+            },
+        )
+    from predictive.predictive_orchestrator import analyze_oneshot
+
+    return analyze_oneshot(payload)
 
 
 @router.post("/predict/simulate")
