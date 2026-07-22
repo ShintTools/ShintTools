@@ -14,7 +14,12 @@ from datetime import datetime, timezone
 
 from predictive.cost_model.platform_profiles import load_platform_profile
 from predictive.cost_model.rule_costs import load_rule_costs
-from predictive.layers import layer1_assets, layer3_code, layer4_scores
+from predictive.layers import (
+    layer1_assets,
+    layer2_scene,
+    layer3_code,
+    layer4_scores,
+)
 from predictive.schema import (
     SCHEMA_VERSION,
     AnalyzeRequest,
@@ -41,16 +46,6 @@ def _severity_key(item) -> tuple:
     return (order.get(item.severity, 1), -recovery)
 
 
-def _scene_actor_count(request: AnalyzeRequest) -> int:
-    """Largest actor count across the supplied scene digests (0 = unknown).
-
-    M2 uses it only to drive per_scene_actors cost scaling; the full scene
-    layer arrives in M3.
-    """
-    counts = [int(s.get("actor_count", 0) or 0) for s in request.scenes]
-    return max(counts, default=0)
-
-
 def analyze_oneshot(request: AnalyzeRequest) -> PredictiveReport:
     """Produce a PredictiveReport from an inline (one-shot) payload."""
     profile = load_platform_profile(request.platform_profile)
@@ -58,23 +53,32 @@ def analyze_oneshot(request: AnalyzeRequest) -> PredictiveReport:
     l1 = layer1_assets.analyze_assets(
         request.assets, engine=request.engine, profile="default"
     )
+    l2 = layer2_scene.analyze_scenes(request.scenes, start_index=len(l1.items))
     l3 = layer3_code.analyze_code(
         request.code_issues,
-        scene_actor_count=_scene_actor_count(request),
-        start_index=len(l1.items),
+        scene_actor_count=l2.max_actor_count,
+        start_index=len(l1.items) + len(l2.items),
     )
 
     # Rank items: severity first, biggest recovery inside each band.
-    items = sorted(l1.items + l3.items, key=_severity_key)
+    items = sorted(l1.items + l2.items + l3.items, key=_severity_key)
     for rank, item in enumerate(items, start=1):
         item.rank = rank
 
+    # Scene dispatch + code patterns share the CPU budget.
+    has_cpu_data = bool(l3.items or l2.scenes_analyzed)
+    cpu_total = l3.cpu_total.plus(
+        l2.cpu_total, basis="code patterns + scene dispatch"
+    )
+
     scores = Scores(
-        # Only a costed axis scores — all-uncosted code must read as "no
-        # data", not "risk 0".
-        cpu_risk=layer4_scores.compute_cpu_risk(l3.cpu_total, profile, items)
-        if l3.items
+        # Only an axis with data scores — "no data" is not "risk 0".
+        cpu_risk=layer4_scores.compute_cpu_risk(cpu_total, profile, items)
+        if has_cpu_data
         else Scores().cpu_risk,
+        gpu_risk=layer4_scores.compute_gpu_risk(l2.gpu_total, profile, items)
+        if l2.scenes_analyzed
+        else Scores().gpu_risk,
         memory_risk=layer4_scores.compute_memory_risk(
             l1.vram_total, profile, items
         ),
@@ -102,15 +106,32 @@ def analyze_oneshot(request: AnalyzeRequest) -> PredictiveReport:
         frame_budget=FrameBudget(
             cpu=BudgetLine(
                 budget_ms=profile.cpu_budget_ms,
-                predicted=l3.cpu_total if l3.items else None,
+                predicted=cpu_total if has_cpu_data else None,
                 breakdown=(
-                    [{"label": "Code patterns",
-                      "expected_ms": l3.cpu_total.expected}]
-                    if l3.items
+                    (
+                        [{"label": "Code patterns",
+                          "expected_ms": l3.cpu_total.expected}]
+                        if l3.items
+                        else []
+                    )
+                    + (
+                        [{"label": "Scene dispatch",
+                          "expected_ms": l2.cpu_total.expected}]
+                        if l2.scenes_analyzed
+                        else []
+                    )
+                ),
+            ),
+            gpu=BudgetLine(
+                budget_ms=profile.gpu_budget_ms,
+                predicted=l2.gpu_total if l2.scenes_analyzed else None,
+                breakdown=(
+                    [{"label": "Dynamic lights + GPU particles",
+                      "expected_ms": l2.gpu_total.expected}]
+                    if l2.scenes_analyzed
                     else []
                 ),
             ),
-            # GPU spend needs the scene layer (M3).
         ),
         memory=MemoryReport(
             vram=MemoryBudgetLine(
@@ -124,10 +145,26 @@ def analyze_oneshot(request: AnalyzeRequest) -> PredictiveReport:
         build=BuildReport(size_mb=l1.build_total),
         top_issues=items[:_TOP_ISSUES_N],
         cost_items=items,
+        scene_summaries=l2.summaries,
         stats=ReportStats(
             assets_analyzed=l1.assets_analyzed,
-            scenes_analyzed=0,
+            scenes_analyzed=l2.scenes_analyzed,
             code_issues_costed=l3.costed,
             code_issues_uncosted=l3.uncosted,
         ),
+    )
+
+
+def analyze_session(session: dict) -> PredictiveReport:
+    """Analyze an assembled session document (batched-ingest flow)."""
+    return analyze_oneshot(
+        AnalyzeRequest(
+            engine=str(session.get("engine", "UE5")),
+            project_name=str(session.get("project_name", "")),
+            platform_profile=str(session.get("platform_profile", "desktop_60")),
+            assets=list(session.get("assets") or []),
+            scenes=list(session.get("scenes") or []),
+            code_issues=list(session.get("code_issues") or []),
+            config=dict(session.get("config") or {}),
+        )
     )
