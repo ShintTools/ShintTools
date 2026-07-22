@@ -137,13 +137,34 @@ async def predict_analyze(payload: AnalyzeRequest):
 
 @router.post("/predict/simulate")
 async def predict_simulate(payload: SimulateRequest):
-    """Impact Simulator. Lands in M4."""
+    """Impact Simulator — replay a selection against a cached report.
+
+    Pure arithmetic over the report's cost items (no re-analysis): deltas
+    per dimension, before/after risk scores, and next-fix recommendations.
+    ``platform_profile`` switches both sides of the comparison to another
+    platform's budgets (the porting scenario). When the cached report has
+    expired the client may inline ``cost_items`` — deltas and
+    recommendations still work; the scores need the report's totals.
+    """
     await enforce_studio(payload.api_key, "/predict/simulate", _FEATURE)
-    raise HTTPException(
-        status_code=501,
-        detail={
-            "error": "The Impact Simulator ships in a later Core release.",
-            "milestone": "M4",
-            "schema_version": SCHEMA_VERSION,
-        },
+    from predictive import session_store
+    from predictive.layers.layer5_simulator import simulate
+
+    report = None
+    if payload.report_id:
+        report = await session_store.get_report(payload.report_id)
+        if report is None and not payload.cost_items:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "unknown or expired report — re-run "
+                    "/predict/analyze or inline cost_items",
+                    "report_id": payload.report_id,
+                },
+            )
+    return simulate(
+        report,
+        payload.selected_item_ids,
+        payload.cost_items,
+        payload.platform_profile,
     )

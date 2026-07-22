@@ -135,13 +135,96 @@ class TestAnalyze:
         assert resp.status_code == 404
 
     @pytest.mark.anyio
-    async def test_simulate_501_until_m4(self, async_client, monkeypatch):
+    async def test_simulate_unknown_report_404(self, async_client, monkeypatch):
         _patch_tier(monkeypatch, "studio")
         resp = await async_client.post(
-            "/predict/simulate", json={"api_key": "k", "report_id": "x"}
+            "/predict/simulate", json={"api_key": "k", "report_id": "pr-nope"}
         )
-        assert resp.status_code == 501
-        assert resp.json()["detail"]["milestone"] == "M4"
+        assert resp.status_code == 404
+
+
+# ── Impact Simulator (M4) ────────────────────────────────────────────────────
+
+
+class TestSimulate:
+    """analyze → cached report → simulate: the full simulator round trip."""
+
+    _PAYLOAD = {
+        "api_key": "k",
+        "engine": "UE5",
+        "platform_profile": "desktop_60",
+        "assets": [
+            {
+                "asset_path": "/Game/T_Big",
+                "asset_type": "Texture2D",
+                "usage": "BaseColor",
+                "width": 4096,
+                "height": 4096,
+                "compression": "BC7",
+                "mips_enabled": True,
+                "streaming": True,
+                "lod_group": "World",
+            }
+        ],
+        "scenes": [
+            {
+                "scene_name": "L_Main",
+                "actor_count": 4000,
+                "lights": [
+                    {"type": "Point", "mobility": "Movable",
+                     "casts_shadows": True}
+                ],
+            }
+        ],
+    }
+
+    @pytest.mark.anyio
+    async def test_round_trip(self, async_client, monkeypatch):
+        _patch_tier(monkeypatch, "studio")
+        report = (
+            await async_client.post("/predict/analyze", json=self._PAYLOAD)
+        ).json()
+        ids = [i["item_id"] for i in report["cost_items"]]
+        assert ids, "fixture must produce simulatable items"
+
+        resp = await async_client.post(
+            "/predict/simulate",
+            json={"api_key": "k", "report_id": report["report_id"],
+                  "selected_item_ids": ids},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["selected_count"] == len(ids)
+        assert data["deltas"]["vram_mb"]["expected"] < 0
+        assert data["deltas"]["gpu_ms_frame"]["expected"] < 0
+        assert (
+            data["scores_after"]["overall_project_health"]
+            >= data["scores_before"]["overall_project_health"]
+        )
+
+    @pytest.mark.anyio
+    async def test_stateless_fallback(self, async_client, monkeypatch):
+        _patch_tier(monkeypatch, "studio")
+        report = (
+            await async_client.post("/predict/analyze", json=self._PAYLOAD)
+        ).json()
+        item = report["cost_items"][0]
+        # Expired report_id but inline items → deltas still work.
+        resp = await async_client.post(
+            "/predict/simulate",
+            json={"api_key": "k", "report_id": "pr-expired",
+                  "selected_item_ids": [item["item_id"]],
+                  "cost_items": report["cost_items"]},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["selected_count"] == 1
+
+    @pytest.mark.anyio
+    async def test_simulate_is_gated(self, async_client):
+        resp = await async_client.post(
+            "/predict/simulate", json={"api_key": ""}
+        )
+        assert resp.status_code == 403
 
 
 # ── Batched sessions (M3) ────────────────────────────────────────────────────
