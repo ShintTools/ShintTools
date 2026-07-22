@@ -54,6 +54,26 @@ def _top_drivers(items: list[CostItem], dimension: str, n: int = 5) -> list[str]
     return [item_id for _, item_id in scored[:n]]
 
 
+def compute_cpu_risk(
+    cpu_total: Prediction,
+    profile: PlatformProfile,
+    items: list[CostItem],
+) -> RiskScore:
+    """CPU risk from predicted frame spend vs the profile's CPU budget.
+
+    ms figures are relative to the reference hardware; the profile's
+    hw_scale_factor translates them to the target platform before the
+    utilisation curve is applied (a mobile SoC pays ~3.5x the desktop cost
+    for the same pattern).
+    """
+    scaled_ms = cpu_total.expected * profile.hw_scale_factor
+    utilisation = scaled_ms / profile.cpu_budget_ms if profile.cpu_budget_ms else 0.0
+    return RiskScore(
+        value=utilisation_risk(utilisation, profile.strict_budget),
+        drivers=_top_drivers(items, "cpu_ms_frame"),
+    )
+
+
 def compute_memory_risk(
     vram_total: Prediction,
     profile: PlatformProfile,

@@ -1,0 +1,309 @@
+# Predictive Profiler — per-rule cost table (Layer 3, Deep Code Intelligence).
+#
+# One entry per code_validator rule_id (shared/_rule_metadata.py is the
+# authoritative catalog — a costed id that doesn't exist there fails CI).
+# Only PERFORMANCE-shaped rules belong here: an issue with no entry still
+# reaches the report by severity, it just contributes 0 to the budgets and
+# increments stats.code_issues_uncosted. Never invent a cost.
+#
+# Fields per rule:
+#   dimensions:  map of dimension -> band {min, expected, max}
+#                dimensions: cpu_ms_frame | gpu_ms_frame | gc_mb_min | ram_mb
+#   scaling:     per_occurrence      (default — cost × each occurrence)
+#                per_scene_actors    (cost × actor_count/5000, clamp 0.2–4.0)
+#                per_loop_depth      (cost × loop_depth from occurrence
+#                                     context, clamp 1–4; 1 when absent)
+#   confidence:  medium (calibrated slot) | low (uncalibrated heuristic)
+#   basis:       one sentence — where the band comes from. Surfaced verbatim.
+#   remediation: action + recovery_pct (how much of the cost a fix claws back)
+#
+# All CPU/GPU figures are per-frame milliseconds on the desktop_60 reference
+# hardware (Ryzen 7 5800X / RTX 3070). The platform hw_scale_factor scales
+# them at aggregation time — never bake platform into this table.
+#
+# calibration_version bumps when M5 lands measured ground truth; until then
+# every band here is an engineering estimate from documented engine behaviour
+# and stays confidence "low" unless the mechanism is well-characterised
+# (tick/Update dispatch overhead, allocation GC pressure).
+
+calibration_version: "2026.07-uncalibrated-r1"
+reference_hw: "Ryzen 7 5800X / RTX 3070 / 32GB — baseline desktop_60"
+
+rules:
+  # ── UE5 C++ performance (CP*) ──────────────────────────────────────────────
+  CP001:  # FindObject in Tick
+    dimensions:
+      cpu_ms_frame: {min: 0.02, expected: 0.12, max: 0.5}
+    scaling: per_occurrence
+    confidence: low
+    basis: "FindObject walks the object hash every call; per-frame in Tick it scales with UObject count"
+    remediation: {action: "Resolve once in BeginPlay and cache the pointer", recovery_pct: 95}
+
+  CP002:  # GetComponent in Tick
+    dimensions:
+      cpu_ms_frame: {min: 0.01, expected: 0.05, max: 0.2}
+    scaling: per_occurrence
+    confidence: low
+    basis: "Component lookup is a per-call array scan; trivial once, measurable every frame"
+    remediation: {action: "Cache the component reference in BeginPlay", recovery_pct: 95}
+
+  CP005:  # Sleep on game thread
+    dimensions:
+      cpu_ms_frame: {min: 1.0, expected: 5.0, max: 16.0}
+    scaling: per_occurrence
+    confidence: medium
+    basis: "A sleep blocks the game thread outright — the floor is the sleep duration itself"
+    remediation: {action: "Move to async task / timer delegate", recovery_pct: 100}
+
+  CP006:  # GetAllActorsOfClass in Tick
+    dimensions:
+      cpu_ms_frame: {min: 0.05, expected: 0.35, max: 1.2}
+    scaling: per_scene_actors
+    confidence: medium
+    basis: "O(N) world iteration every frame; 0.2–1.4 ms measured with 5k actors on reference HW"
+    remediation: {action: "Cache the query result in BeginPlay or subscribe to spawn events", recovery_pct: 95}
+
+  CP008:  # Heavy math in Tick
+    dimensions:
+      cpu_ms_frame: {min: 0.02, expected: 0.1, max: 0.6}
+    scaling: per_occurrence
+    confidence: low
+    basis: "Transcendental/matrix work repeated per frame; wide band, depends on the expression"
+    remediation: {action: "Precompute or amortise across frames", recovery_pct: 70}
+
+  CP009:  # String operations in Tick
+    dimensions:
+      cpu_ms_frame: {min: 0.01, expected: 0.08, max: 0.4}
+      ram_mb: {min: 0.5, expected: 2.0, max: 8.0}
+    scaling: per_occurrence
+    confidence: low
+    basis: "FString concat/format allocates every frame; cost is allocation + copy"
+    remediation: {action: "Build strings only when the value changes", recovery_pct: 90}
+
+  CP012:  # TArray copied in loop
+    dimensions:
+      cpu_ms_frame: {min: 0.02, expected: 0.15, max: 0.8}
+    scaling: per_loop_depth
+    confidence: low
+    basis: "By-value container copy per iteration — cost scales with element count and loop depth"
+    remediation: {action: "Take the array by const reference", recovery_pct: 95}
+
+  CP013:  # NewObject in loop
+    dimensions:
+      cpu_ms_frame: {min: 0.05, expected: 0.3, max: 1.5}
+      ram_mb: {min: 1.0, expected: 8.0, max: 40.0}
+    scaling: per_loop_depth
+    confidence: medium
+    basis: "UObject construction + GC registration per iteration; GC pressure grows with the loop"
+    remediation: {action: "Pool the objects or hoist construction out of the loop", recovery_pct: 90}
+
+  CP015:  # ensure() in Tick
+    dimensions:
+      cpu_ms_frame: {min: 0.01, expected: 0.04, max: 0.15}
+    scaling: per_occurrence
+    confidence: low
+    basis: "ensure captures a callstack on first failure and branches every call"
+    remediation: {action: "Move the invariant check out of the per-frame path", recovery_pct: 100}
+
+  CP016:  # Manual GarbageCollect call
+    dimensions:
+      cpu_ms_frame: {min: 2.0, expected: 12.0, max: 60.0}
+    scaling: per_occurrence
+    confidence: medium
+    basis: "A forced full GC pass stalls the game thread; scales with UObject count"
+    remediation: {action: "Let incremental GC run; remove the manual call", recovery_pct: 100}
+
+  CP018:  # SpawnActor in Tick
+    dimensions:
+      cpu_ms_frame: {min: 0.1, expected: 0.5, max: 2.0}
+    scaling: per_occurrence
+    confidence: medium
+    basis: "Actor spawn = allocation + component registration + BeginPlay dispatch, per frame"
+    remediation: {action: "Pool actors and reuse instead of spawning per frame", recovery_pct: 90}
+
+  CB002:  # Runtime asset load on game thread
+    dimensions:
+      cpu_ms_frame: {min: 1.0, expected: 8.0, max: 50.0}
+    scaling: per_occurrence
+    confidence: medium
+    basis: "Synchronous load blocks the game thread for the full disk+deserialize time (hitch, not steady-state)"
+    remediation: {action: "Use async loading (StreamableManager / soft references)", recovery_pct: 95}
+
+  # ── UE5 Blueprint performance (BPP*) ──────────────────────────────────────
+  BPP001:  # Tick enabled by default
+    dimensions:
+      cpu_ms_frame: {min: 0.005, expected: 0.02, max: 0.08}
+    scaling: per_occurrence
+    confidence: medium
+    basis: "BP tick dispatch costs ~10x a native tick even when the graph does nothing"
+    remediation: {action: "Disable Tick or set a lower tick interval", recovery_pct: 100}
+
+  BPP003:  # Heavy logic in Event Tick
+    dimensions:
+      cpu_ms_frame: {min: 0.05, expected: 0.3, max: 1.5}
+    scaling: per_occurrence
+    confidence: low
+    basis: "Large BP graphs pay VM overhead per node, per frame; band scales with node count"
+    remediation: {action: "Move logic to events/timers or native code", recovery_pct: 80}
+
+  BPP005:  # GetAllActorsOfClass in Tick (Blueprint)
+    dimensions:
+      cpu_ms_frame: {min: 0.08, expected: 0.5, max: 1.8}
+    scaling: per_scene_actors
+    confidence: medium
+    basis: "Same O(N) world scan as CP006 plus Blueprint VM overhead on the call"
+    remediation: {action: "Cache the result on BeginPlay", recovery_pct: 95}
+
+  # ── Unity C# performance (CSP*) ───────────────────────────────────────────
+  CSP001:  # LINQ operator in Update
+    dimensions:
+      cpu_ms_frame: {min: 0.02, expected: 0.08, max: 0.3}
+      gc_mb_min: {min: 0.5, expected: 3.0, max: 12.0}
+    scaling: per_occurrence
+    confidence: medium
+    basis: "LINQ allocates enumerators/closures per call; in Update that is per-frame garbage"
+    remediation: {action: "Replace the LINQ chain with a for loop", recovery_pct: 90}
+
+  CSP002:  # String concatenation in loop
+    dimensions:
+      cpu_ms_frame: {min: 0.01, expected: 0.06, max: 0.25}
+      gc_mb_min: {min: 0.5, expected: 4.0, max: 20.0}
+    scaling: per_loop_depth
+    confidence: medium
+    basis: "Each + allocates a new string; garbage grows with iteration count"
+    remediation: {action: "Use StringBuilder or precompute outside the loop", recovery_pct: 90}
+
+  CSP003:  # Heavy Mathf call in Update
+    dimensions:
+      cpu_ms_frame: {min: 0.01, expected: 0.05, max: 0.3}
+    scaling: per_occurrence
+    confidence: low
+    basis: "Transcendental math per frame; usually cheap alone, additive across scripts"
+    remediation: {action: "Cache or approximate; hoist invariant math", recovery_pct: 70}
+
+  CSP004:  # Instantiate in Update
+    dimensions:
+      cpu_ms_frame: {min: 0.1, expected: 0.6, max: 2.5}
+      gc_mb_min: {min: 1.0, expected: 6.0, max: 30.0}
+    scaling: per_occurrence
+    confidence: medium
+    basis: "Instantiate clones the full object hierarchy per frame — allocation and Awake dispatch"
+    remediation: {action: "Use an object pool", recovery_pct: 90}
+
+  CSP006:  # new WaitForSeconds per yield
+    dimensions:
+      gc_mb_min: {min: 0.1, expected: 0.8, max: 3.0}
+    scaling: per_occurrence
+    confidence: medium
+    basis: "One small allocation per resume; steady coroutines turn it into constant garbage"
+    remediation: {action: "Cache the WaitForSeconds instance", recovery_pct: 100}
+
+  CSP007:  # String operations in Update
+    dimensions:
+      cpu_ms_frame: {min: 0.01, expected: 0.05, max: 0.25}
+      gc_mb_min: {min: 0.5, expected: 3.0, max: 15.0}
+    scaling: per_occurrence
+    confidence: medium
+    basis: "Per-frame string building allocates every frame; classic GC-spike source"
+    remediation: {action: "Rebuild the string only when the value changes", recovery_pct: 90}
+
+  CSP009:  # Collection copied in loop
+    dimensions:
+      cpu_ms_frame: {min: 0.02, expected: 0.12, max: 0.6}
+      gc_mb_min: {min: 0.5, expected: 4.0, max: 18.0}
+    scaling: per_loop_depth
+    confidence: low
+    basis: "ToList/ToArray per iteration copies the backing store each time"
+    remediation: {action: "Copy once outside the loop or iterate the source directly", recovery_pct: 95}
+
+  CSP010:  # New object allocation in loop
+    dimensions:
+      cpu_ms_frame: {min: 0.02, expected: 0.15, max: 0.8}
+      gc_mb_min: {min: 1.0, expected: 8.0, max: 40.0}
+    scaling: per_loop_depth
+    confidence: medium
+    basis: "Managed allocation per iteration — GC pressure proportional to loop count"
+    remediation: {action: "Pool or hoist the allocation out of the loop", recovery_pct: 90}
+
+  CSP011:  # Manual GC.Collect call
+    dimensions:
+      cpu_ms_frame: {min: 2.0, expected: 15.0, max: 80.0}
+    scaling: per_occurrence
+    confidence: medium
+    basis: "A forced blocking collection stalls the main thread; scales with heap size"
+    remediation: {action: "Remove the call; use incremental GC settings", recovery_pct: 100}
+
+  # ── Unity-specific (UN*) ──────────────────────────────────────────────────
+  UN001:  # GameObject.Find in Update
+    dimensions:
+      cpu_ms_frame: {min: 0.05, expected: 0.3, max: 1.2}
+    scaling: per_occurrence
+    confidence: medium
+    basis: "Find walks the whole hierarchy by name every frame"
+    remediation: {action: "Resolve once in Start and cache the reference", recovery_pct: 95}
+
+  UN002:  # GetComponent in Update
+    dimensions:
+      cpu_ms_frame: {min: 0.01, expected: 0.06, max: 0.25}
+    scaling: per_occurrence
+    confidence: medium
+    basis: "Per-frame component lookup; cheap once, measurable across many scripts"
+    remediation: {action: "Cache the component in Awake/Start", recovery_pct: 95}
+
+  UN003:  # FindObjectOfType in Update
+    dimensions:
+      cpu_ms_frame: {min: 0.1, expected: 0.6, max: 2.5}
+    scaling: per_occurrence
+    confidence: medium
+    basis: "FindObjectOfType scans every loaded object each call — among the slowest Unity APIs in a hot path"
+    remediation: {action: "Cache the reference or use a registry/singleton", recovery_pct: 95}
+
+  UN008:  # Camera.main in Update
+    dimensions:
+      cpu_ms_frame: {min: 0.01, expected: 0.05, max: 0.2}
+    scaling: per_occurrence
+    confidence: medium
+    basis: "Camera.main did a tag search per call before caching (2022.2) — still a per-frame lookup"
+    remediation: {action: "Cache the camera reference", recovery_pct: 95}
+
+  UN010:  # Physics call inside Update
+    dimensions:
+      cpu_ms_frame: {min: 0.02, expected: 0.15, max: 0.8}
+    scaling: per_occurrence
+    confidence: low
+    basis: "Raycast/overlap per rendered frame duplicates work the fixed step already bounds"
+    remediation: {action: "Move to FixedUpdate or event-driven checks", recovery_pct: 70}
+
+  UN015:  # Resources.Load usage
+    dimensions:
+      cpu_ms_frame: {min: 0.5, expected: 4.0, max: 25.0}
+    scaling: per_occurrence
+    confidence: low
+    basis: "Synchronous load from the Resources bundle blocks the main thread (hitch, not steady-state)"
+    remediation: {action: "Use Addressables / async loading", recovery_pct: 90}
+
+  # ── Unity Visual Scripting (VSP*) ─────────────────────────────────────────
+  VSP003:  # GetComponent node inside an Update graph
+    dimensions:
+      cpu_ms_frame: {min: 0.02, expected: 0.1, max: 0.4}
+    scaling: per_occurrence
+    confidence: low
+    basis: "Same lookup as UN002 plus visual-scripting dispatch overhead per node"
+    remediation: {action: "Cache the component in a graph variable on Start", recovery_pct: 90}
+
+  VSP004:  # Find node inside an Update graph
+    dimensions:
+      cpu_ms_frame: {min: 0.08, expected: 0.45, max: 1.8}
+    scaling: per_occurrence
+    confidence: low
+    basis: "Hierarchy-wide search per frame plus VS dispatch overhead"
+    remediation: {action: "Resolve once on Start into a graph variable", recovery_pct: 95}
+
+  VSP005:  # Instantiate or Destroy node inside Update
+    dimensions:
+      cpu_ms_frame: {min: 0.1, expected: 0.7, max: 3.0}
+      gc_mb_min: {min: 1.0, expected: 6.0, max: 30.0}
+    scaling: per_occurrence
+    confidence: low
+    basis: "Same cost as CSP004 plus visual-scripting overhead on the call"
+    remediation: {action: "Pool instances via a spawner subgraph", recovery_pct: 90}
