@@ -13,7 +13,7 @@ import time
 from typing import Any
 
 from api.database import resolve_tier_detailed
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger("shinttools.lod_audit")
@@ -394,61 +394,16 @@ def _explain_ranked(
                 pass
 
 
-# Human-readable cause per resolve_tier reason code. Surfaced in the 403
-# so the developer knows WHY the gate denied them instead of a bare
-# "Forbidden" — the common case (key bound to another machine / never
-# activated on this one / no key configured) is otherwise invisible
-# without opening the Core's Docker logs.
-_REASON_MESSAGES = {
-    "empty_key": (
-        "No license key is configured. Sign in or paste your Indie/Studio "
-        "key in the launcher (Settings → License), then restart the Core."
-    ),
-    "key_not_found": (
-        "This license key isn't active on this machine. A key is bound 1:1 "
-        "to the first machine that activates it — if it's already in use on "
-        "another computer, release it from shint.tools/account/devices or "
-        "use your own key."
-    ),
-    "db_unavailable": (
-        "Couldn't reach the license database. Make sure Docker Desktop and "
-        "the ShintTools Core container are running, then try again."
-    ),
-}
-
-
+# Studio gate + reason messages moved to api/tier_guard.py when the
+# Predictive Profiler needed the identical gate. Thin wrapper kept so the
+# call sites stay unchanged; passing the module-global resolver preserves the
+# monkeypatch seam tests rely on (api.routes.lod_audit.resolve_tier_detailed).
 async def _enforce_studio(api_key: str, route_label: str) -> str:
-    """Tier-gate helper that returns the resolved tier or raises 403.
+    from api.tier_guard import enforce_studio
 
-    Uses :func:`resolve_tier_detailed` so the 403 carries a specific,
-    actionable reason (bound elsewhere / no key / DB down) rather than a
-    generic Forbidden.
-    """
-    tier, reason = await resolve_tier_detailed(api_key)
-    logger.info("%s: tier=%s reason=%s", route_label, tier, reason or "-")
-    # Studio AND Enterprise unlock the LOD Auditor — Enterprise is a superset of
-    # Studio, so gating on `!= "studio"` wrongly 403'd Enterprise users (GH #37).
-    if tier not in ("studio", "enterprise"):
-        logger.info(
-            "%s: denied tier=%s reason=%s — Studio required",
-            route_label,
-            tier,
-            reason or "-",
-        )
-        # When the tier simply isn't high enough (valid key, lower plan)
-        # there's no reason code — that's a genuine upgrade prompt. When a
-        # reason IS set, the key didn't resolve at all, so explain why.
-        hint = _REASON_MESSAGES.get(reason, "")
-        detail = {
-            "error": "LOD Auditor requires a Studio subscription.",
-            "current_tier": tier,
-            "required_tier": "studio",
-        }
-        if reason:
-            detail["reason"] = reason
-            detail["message"] = hint
-        raise HTTPException(status_code=403, detail=detail)
-    return tier
+    return await enforce_studio(
+        api_key, route_label, "LOD Auditor", resolver=resolve_tier_detailed
+    )
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────

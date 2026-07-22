@@ -75,10 +75,11 @@ ARG SHINT_CORE_EDITION=free
 ENV SHINT_CORE_EDITION=${SHINT_CORE_EDITION}
 RUN if [ "$SHINT_CORE_EDITION" != "paid" ]; then \
         echo "Building FREE edition — stripping paid modules" && \
-        rm -rf modules/agent modules/lod_auditor \
-               api/routes/agent.py api/routes/lod_audit.py api/routes/dashboard.py ; \
+        rm -rf modules/agent modules/lod_auditor modules/predictive \
+               api/routes/agent.py api/routes/lod_audit.py \
+               api/routes/dashboard.py api/routes/predictive.py ; \
     else \
-        echo "Building PAID edition — agent + LOD Auditor + dashboard kept" ; \
+        echo "Building PAID edition — agent + LOD Auditor + dashboard + predictive kept" ; \
     fi
 
 RUN mkdir -p /app/core/models && chmod +x entrypoint.sh

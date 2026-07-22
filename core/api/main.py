@@ -299,11 +299,12 @@ app.include_router(unity.router)  # POST /validate/unity/scan
 # routes gets 404, and the paid LLM agent never loads (see _load_llm_in_background).
 if _IS_PAID_EDITION:
     try:
-        from api.routes import agent, dashboard, lod_audit
+        from api.routes import agent, dashboard, lod_audit, predictive
 
         app.include_router(agent.router)  # POST /agent/*            (Indie+)
         app.include_router(lod_audit.router)  # POST /assets/lod/*       (Studio)
         app.include_router(dashboard.router)  # POST /dashboard/report   (Indie+)
+        app.include_router(predictive.router)  # /predict/*             (Studio)
     except ImportError as exc:
         # Paid edition requested but the paid sources are absent (free image
         # with the env flipped). Fall back to free so /health reports honestly.

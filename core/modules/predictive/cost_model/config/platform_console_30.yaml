@@ -1,0 +1,16 @@
+# Current-gen console, 30 fps mode (quality/resolution mode). hw_scale_factor
+# is uncalibrated (no console ground truth fixture yet) — confidence on any
+# prediction using this profile is capped at "medium" by the orchestrator
+# regardless of what the underlying rule would otherwise report.
+profile: console_30
+display_name: "Console — 30 fps (Quality mode)"
+target_fps: 30
+frame_budget_ms: 33.3
+cpu_budget_ms: 20.0
+gpu_budget_ms: 27.0
+vram_budget_mb: 10240
+ram_budget_mb: 12288
+disk_read_mb_s: 2400
+build_advisory_mb: 90000
+reference_hw: "Uncalibrated — scaled from desktop_60 baseline"
+hw_scale_factor: 1.4
