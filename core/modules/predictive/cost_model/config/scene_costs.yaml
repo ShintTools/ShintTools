@@ -1,0 +1,71 @@
+# Predictive Profiler — scene composition cost constants (Layer 2).
+#
+# Per-unit costs for the things a scene digest counts: tick/Update dispatch,
+# dynamic lights, particle systems. All CPU/GPU figures are per-frame
+# milliseconds on the desktop_60 reference hardware; the platform
+# hw_scale_factor scales them at aggregation time.
+#
+# Every entry is a band {min, expected, max} — same honesty contract as
+# rule_costs.yaml. Confidence for the whole layer is declared per section;
+# tick dispatch overhead is well characterised (medium), light and particle
+# costs depend heavily on content (low until M5 calibration).
+
+calibration_version: "2026.07-uncalibrated-r1"
+
+# ── CPU: per-frame dispatch overhead (milliseconds per unit) ────────────────
+cpu:
+  confidence: medium
+  # Native actor tick dispatch (UE5) — the empty-tick baseline cost.
+  actor_tick_ms: {min: 0.0005, expected: 0.001, max: 0.002}
+  # Blueprint tick pays VM entry on top (~10x native).
+  blueprint_tick_ms: {min: 0.005, expected: 0.01, max: 0.02}
+  # Unity MonoBehaviour Update() magic-method dispatch.
+  update_script_ms: {min: 0.001, expected: 0.002, max: 0.004}
+  # FixedUpdate runs 1..N times per rendered frame; modelled at the default
+  # 50 Hz fixed step against 60 fps rendering (~0.83 calls/frame averaged),
+  # folded into the band rather than tracked dynamically.
+  fixed_update_script_ms: {min: 0.001, expected: 0.002, max: 0.005}
+  # Skeletal mesh pose evaluation on the game/anim thread, per instance.
+  skeletal_mesh_ms: {min: 0.01, expected: 0.05, max: 0.2}
+  # CPU-simulated particle systems (Niagara CPU sims / Unity ParticleSystem),
+  # per emitter actually present in the scene.
+  cpu_particle_emitter_ms: {min: 0.01, expected: 0.05, max: 0.3}
+
+# ── GPU: per-frame render cost (milliseconds per unit) ──────────────────────
+gpu:
+  confidence: low
+  # Dynamic (movable/realtime) lights per type, WITH shadow casting. A
+  # shadowed point light renders the scene into a cubemap (6 faces) — by far
+  # the most expensive common light setup.
+  shadowed_light_ms:
+    Point: {min: 0.2, expected: 0.6, max: 1.8}
+    Spot: {min: 0.1, expected: 0.35, max: 1.0}
+    Directional: {min: 0.3, expected: 0.8, max: 2.2}  # cascaded shadow maps
+    Rect: {min: 0.25, expected: 0.7, max: 2.0}
+    Area: {min: 0.25, expected: 0.7, max: 2.0}
+  # Same types without shadows — an order of magnitude cheaper.
+  unshadowed_light_ms:
+    Point: {min: 0.01, expected: 0.05, max: 0.15}
+    Spot: {min: 0.01, expected: 0.04, max: 0.12}
+    Directional: {min: 0.02, expected: 0.08, max: 0.2}
+    Rect: {min: 0.02, expected: 0.06, max: 0.18}
+    Area: {min: 0.02, expected: 0.06, max: 0.18}
+  # GPU-simulated particle emitters (Niagara GPU sims), per emitter.
+  gpu_particle_emitter_ms: {min: 0.02, expected: 0.1, max: 0.5}
+
+# Mobilities that count as "dynamic" for light pricing. Static/baked lights
+# cost nothing at runtime (their cost is build-time lightmaps, priced by the
+# LOD auditor's lightmap rules instead — never double-billed here).
+dynamic_mobilities: ["Movable", "Stationary", "Realtime", "Mixed"]
+
+# ── Scene Complexity Score weights ──────────────────────────────────────────
+# The 0-100 complexity score is a weighted density measure, not a budget
+# figure — it feeds the UI's per-scene summary, while the ms totals feed the
+# frame budget. Normalisation counts per weight unit.
+complexity:
+  per_1k_actors: 8
+  per_100_ticking: 10
+  per_dynamic_shadowed_light: 6
+  per_particle_system: 3
+  per_100_update_scripts: 10
+  max: 100

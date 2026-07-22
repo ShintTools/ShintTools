@@ -74,6 +74,20 @@ def compute_cpu_risk(
     )
 
 
+def compute_gpu_risk(
+    gpu_total: Prediction,
+    profile: PlatformProfile,
+    items: list[CostItem],
+) -> RiskScore:
+    """GPU risk from predicted render spend vs the profile's GPU budget."""
+    scaled_ms = gpu_total.expected * profile.hw_scale_factor
+    utilisation = scaled_ms / profile.gpu_budget_ms if profile.gpu_budget_ms else 0.0
+    return RiskScore(
+        value=utilisation_risk(utilisation, profile.strict_budget),
+        drivers=_top_drivers(items, "gpu_ms_frame"),
+    )
+
+
 def compute_memory_risk(
     vram_total: Prediction,
     profile: PlatformProfile,
