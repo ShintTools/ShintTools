@@ -13,10 +13,12 @@ import uuid
 from datetime import datetime, timezone
 
 from predictive.cost_model.platform_profiles import load_platform_profile
-from predictive.layers import layer1_assets, layer4_scores
+from predictive.cost_model.rule_costs import load_rule_costs
+from predictive.layers import layer1_assets, layer3_code, layer4_scores
 from predictive.schema import (
     SCHEMA_VERSION,
     AnalyzeRequest,
+    BudgetLine,
     BuildReport,
     FrameBudget,
     MemoryBudgetLine,
@@ -25,9 +27,6 @@ from predictive.schema import (
     ReportStats,
     Scores,
 )
-
-# Until M5 lands measured ground truth, every report says so.
-CALIBRATION_VERSION = "uncalibrated-dev"
 
 _TOP_ISSUES_N = 10
 
@@ -42,6 +41,16 @@ def _severity_key(item) -> tuple:
     return (order.get(item.severity, 1), -recovery)
 
 
+def _scene_actor_count(request: AnalyzeRequest) -> int:
+    """Largest actor count across the supplied scene digests (0 = unknown).
+
+    M2 uses it only to drive per_scene_actors cost scaling; the full scene
+    layer arrives in M3.
+    """
+    counts = [int(s.get("actor_count", 0) or 0) for s in request.scenes]
+    return max(counts, default=0)
+
+
 def analyze_oneshot(request: AnalyzeRequest) -> PredictiveReport:
     """Produce a PredictiveReport from an inline (one-shot) payload."""
     profile = load_platform_profile(request.platform_profile)
@@ -49,13 +58,23 @@ def analyze_oneshot(request: AnalyzeRequest) -> PredictiveReport:
     l1 = layer1_assets.analyze_assets(
         request.assets, engine=request.engine, profile="default"
     )
+    l3 = layer3_code.analyze_code(
+        request.code_issues,
+        scene_actor_count=_scene_actor_count(request),
+        start_index=len(l1.items),
+    )
 
     # Rank items: severity first, biggest recovery inside each band.
-    items = sorted(l1.items, key=_severity_key)
+    items = sorted(l1.items + l3.items, key=_severity_key)
     for rank, item in enumerate(items, start=1):
         item.rank = rank
 
     scores = Scores(
+        # Only a costed axis scores — all-uncosted code must read as "no
+        # data", not "risk 0".
+        cpu_risk=layer4_scores.compute_cpu_risk(l3.cpu_total, profile, items)
+        if l3.items
+        else Scores().cpu_risk,
         memory_risk=layer4_scores.compute_memory_risk(
             l1.vram_total, profile, items
         ),
@@ -65,6 +84,7 @@ def analyze_oneshot(request: AnalyzeRequest) -> PredictiveReport:
     )
     scores.overall_project_health = layer4_scores.compute_overall(scores)
 
+    table = load_rule_costs()
     return PredictiveReport(
         schema_version=SCHEMA_VERSION,
         report_id=f"pr-{uuid.uuid4().hex[:12]}",
@@ -72,19 +92,34 @@ def analyze_oneshot(request: AnalyzeRequest) -> PredictiveReport:
         engine=request.engine,
         project_name=request.project_name,
         platform_profile=profile.model_dump(),
-        calibration_version=CALIBRATION_VERSION,
+        calibration_version=table.calibration_version,
         disclaimer=(
             f"Static estimate relative to reference hardware "
             f"({profile.reference_hw}). Bands are honest uncertainty, not "
             f"decoration — see docs/predictive/COST_MODEL.md."
         ),
         scores=scores,
-        frame_budget=FrameBudget(),  # M2/M3 — CPU/GPU spend needs code+scene
+        frame_budget=FrameBudget(
+            cpu=BudgetLine(
+                budget_ms=profile.cpu_budget_ms,
+                predicted=l3.cpu_total if l3.items else None,
+                breakdown=(
+                    [{"label": "Code patterns",
+                      "expected_ms": l3.cpu_total.expected}]
+                    if l3.items
+                    else []
+                ),
+            ),
+            # GPU spend needs the scene layer (M3).
+        ),
         memory=MemoryReport(
             vram=MemoryBudgetLine(
                 budget_mb=profile.vram_budget_mb, predicted=l1.vram_total
             ),
-            ram=MemoryBudgetLine(budget_mb=profile.ram_budget_mb),
+            ram=MemoryBudgetLine(
+                budget_mb=profile.ram_budget_mb, predicted=l3.ram_total
+            ),
+            gc_pressure=l3.gc_total,
         ),
         build=BuildReport(size_mb=l1.build_total),
         top_issues=items[:_TOP_ISSUES_N],
@@ -92,7 +127,7 @@ def analyze_oneshot(request: AnalyzeRequest) -> PredictiveReport:
         stats=ReportStats(
             assets_analyzed=l1.assets_analyzed,
             scenes_analyzed=0,
-            code_issues_costed=0,
-            code_issues_uncosted=len(request.code_issues),
+            code_issues_costed=l3.costed,
+            code_issues_uncosted=l3.uncosted,
         ),
     )
