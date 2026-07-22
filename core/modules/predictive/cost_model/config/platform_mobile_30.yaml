@@ -1,0 +1,17 @@
+# Mobile (mid-tier Android/iOS reference), 30 fps target. Uncalibrated — see
+# platform_console_30.yaml for the confidence-capping note. hw_scale_factor
+# is intentionally aggressive: mobile SoCs pay a much larger tax per tick/
+# allocation than desktop, matching the existing lod_auditor "mobile" profile
+# philosophy (config/thresholds_mobile.yaml in lod_auditor).
+profile: mobile_30
+display_name: "Mobile — 30 fps (mid-tier reference)"
+target_fps: 30
+frame_budget_ms: 33.3
+cpu_budget_ms: 18.0
+gpu_budget_ms: 22.0
+vram_budget_mb: 2048
+ram_budget_mb: 3072
+disk_read_mb_s: 350
+build_advisory_mb: 4096
+reference_hw: "Uncalibrated — scaled from desktop_60 baseline"
+hw_scale_factor: 3.5

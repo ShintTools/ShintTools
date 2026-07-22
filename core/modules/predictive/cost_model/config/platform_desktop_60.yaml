@@ -1,0 +1,17 @@
+# Desktop — 60 fps target. Baseline reference platform: predictions calibrated
+# against this profile are the highest-confidence numbers the module produces
+# (see calibration/fixtures/citysample_ue5). reference_hw is the machine the
+# ground truth was measured on — every "ms" in a "high"/"medium" confidence
+# prediction is relative to it, not to the end user's machine.
+profile: desktop_60
+display_name: "PC Desktop — 60 fps"
+target_fps: 60
+frame_budget_ms: 16.6
+cpu_budget_ms: 10.0
+gpu_budget_ms: 13.0
+vram_budget_mb: 8192
+ram_budget_mb: 16384
+disk_read_mb_s: 1800
+build_advisory_mb: 50000
+reference_hw: "Ryzen 7 5800X / RTX 3070 / 32GB DDR4 / NVMe SSD"
+hw_scale_factor: 1.0

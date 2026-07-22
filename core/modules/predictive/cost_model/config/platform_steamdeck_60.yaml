@@ -1,0 +1,17 @@
+# Steam Deck — 60 fps target. Popular "will it run on Deck?" question makes
+# this worth shipping as a first-class profile; also the simulator's
+# "what if I port to Deck?" alternate-profile scenario. Uncalibrated — see
+# platform_console_30.yaml for the confidence-capping note.
+profile: steamdeck_60
+display_name: "Steam Deck — 60 fps"
+target_fps: 60
+frame_budget_ms: 16.6
+cpu_budget_ms: 11.0
+gpu_budget_ms: 14.0
+vram_budget_mb: 8192      # unified memory — layer4 treats vram+ram jointly
+ram_budget_mb: 12288
+disk_read_mb_s: 500
+build_advisory_mb: 40000
+reference_hw: "Uncalibrated — scaled from desktop_60 baseline"
+hw_scale_factor: 2.2
+unified_memory: true

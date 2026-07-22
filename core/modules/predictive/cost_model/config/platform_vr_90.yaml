@@ -1,0 +1,17 @@
+# VR — 90 fps hard target (PCVR reference). The frame budget is unforgiving
+# and missed frames are a comfort problem, not just a quality problem, so the
+# risk curve treats budget overruns here more severely (layer4 reads
+# strict_budget). Uncalibrated — see platform_console_30.yaml.
+profile: vr_90
+display_name: "VR — 90 fps (PCVR)"
+target_fps: 90
+frame_budget_ms: 11.1
+cpu_budget_ms: 7.0
+gpu_budget_ms: 9.0
+vram_budget_mb: 8192
+ram_budget_mb: 16384
+disk_read_mb_s: 1800
+build_advisory_mb: 50000
+reference_hw: "Uncalibrated — scaled from desktop_60 baseline"
+hw_scale_factor: 1.0
+strict_budget: true

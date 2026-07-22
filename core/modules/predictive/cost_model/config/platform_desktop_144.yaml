@@ -1,0 +1,14 @@
+# Desktop — 144 fps target (competitive / high-refresh). Same reference
+# hardware as desktop_60; only the budget tightens.
+profile: desktop_144
+display_name: "PC Desktop — 144 fps"
+target_fps: 144
+frame_budget_ms: 6.94
+cpu_budget_ms: 4.5
+gpu_budget_ms: 5.5
+vram_budget_mb: 8192
+ram_budget_mb: 16384
+disk_read_mb_s: 1800
+build_advisory_mb: 50000
+reference_hw: "Ryzen 7 5800X / RTX 3070 / 32GB DDR4 / NVMe SSD"
+hw_scale_factor: 1.0
