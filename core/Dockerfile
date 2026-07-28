@@ -15,8 +15,19 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir torch==2.3.0+cpu --index-url https://download.pytorch.org/whl/cpu
 
 # Install all remaining dependencies from requirements.txt
-# Compile llama-cpp-python locally for glibc compatibility (not prebuilt wheel)
-RUN pip install --no-cache-dir -r requirements.txt --no-binary llama-cpp-python
+# Compile llama-cpp-python locally for glibc compatibility (not prebuilt wheel).
+#
+# GGML_NATIVE=OFF is CRITICAL for a distributed image. Without it, ggml compiles
+# with -march=native for the BUILD machine — and the CI runner that publishes
+# this image has AVX-512. The resulting binary then raises SIGILL (illegal
+# instruction, container exit 132) the moment it initialises the model context
+# on any customer CPU that lacks those instructions — e.g. every AMD Zen 1-3
+# chip (Ryzen 5900X etc.), which has no AVX-512. That surfaces to the plugin as
+# curl error 52 (empty reply) because the Core never finishes startup.
+# OFF builds a portable binary with runtime CPU-feature dispatch (AVX/AVX2/FMA
+# selected at load time), so the LLM agent runs on any x86-64 customer machine.
+RUN CMAKE_ARGS="-DGGML_NATIVE=OFF -DLLAMA_NATIVE=OFF" \
+    pip install --no-cache-dir -r requirements.txt --no-binary llama-cpp-python
 
 COPY . .
 
@@ -82,7 +93,11 @@ RUN if [ "$SHINT_CORE_EDITION" != "paid" ]; then \
         echo "Building PAID edition — agent + LOD Auditor + dashboard + predictive kept" ; \
     fi
 
-RUN mkdir -p /app/core/models && chmod +x entrypoint.sh
+# Normalise entrypoint line endings before use. The repo stores it as LF, but a
+# build from a Windows working copy (no .gitattributes) can carry CRLF, which
+# makes bash choke on $'\r' and the container exit 127 in a boot loop. Stripping
+# CR here is a no-op on CI (already LF) and bulletproofs local Windows builds.
+RUN sed -i 's/\r$//' entrypoint.sh && mkdir -p /app/core/models && chmod +x entrypoint.sh
 
 EXPOSE 18200
 
