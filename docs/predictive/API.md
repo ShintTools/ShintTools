@@ -6,6 +6,20 @@ Core 2.9.0** — fields may be *added* (always optional, always with safe
 defaults), never renamed or removed within v1. Breaking changes bump
 `schema_version`.
 
+**What this module is, and isn't.** Predictive Profiler *prices* cost — it
+does not diagnose problems. "Is this asset wrong / how do I fix it" is the
+LOD Auditor's, Asset Optimizer's and Code Validator's job, with their own
+findings and auto-fix. Predictive answers one question only: *what does
+this cost, and what would fixing it buy back*. Consequently:
+
+- Every priced asset gets a `CostItem` — flagged by another tool or not.
+  `title` is the entity's **name/location** (`"Assets/T_Rock.png"`,
+  `"Enemy.cpp:42"`), never a description of what's wrong with it.
+- `remediation`/`rule_id`/`severity` are only present when there IS a
+  known optimization for that item — absent otherwise (`remediation: null`).
+  Render `title` + `impact` as the primary row; treat remediation as a
+  secondary affordance, not the headline.
+
 Every JSON example in this document is validated against the Pydantic models
 in `core/modules/predictive/schema.py` by
 `core/modules/predictive/tests/test_contract_doc.py` — if the doc and the
@@ -101,8 +115,11 @@ Sessions expire after 6 h; reports are cached for 24 h.
 Ingest `kind` → payload key: `assets` → `assets[]` (same shapes as
 `/assets/lod/audit` — reuse the collector you already have; include
 `size_kb` = measured runtime memory so unmapped formats price exactly);
-`scene` → `scenes[]`; `code` → `issues[]` (your `/validate/*` output,
-optionally + `occurrence_context`); `config` → `config{}`.
+`scene` → `scenes[]`; `code` → `issues[]` (**legacy** — your `/validate/*`
+output, optionally + `occurrence_context`; see the note below);
+`code_files` → `files[]` (**preferred** — raw `{"path", "content"}` source;
+Predictive scans it in-process, no client-side pre-scan needed); `config` →
+`config{}`.
 
 Then `POST /predict/analyze` with just `{"api_key": "...", "session_id": "..."}`.
 
@@ -132,7 +149,29 @@ guessing:
 Light `mobility`: UE5 `Static|Stationary|Movable`, Unity `Baked|Mixed|Realtime`.
 Static/Baked lights are free at runtime and are not billed.
 
-### Code issues (the `code` kind)
+### Code (the `code_files` kind — preferred)
+
+Send raw source and Predictive scans it itself: the same rule engines the
+Code Validator uses (`run_all_cpp_rules`/`run_all_csharp_rules`), run
+in-process — you don't need to call `/validate/*` first and thread its
+output through. This is the same posture as `assets[]`: send raw material,
+Predictive does its own detection internally.
+
+```json
+{"files": [{"path": "Source/Enemy.cpp", "content": "void AEnemy::Tick(...) { ... }"}]}
+```
+
+One-shot equivalent: `AnalyzeRequest.code_files: [{"path", "content"}]`.
+
+Self-scanned code also derives `occurrence_context` (in_tick/loop_depth)
+from the AST, so its cost may differ from the same pattern forwarded via
+legacy `code_issues` with no context attached — that's intentional, not a
+regression; the self-scanned number is the more accurate one.
+
+### Code issues (the `code` kind — legacy)
+
+Still accepted for clients already forwarding `/validate/*` output
+directly; prefer `code_files` for new integrations.
 
 <!-- validate: CodeIssueContext -->
 ```json
@@ -185,6 +224,7 @@ priced** — see `stats.code_issues_uncosted`.
       "severity": "warning"
     }
   ],
+  "code_files": [],
   "config": {}
 }
 ```
@@ -270,16 +310,16 @@ it is the simulator's input.**
       "layer": 1,
       "rank": 1,
       "severity": "warning",
-      "title": "Texture over resolution budget — Assets/Textures/T_Rock.png",
+      "title": "Assets/Textures/T_Rock.png",
       "rule_id": "LT003",
       "source": {"kind": "texture", "path": "Assets/Textures/T_Rock.png"},
       "impact": {
-        "vram_mb": {"expected": 7.11, "min": 7.11, "max": 7.11, "unit": "mb",
+        "vram_mb": {"expected": 9.48, "min": 9.48, "max": 9.48, "unit": "mb",
                     "confidence": "high",
-                    "basis": "LT003 saving from the LOD audit"}
+                    "basis": "ASTC_6x6 4096×4096, mips included"}
       },
       "remediation": {
-        "action": "4096×4096 texture exceeds the 2048 px max-size budget.",
+        "action": "Recoverable: 7.11 MB VRAM",
         "recovery": {
           "vram_mb": {"expected": 7.11, "min": 7.11, "max": 7.11,
                       "unit": "mb", "confidence": "high",
@@ -323,6 +363,10 @@ Reading the report:
   but contributed 0 ms (no cost entry). Show coverage honestly.
 - Every `CostItem.remediation.recovery` is what fixing it buys back — the
   simulator's currency.
+- `CostItem.impact` is the item's **total** cost, not just the recoverable
+  portion — `impact >= remediation.recovery` when a remediation exists.
+  Every asset appears in `cost_items` (name + cost), whether or not it has
+  a remediation; `title` never contains a validator sentence.
 
 ## Impact Simulator
 

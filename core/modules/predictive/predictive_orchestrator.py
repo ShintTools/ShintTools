@@ -20,6 +20,7 @@ from predictive.layers import (
     layer3_code,
     layer4_scores,
 )
+from predictive.layers.layer1_assets import normalize_engine
 from predictive.schema import (
     SCHEMA_VERSION,
     AnalyzeRequest,
@@ -35,15 +36,30 @@ from predictive.schema import (
 
 _TOP_ISSUES_N = 10
 
+# impact dimension -> the PlatformProfile budget attribute that prices it.
+# Dimensions with no direct budget (gc_mb_min) fall back to a raw-expected
+# tiebreak rather than a manufactured denominator.
+_BUDGET_ATTR = {
+    "cpu_ms_frame": "cpu_budget_ms",
+    "gpu_ms_frame": "gpu_budget_ms",
+    "vram_mb": "vram_budget_mb",
+    "ram_mb": "ram_budget_mb",
+    "build_mb": "build_advisory_mb",
+}
 
-def _severity_key(item) -> tuple:
+
+def _impact_key(item, profile) -> tuple:
+    """Rank by how much of its budget an item eats — unit-correct (you
+    can't sum ms and MB), so this normalizes each dimension by its own
+    budget before summing. An expensive-but-unflagged asset outranks a
+    cheap flagged one; severity only breaks ties."""
     order = {"critical": 0, "warning": 1, "info": 2}
-    # Largest recovery first within a severity band (vram then build).
-    recovery = 0.0
-    if item.remediation:
-        for pred in item.remediation.recovery.values():
-            recovery += pred.expected
-    return (order.get(item.severity, 1), -recovery)
+    score = 0.0
+    for dim, pred in item.impact.items():
+        attr = _BUDGET_ATTR.get(dim)
+        budget = getattr(profile, attr, 0) if attr else 0
+        score += pred.expected / budget if budget else pred.expected
+    return (-score, order.get(item.severity, 1))
 
 
 def analyze_oneshot(request: AnalyzeRequest) -> PredictiveReport:
@@ -58,10 +74,13 @@ def analyze_oneshot(request: AnalyzeRequest) -> PredictiveReport:
         request.code_issues,
         scene_actor_count=l2.max_actor_count,
         start_index=len(l1.items) + len(l2.items),
+        code_files=request.code_files,
+        engine=normalize_engine(request.engine),
     )
 
-    # Rank items: severity first, biggest recovery inside each band.
-    items = sorted(l1.items + l2.items + l3.items, key=_severity_key)
+    # Rank items: budget-normalized cost magnitude first (an expensive
+    # unflagged asset outranks a cheap flagged issue), severity as tiebreak.
+    items = sorted(l1.items + l2.items + l3.items, key=lambda i: _impact_key(i, profile))
     for rank, item in enumerate(items, start=1):
         item.rank = rank
 
@@ -165,6 +184,7 @@ def analyze_session(session: dict) -> PredictiveReport:
             assets=list(session.get("assets") or []),
             scenes=list(session.get("scenes") or []),
             code_issues=list(session.get("code_issues") or []),
+            code_files=list(session.get("code_files") or []),
             config=dict(session.get("config") or {}),
         )
     )

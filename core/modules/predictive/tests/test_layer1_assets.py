@@ -1,6 +1,7 @@
 # core/modules/predictive/tests/test_layer1_assets.py
 
-from predictive.layers.layer1_assets import analyze_assets, normalize_engine
+from lod_auditor.schema import Finding, Saving
+from predictive.layers.layer1_assets import _attach_findings, analyze_assets, normalize_engine
 
 
 def _texture(path="/Game/T_Test", w=2048, h=2048, fmt="BC7", **kw):
@@ -80,20 +81,98 @@ class TestAuditDrivenItems:
         assert "vram_mb" in item.remediation.recovery
         assert item.remediation.recovery["vram_mb"].expected > 0
         assert item.remediation.auto_fixable is True
-        # Impact mirrors recovery: today's excess == tomorrow's saving.
-        assert item.impact["vram_mb"].expected == (
+        # impact is the asset's TOTAL cost, recovery is only the
+        # recoverable portion — total is always >= what a fix buys back.
+        assert item.impact["vram_mb"].expected >= (
             item.remediation.recovery["vram_mb"].expected
         )
 
-    def test_clean_assets_produce_no_items(self):
+    def test_clean_asset_yields_one_base_cost_item(self):
+        # Everything has a cost, flagged or not — a clean asset still gets
+        # exactly one item: name + cost, no diagnosis attached.
         r = analyze_assets([_texture()], engine="UE5", profile="default")
-        assert r.items == []
+        assert len(r.items) == 1
+        item = r.items[0]
+        assert item.title == "/Game/T_Test"
+        assert item.remediation is None
+        assert item.rule_id == ""
+        assert "vram_mb" in item.impact
+
+    def test_every_priced_asset_yields_exactly_one_item(self):
+        r = analyze_assets(
+            [_texture(path="/Game/A"), _texture(path="/Game/B", w=4096, h=4096)],
+            engine="UE5",
+            profile="default",
+        )
+        assert len(r.items) == 2
+        assert {i.title for i in r.items} == {"/Game/A", "/Game/B"}
+
+    def test_multiple_findings_on_one_asset_merge_into_one_item(self):
+        # LT003 (oversized, vram saving) + LT008 (RDO off, build saving) on
+        # the same texture must not fork into two items — the simulator's
+        # unit of selection is the asset, recovery sums across dimensions.
+        r = analyze_assets(
+            [_texture(w=4096, h=4096, rdo_enabled=False)],
+            engine="UE5",
+            profile="default",
+        )
+        matching = [i for i in r.items if i.title == "/Game/T_Test"]
+        assert len(matching) == 1
+        item = matching[0]
+        assert item.remediation is not None
+        assert item.remediation.recovery["vram_mb"].expected > 0
+        assert item.remediation.recovery["build_mb"].expected > 0
+
+    def test_title_is_never_a_rule_sentence(self):
+        r = analyze_assets(
+            [_texture(w=4096, h=4096)], engine="UE5", profile="default"
+        )
+        assert all(" — " not in i.title for i in r.items)
+        assert all(i.title == i.source.get("path") for i in r.items)
 
     def test_item_ids_are_stable_format(self):
         r = analyze_assets(
             [_texture(w=4096, h=4096)], engine="UE5", profile="default"
         )
         assert all(i.item_id.startswith("ci-") for i in r.items)
+
+
+class TestFallbackItem:
+    """A finding-with-saving on an asset asset_vram() doesn't price (e.g. a
+    Material — no base item exists for it) must still synthesize an item,
+    so material/build-only saving findings don't silently vanish."""
+
+    def test_finding_on_unpriced_asset_synthesizes_item(self):
+        finding = Finding(
+            asset_path="/Game/M_Test",
+            rule_id="LM099",
+            category="Material",
+            severity="warning",
+            message="synthetic",
+            current={},
+            recommended={},
+            estimated_saving=Saving(build_size_mb=1.5),
+            auto_fixable=False,
+        )
+        fallback = _attach_findings({}, [finding], next_index=0)
+        assert len(fallback) == 1
+        item = fallback[0]
+        assert item.title == "/Game/M_Test"
+        assert item.remediation.recovery["build_mb"].expected == 1.5
+
+    def test_finding_with_no_recovery_produces_no_fallback(self):
+        finding = Finding(
+            asset_path="/Game/M_Test",
+            rule_id="LM001",
+            category="Material",
+            severity="warning",
+            message="synthetic",
+            current={},
+            recommended={},
+            estimated_saving=Saving(shader_instructions=40),
+            auto_fixable=False,
+        )
+        assert _attach_findings({}, [finding], next_index=0) == []
 
 
 class TestEngineNormalization:

@@ -133,13 +133,14 @@ These are contract-level and non-negotiable — they *are* the product's honesty
 │ [CPU 62] [GPU 38] [Memory 81] [Build 24]   [OVERALL 31]     │
 │ [Frame budget bar: CPU+GPU stacked vs 16.67 ms budget]      │
 ├─────────────────────────────────────────────────────────────┤
-│ Zone 2 — Top Issues (filterable list)                       │
-│ ▢ [HIGH] Tick → GetAllActorsOfClass  +0.9–1.8 ms · est +1.4│
-│ ▢ [CRIT] T_Rock_04 4K BaseColor      −16.0 MB VRAM  [high] │
+│ Zone 2 — Top Issues (name + cost, ranked by budget share)   │
+│ ▢ Enemy.cpp:42          +0.9–1.8 ms · est +1.4  ↩ −0.9  [med]│
+│ ▢ T_Rock_04.png         9.5 MB VRAM             ↩ −7.1  [high]│
+│   T_Sky_Clean.png       3.2 MB VRAM                     [high]│
 ├─────────────────────────────────────────────────────────────┤
 │ Zone 3 — Impact Simulator                                   │
-│ 3 selected → CPU −1.4 ms · VRAM −23 MB   scores 31 → 54     │
-│ "Fix this next: L_Main shadowed point light (+0.29 ms)"     │
+│ 2 selected → CPU −1.4 ms · VRAM −7.1 MB   scores 31 → 54    │
+│ "Largest remaining recovery: L_Main shadowed light (+0.29ms)"│
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -199,23 +200,38 @@ Everywhere a cost appears, render one consistent atom:
 - Tooltip/detail shows `basis` ("BC7 block math, mip chain included").
 
 ### 6.4 Top issues list (Zone 2)
-- Row: checkbox → `SShintSeverityBadge` → title (white, Body) → dimension icon
-  (CPU/GPU/MEM/BUILD as tiny muted caps tag) → prediction chip right-aligned →
-  recovery chip in green (`↩ −16.0 MB`) when fixable.
-- Click row → detail panel/expando: file/asset path (monospace feel, muted),
-  `basis` line, remediation action text, "Select for simulation" button.
-- Filters: severity, dimension, module — as chips in the card header
-  (`HeaderRight` slot in UE5, filter dropdown row in Unity, already built).
+**Name + cost is the primary row — every priced item shows one, whether or
+not it has a remediation.** Predictive prices; it doesn't diagnose. Severity
+badges, rule descriptions and fix text are secondary and only render when
+an item actually carries a `remediation` (`remediation: null` is the common
+case, not an edge case — a clean 2K texture still costs VRAM and still gets
+a row).
+- Row: checkbox → `title` (white, Body — the entity's name/location:
+  `T_Rock.png`, `Enemy.cpp:42`, never a validator sentence) → prediction
+  chip right-aligned (the "band + confidence" atom from §6.3).
+- Only when `remediation` is present: `SShintSeverityBadge` prefix + recovery
+  chip in green (`↩ −16.0 MB`) appended after the cost chip. No remediation
+  → no badge, no chip — the row still reads cleanly as "name: cost".
+- Click row → detail panel/expando: `basis` line (always present — it's the
+  cost's origin, not a diagnosis) +, only if `remediation` exists,
+  `remediation.action` and a "Select for simulation" checkbox.
+- Sort/rank comes from the server (budget-normalized cost magnitude) — an
+  expensive unflagged asset legitimately outranks a small flagged issue;
+  don't re-sort client-side by severity.
+- Filters: dimension, "has remediation" toggle — not "severity" as the
+  primary filter axis, since most rows won't have one.
 - Keep 1 px `#2a2a2a`/`#161616` row separators (existing table language).
 
 ### 6.5 Impact Simulator (Zone 3)
-- Sticky bottom card (UE5) / bottom `.box` (Unity) that activates when ≥1 item
-  checked. Debounce 300 ms → simulate call.
+- Sticky bottom card (UE5) / bottom `.box` (Unity) that activates when ≥1
+  item **with a remediation** is checked (unfixable items aren't
+  selectable — no recovery to simulate). Debounce 300 ms → simulate call.
 - Content: **KPI tiles of deltas** (existing KpiTile: caption "CPU", value
   "−1.4 ms" in green) + before→after score pair per axis rendered as
   `31 → 54` with an arrow, after-value colored by its new band.
-- Recommendations strip below: "Fix this next: …" rows with the remaining
-  recovery chip — one-click "add to selection".
+- Recommendations strip below: "Largest remaining recovery: …" rows (cost
+  language, matching the report) with the remaining recovery chip —
+  one-click "add to selection".
 - Porting scenario: profile dropdown inside the simulator card ("Simulate on:
   mobile_30") — re-frames both sides; label makes the comparison explicit
   ("same project · mobile budgets").

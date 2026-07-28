@@ -26,7 +26,9 @@ SCHEMA_VERSION = "1.0"
 
 # ── Session / ingest ─────────────────────────────────────────────────────────
 
-INGEST_KINDS: frozenset[str] = frozenset({"assets", "scene", "code", "config"})
+INGEST_KINDS: frozenset[str] = frozenset(
+    {"assets", "scene", "code", "code_files", "config"}
+)
 
 
 class SessionStartRequest(BaseModel):
@@ -171,6 +173,11 @@ class AnalyzeRequest(BaseModel):
     assets: list[dict[str, Any]] = Field(default_factory=list)
     scenes: list[dict[str, Any]] = Field(default_factory=list)
     code_issues: list[dict[str, Any]] = Field(default_factory=list)
+    # Preferred over code_issues: raw {"path", "content"} source — Predictive
+    # scans it in-process (code_scan.py) instead of requiring the client to
+    # pre-run /validate/* and forward its output. code_issues stays accepted
+    # for backward compat with the frozen v1.0 contract's existing clients.
+    code_files: list[dict[str, Any]] = Field(default_factory=list)
     config: dict[str, Any] = Field(default_factory=dict)
 
 

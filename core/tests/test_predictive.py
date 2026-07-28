@@ -121,10 +121,55 @@ class TestAnalyze:
         vram = data["memory"]["vram"]["predicted"]
         assert abs(vram["expected"] - 21.33) < 0.05
         assert vram["confidence"] == "high"
-        # The oversized texture fires LT003 → a simulator-ready item.
+        # Every asset gets a cost item (name + cost), flagged or not — find
+        # the flagged one by title rather than assuming position [0].
         assert data["top_issues"]
-        assert data["top_issues"][0]["remediation"]["recovery"]
+        flagged = next(
+            i for i in data["top_issues"] if i["title"] == "/Game/T_Big"
+        )
+        assert flagged["remediation"]["recovery"]
+        assert flagged["title"] == "/Game/T_Big"  # name, not a rule sentence
         assert data["stats"]["assets_analyzed"] == 1
+
+    @pytest.mark.anyio
+    async def test_unflagged_expensive_asset_outranks_small_flagged_issue(
+        self, async_client, monkeypatch
+    ):
+        # Ranking is budget-normalized cost magnitude, not "has a rule
+        # fired" — a huge clean texture should still surface above a code
+        # issue that barely dents the CPU budget.
+        _patch_tier(monkeypatch, "studio")
+        payload = {
+            "api_key": "k",
+            "engine": "UE5",
+            # mobile_30's tight VRAM budget (2048 MB) vs desktop's CPU
+            # budget (18 ms) makes the texture the bigger budget fraction —
+            # 21.33/2048 > 0.05/18.
+            "platform_profile": "mobile_30",
+            "assets": [
+                {
+                    "asset_path": "/Game/T_Huge_Clean",
+                    "asset_type": "Texture2D",
+                    "usage": "BaseColor",
+                    "width": 4096,
+                    "height": 4096,
+                    "compression": "BC7",
+                    "mips_enabled": True,
+                    "streaming": True,
+                    "lod_group": "Cinematic",  # high budget: no LT003 finding
+                }
+            ],
+            "code_issues": [
+                {"rule_id": "CP002", "rule_name": "GetComponent in Tick",
+                 "file": "Source/Enemy.cpp", "line": 10, "severity": "warning"}
+            ],
+        }
+        resp = await async_client.post("/predict/analyze", json=payload)
+        assert resp.status_code == 200
+        titles = [i["title"] for i in resp.json()["top_issues"]]
+        assert titles.index("/Game/T_Huge_Clean") < titles.index(
+            "Source/Enemy.cpp:10"
+        )
 
     @pytest.mark.anyio
     async def test_unknown_session_is_404(self, async_client, monkeypatch):
@@ -314,6 +359,51 @@ class TestSessions:
             data["frame_budget"]["gpu"]["predicted"] is not None
         )
         assert data["scene_summaries"][0]["scene_name"] == "L_Main"
+
+    @pytest.mark.anyio
+    async def test_code_files_ingest_scans_in_process(self, async_client, monkeypatch):
+        # No client pre-scan required — raw source in, costed items out.
+        _patch_tier(monkeypatch, "studio")
+        start = await async_client.post(
+            "/predict/session/start",
+            json={"api_key": "k", "engine": "UE5",
+                  "project_name": "Scanned", "platform_profile": "desktop_60"},
+        )
+        session_id = start.json()["session_id"]
+
+        cpp_tick_body = (
+            "void AMyActor::Tick(float DeltaTime)\n"
+            "{\n"
+            "    Super::Tick(DeltaTime);\n"
+            "    if (bShouldSearch)\n"
+            "    {\n"
+            "        for (int i = 0; i < 10; i++)\n"
+            "        {\n"
+            "            if (i > 0)\n"
+            "            {\n"
+            "                GetAllActorsOfClass<AActor>(this, Out);\n"
+            "            }\n"
+            "        }\n"
+            "    }\n"
+            "}\n"
+        )
+        ingest = await async_client.post(
+            "/predict/session/ingest",
+            json={"api_key": "k", "session_id": session_id, "kind": "code_files",
+                  "payload": {"files": [
+                      {"path": "Source/MyActor.cpp", "content": cpp_tick_body}
+                  ]}},
+        )
+        assert ingest.status_code == 200
+        assert ingest.json()["total_ingested"]["code_files"] == 1
+
+        resp = await async_client.post(
+            "/predict/analyze", json={"api_key": "k", "session_id": session_id}
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["stats"]["code_issues_costed"] >= 1
+        assert any(i["rule_id"] == "CP006" for i in data["cost_items"])
 
     @pytest.mark.anyio
     async def test_ingest_unknown_session_404(self, async_client, monkeypatch):

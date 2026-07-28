@@ -4,7 +4,7 @@
 #
 #   GET  /predict/profiles       — platform budget profiles
 #   POST /predict/session/start  — open a batched-ingest session      (M3)
-#   POST /predict/session/ingest — one batch of assets/scene/code/config (M3)
+#   POST /predict/session/ingest — one batch: assets|scene|code|code_files|config
 #   POST /predict/analyze        — produce the PredictiveReport       (M1+)
 #   POST /predict/simulate       — Impact Simulator over a report     (M4)
 #
@@ -76,7 +76,7 @@ async def predict_session_start(payload: SessionStartRequest):
 
 @router.post("/predict/session/ingest")
 async def predict_session_ingest(payload: IngestRequest):
-    """Append one batch (assets | scene | code | config) to a session."""
+    """Append one batch (assets | scene | code | code_files | config) to a session."""
     await enforce_studio(payload.api_key, "/predict/session/ingest", _FEATURE)
     if payload.kind not in INGEST_KINDS:
         raise HTTPException(
