@@ -71,6 +71,7 @@ def _new_session_doc(engine: str, project_name: str, platform_profile: str) -> d
         "assets": [],
         "scenes": [],
         "code_issues": [],
+        "code_files": [],
         "config": {},
         "created_at": _now(),
     }
@@ -105,6 +106,9 @@ _KIND_FIELDS = {
     "assets": ("assets", "assets"),
     "scene": ("scenes", "scenes"),
     "code": ("issues", "code_issues"),
+    # Preferred over "code": raw source Predictive scans itself. See
+    # AnalyzeRequest.code_files in schema.py.
+    "code_files": ("files", "code_files"),
 }
 
 
@@ -168,6 +172,7 @@ def _totals(doc: dict[str, Any]) -> dict[str, int]:
         "assets": len(doc.get("assets") or []),
         "scenes": len(doc.get("scenes") or []),
         "code_issues": len(doc.get("code_issues") or []),
+        "code_files": len(doc.get("code_files") or []),
         "config": 1 if doc.get("config") else 0,
     }
 

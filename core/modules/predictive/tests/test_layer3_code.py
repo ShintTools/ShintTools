@@ -131,17 +131,15 @@ class TestAnalyzeCode:
         assert heavy.items[0].severity == "critical"
         assert light.items[0].severity == "info"
 
-    def test_tick_arrow_title(self):
-        r = analyze_code(
-            [
-                _issue(
-                    "CP013",
-                    rule_name="NewObject in loop",
-                    occurrence_context={"in_tick": True, "loop_depth": 2},
-                )
-            ]
-        )
-        assert r.items[0].title == "Tick → NewObject in loop"
+    def test_title_is_file_location(self):
+        # Location, not a description — the "what" (rule_name) stays
+        # queryable metadata, not the headline.
+        r = analyze_code([_issue("CP013", rule_name="NewObject in loop")])
+        assert r.items[0].title == "Source/Game/Enemy.cpp:42"
+
+    def test_title_falls_back_to_file_without_line(self):
+        r = analyze_code([_issue("CP006", line=None)])
+        assert r.items[0].title == "Source/Game/Enemy.cpp"
 
     def test_gc_and_ram_aggregates(self):
         r = analyze_code([_issue("CSP001"), _issue("CP013")])
@@ -151,3 +149,68 @@ class TestAnalyzeCode:
     def test_item_ids_continue_from_start_index(self):
         r = analyze_code([_issue("CP006")], start_index=7)
         assert r.items[0].item_id == "ci-0007"
+
+
+def _cp006_source() -> str:
+    """A Tick body with GetAllActorsOfClass nested 3 levels deep — Tree-sitter
+    reaches it, the legacy 1-level regex would not."""
+    return (
+        "void AMyActor::Tick(float DeltaTime)\n"
+        "{\n"
+        "    Super::Tick(DeltaTime);\n"
+        "    if (bShouldSearch)\n"
+        "    {\n"
+        "        for (int i = 0; i < 10; i++)\n"
+        "        {\n"
+        "            if (i > 0)\n"
+        "            {\n"
+        "                GetAllActorsOfClass<AActor>(this, Out);\n"
+        "            }\n"
+        "        }\n"
+        "    }\n"
+        "}\n"
+    )
+
+
+class TestCodeFilesScan:
+    """Predictive scans code itself instead of trusting a client that
+    pre-ran the Code Validator — the operational coupling the redesign
+    removes."""
+
+    def test_code_files_are_scanned_in_process(self):
+        r = analyze_code(
+            [],
+            code_files=[{"path": "Source/MyActor.cpp", "content": _cp006_source()}],
+            engine="unreal",
+        )
+        assert r.costed >= 1
+        rule_ids = {i.rule_id for i in r.items}
+        assert "CP006" in rule_ids
+
+    def test_code_files_yield_same_rule_as_legacy_code_issues(self):
+        # Same underlying pattern, both paths — base cost bands must agree.
+        # Not the same SCALED numbers: self-scanning populates
+        # occurrence_context (in_tick/loop_depth) the legacy path never
+        # sends, so this is an intentional behaviour delta, not a bug.
+        via_files = analyze_code(
+            [],
+            code_files=[{"path": "Source/MyActor.cpp", "content": _cp006_source()}],
+            engine="unreal",
+        )
+        via_issues = analyze_code([_issue("CP006")])
+        assert via_files.items[0].rule_id == via_issues.items[0].rule_id == "CP006"
+
+    def test_unknown_extension_yields_no_issues(self):
+        r = analyze_code(
+            [], code_files=[{"path": "notes.txt", "content": "hello"}], engine="unreal"
+        )
+        assert r.items == [] and r.costed == 0 and r.uncosted == 0
+
+    def test_legacy_and_code_files_union(self):
+        r = analyze_code(
+            [_issue("CP002")],
+            code_files=[{"path": "Source/MyActor.cpp", "content": _cp006_source()}],
+            engine="unreal",
+        )
+        rule_ids = {i.rule_id for i in r.items}
+        assert {"CP002", "CP006"} <= rule_ids

@@ -2,11 +2,17 @@
 #
 # Layer 3 — Deep Code Intelligence.
 #
-# Takes validator issues (the /validate/* output the client already has) and
-# quantifies them: each issue whose rule has an entry in rule_costs.yaml
-# becomes a CostItem with per-dimension impact bands and a remediation
-# recovery. The spec's literal target: "Tick → GetAllActorsOfClass:
-# impacto estimado +1.4 ms CPU/frame".
+# Two ways in: legacy client-supplied ``code_issues`` (the client already
+# ran /validate/* itself and forwards its output — kept for backward
+# compat with the frozen v1.0 contract), and ``code_files`` (raw source —
+# Predictive scans it in-process via code_scan.scan_code_files, the same
+# way Layer 1 calls lod_auditor.audit_assets in-process instead of making
+# the client pre-run the LOD audit). Both paths feed the same costing loop.
+#
+# Each issue whose rule has an entry in rule_costs.yaml becomes a CostItem
+# with per-dimension impact bands and a remediation recovery, titled by
+# location ("file:line") — not a description; that belongs to the Code
+# Validator's own findings UI.
 #
 # Issues without a cost entry are counted (uncosted), never priced — the
 # report's stats expose exactly how much of the code surface the budget
@@ -18,6 +24,7 @@ from typing import Any
 
 from predictive.cost_model.prediction import Prediction, sum_predictions
 from predictive.cost_model.rule_costs import apply_rule_cost, load_rule_costs
+from predictive.layers.code_scan import scan_code_files
 from predictive.schema import CostItem, Remediation
 
 # Dimensions Layer 3 aggregates into budget totals.
@@ -60,28 +67,32 @@ def _severity_for(impact: dict[str, Prediction]) -> str:
 
 
 def _title_for(issue: dict[str, Any]) -> str:
-    """"Tick → GetAllActorsOfClass" style title when context allows."""
-    rule_name = str(issue.get("rule_name") or issue.get("rule_id") or "issue")
-    context = issue.get("occurrence_context") or {}
-    if context.get("in_tick"):
-        # The rule names already read "X in Tick/Update" — the arrow form is
-        # only added when the plain name doesn't mention the hot path.
-        lowered = rule_name.lower()
-        if "tick" not in lowered and "update" not in lowered:
-            return f"Tick → {rule_name}"
-    return rule_name
+    """Location, not a description — "file:line", falling back to just the
+    file when no line is known. What the pattern IS (rule_name/rule_id)
+    stays queryable metadata on the item, not the headline."""
+    path = str(issue.get("file") or "")
+    line = issue.get("line")
+    if path and line:
+        return f"{path}:{line}"
+    return path or str(issue.get("rule_id") or "issue")
 
 
 def analyze_code(
     code_issues: list[dict[str, Any]],
     scene_actor_count: int = 0,
     start_index: int = 0,
+    code_files: list[dict[str, Any]] | None = None,
+    engine: str = "unreal",
 ) -> Layer3Result:
     """Quantify validator issues into CostItems + budget aggregates.
 
     ``scene_actor_count`` (from the scenes section, when present) drives the
     per_scene_actors scaling — a GetAllActorsOfClass in a 20k-actor world is
     not priced like one in an empty test map.
+
+    ``code_files`` (raw ``{"path", "content"}`` source) is scanned in-process
+    via code_scan.scan_code_files and unioned with any legacy ``code_issues``
+    the client already forwards — both feed the same costing loop below.
     """
     items: list[CostItem] = []
     cpu_parts: list[Prediction] = []
@@ -90,7 +101,8 @@ def analyze_code(
     uncosted = 0
     index = start_index
 
-    for issue in code_issues:
+    scanned = scan_code_files(code_files, engine) if code_files else []
+    for issue in list(code_issues) + scanned:
         priced = apply_rule_cost(issue, scene_actor_count)
         if priced is None:
             uncosted += 1
