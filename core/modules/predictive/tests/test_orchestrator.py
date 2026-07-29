@@ -193,3 +193,132 @@ class TestCodeLayer:
     def test_calibration_version_comes_from_the_table(self):
         report = analyze_oneshot(_request())
         assert report.calibration_version == "2026.07-uncalibrated-r1"
+
+
+class TestClientReportedRegressions:
+    """Six defects reported from the live Unity client (2026-07-29).
+
+    All were Core-side: the report is the shared contract, so a display
+    problem in one engine's client is a Core problem for both.
+    """
+
+    _CS_FILE = {
+        "path": "Assets/Scripts/Enemy.cs",
+        "content": (
+            "using System.Linq;\n"
+            "using UnityEngine;\n"
+            "public class Enemy : MonoBehaviour {\n"
+            "  void Update() {\n"
+            "    var all = GameObject.FindObjectsOfType<Enemy>()"
+            ".Where(e => e != null).ToList();\n"
+            "  }\n"
+            "}"
+        ),
+    }
+
+    def _unity_request(self, **kw) -> AnalyzeRequest:
+        base = dict(
+            engine="Unity",
+            project_name="UnityClient",
+            platform_profile="mobile_30",
+            assets=[
+                {"asset_path": "Assets/T_Rock.png", "asset_type": "Texture",
+                 "width": 4096, "height": 4096, "format": "RGBA32",
+                 "mip_count": 1},
+            ],
+        )
+        base.update(kw)
+        return AnalyzeRequest(**base)
+
+    def test_frame_line_is_the_bottleneck_not_the_sum(self):
+        """CPU and GPU are pipelined — frame = max(cpu, gpu), never cpu+gpu."""
+        report = analyze_oneshot(
+            self._unity_request(
+                scenes=[{
+                    "scene_name": "Arena",
+                    "update_scripts": 400,
+                    "lights": [{"type": "Point", "mobility": "Movable",
+                                "casts_shadows": True, "radius": 1500}],
+                }],
+                code_files=[self._CS_FILE],
+            )
+        )
+        frame = report.frame_budget.frame
+        cpu = report.frame_budget.cpu.predicted.expected
+        gpu = report.frame_budget.gpu.predicted.expected
+        assert frame.predicted_ms == round(max(cpu, gpu), 3)
+        assert frame.predicted_ms < cpu + gpu  # the reported mismatch
+        assert frame.bottleneck in ("cpu", "gpu")
+        assert frame.budget_ms > 0
+
+    def test_breakdown_reconciles_with_its_total(self):
+        report = analyze_oneshot(
+            self._unity_request(
+                scenes=[{"scene_name": "Arena", "update_scripts": 400}],
+                code_files=[self._CS_FILE],
+            )
+        )
+        line = report.frame_budget.cpu
+        assert abs(
+            sum(b["expected_ms"] for b in line.breakdown)
+            - line.predicted.expected
+        ) < 0.02
+        # The table shows less than the total (aggregate dispatch isn't
+        # itemized) — stated explicitly rather than looking like lost time.
+        assert line.itemized_ms <= line.predicted.expected + 0.01
+
+    def test_duplicate_assets_yield_one_row_and_are_not_double_counted(self):
+        asset = {"asset_path": "Assets/T_Rock.png", "asset_type": "Texture",
+                 "width": 4096, "height": 4096, "format": "RGBA32",
+                 "mip_count": 1}
+        once = analyze_oneshot(self._unity_request(assets=[asset]))
+        twice = analyze_oneshot(self._unity_request(assets=[asset, dict(asset)]))
+        assert len(twice.cost_items) == len(once.cost_items)
+        assert twice.stats.assets_analyzed == once.stats.assets_analyzed
+        # The duplicate must not inflate the project's VRAM either.
+        assert twice.memory.vram.predicted.expected == \
+            once.memory.vram.predicted.expected
+
+    def test_two_rules_on_one_line_merge_into_one_row(self):
+        report = analyze_oneshot(
+            self._unity_request(code_files=[self._CS_FILE])
+        )
+        code_rows = [i for i in report.cost_items if i.layer == 3]
+        titles = [i.title for i in code_rows]
+        assert len(titles) == len(set(titles))  # no visually identical rows
+        # The merged row still credits every contributing rule.
+        merged = [i for i in code_rows if len(i.source.get("rule_ids", [])) > 1]
+        assert merged, "expected LINQ + FindObjectsOfType to share a line"
+
+    def test_no_zero_cost_rows_and_every_row_states_its_unit(self):
+        report = analyze_oneshot(
+            self._unity_request(code_files=[self._CS_FILE])
+        )
+        for item in report.cost_items:
+            assert any(p.expected > 0 for p in item.impact.values())
+            assert item.primary_cost is not None
+            assert item.primary_cost.unit  # "MB" / "ms" — never a bare number
+            assert item.primary_cost.value > 0
+        # An asset is priced in MB, not ms: a fixed "ms" column showed 0.
+        asset_row = next(i for i in report.cost_items if i.layer == 1)
+        assert asset_row.primary_cost.unit == "MB"
+
+    def test_scene_path_is_echoed_back_for_icon_resolution(self):
+        report = analyze_oneshot(
+            self._unity_request(
+                scenes=[{"scene_name": "Arena",
+                         "scene_path": "Assets/Scenes/Arena.unity",
+                         "update_scripts": 10}],
+            )
+        )
+        summary = report.scene_summaries[0]
+        assert summary.scene_name == "Arena"
+        assert summary.scene_path == "Assets/Scenes/Arena.unity"
+
+    def test_code_files_removes_the_code_validator_pre_run(self):
+        """The client sends raw source; the Core scans it itself."""
+        report = analyze_oneshot(
+            self._unity_request(code_files=[self._CS_FILE], code_issues=[])
+        )
+        assert report.stats.code_issues_costed > 0
+        assert any(i.layer == 3 for i in report.cost_items)
