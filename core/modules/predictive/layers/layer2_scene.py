@@ -84,6 +84,9 @@ def analyze_scenes(
 
     for scene in scenes:
         name = str(scene.get("scene_name", "") or "unnamed")
+        # "path" is accepted as a legacy alias — the UE5 collector used it
+        # before scene_path was named in the contract.
+        scene_path = str(scene.get("scene_path") or scene.get("path") or "")
         max_actors = max(max_actors, int(scene.get("actor_count", 0) or 0))
 
         scene_cpu = _dispatch_costs(scene)
@@ -110,7 +113,12 @@ def analyze_scenes(
                                 f" light — {name}"
                             ),
                             rule_id="SCENE_LIGHT",
-                            source={"kind": "scene", "path": name},
+                            source={
+                                "kind": "scene",
+                                "path": scene_path or name,
+                                "scene_name": name,
+                                "scene_path": scene_path,
+                            },
                             impact={"gpu_ms_frame": pred},
                             remediation=Remediation(
                                 action=(
@@ -165,6 +173,8 @@ def analyze_scenes(
                         "kind": "blueprint",
                         "path": str(bp.get("path", "")),
                         "instances_in_scene": instances,
+                        "scene_name": name,
+                        "scene_path": scene_path,
                     },
                     impact={"cpu_ms_frame": pred},
                     remediation=Remediation(
@@ -193,6 +203,7 @@ def analyze_scenes(
         summaries.append(
             SceneSummary(
                 scene_name=name,
+                scene_path=scene_path,
                 complexity_score=complexity_score(
                     scene, shadowed, particle_count
                 ),

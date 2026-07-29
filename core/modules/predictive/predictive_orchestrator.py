@@ -22,11 +22,14 @@ from predictive.layers import (
 )
 from predictive.layers.layer1_assets import normalize_engine
 from predictive.schema import (
+    DIMENSION_DISPLAY,
     SCHEMA_VERSION,
     AnalyzeRequest,
     BudgetLine,
     BuildReport,
+    CostValue,
     FrameBudget,
+    FrameLine,
     MemoryBudgetLine,
     MemoryReport,
     PredictiveReport,
@@ -46,6 +49,103 @@ _BUDGET_ATTR = {
     "ram_mb": "ram_budget_mb",
     "build_mb": "build_advisory_mb",
 }
+
+
+def _budget_for(profile, dim: str) -> float:
+    attr = _BUDGET_ATTR.get(dim)
+    return float(getattr(profile, attr, 0) or 0) if attr else 0.0
+
+
+def _set_primary_cost(item, profile) -> None:
+    """Pick the dimension a one-column table should render for this row.
+
+    Dominance is budget-normalized, not raw magnitude — 40 MB of VRAM and
+    0.4 ms of CPU aren't comparable as numbers, only as shares of their own
+    budget. Without this a client with a fixed "ms" column shows 0 ms for
+    every asset (assets cost MB, not ms), which reads as "free".
+    """
+    best_dim, best_share, best_expected = "", -1.0, 0.0
+    for dim, pred in item.impact.items():
+        budget = _budget_for(profile, dim)
+        share = pred.expected / budget if budget else pred.expected
+        if share > best_share:
+            best_dim, best_share, best_expected = dim, share, pred.expected
+
+    if not best_dim:
+        return
+    unit, label = DIMENSION_DISPLAY.get(best_dim, ("", best_dim))
+    item.primary_cost = CostValue(
+        dimension=best_dim, value=best_expected, unit=unit, label=label
+    )
+
+
+def _has_cost(item) -> bool:
+    """Drop rows that price out to nothing in every dimension. A 0-cost row
+    is noise: it can't be ranked, can't be simulated, and reads as a bug."""
+    return any(pred.expected > 0 for pred in item.impact.values())
+
+
+def _with_residual(breakdown: list[dict], predicted) -> list[dict]:
+    """Guarantee the breakdown sums to ``predicted``.
+
+    The aggregate labels normally cover the whole total; this closes any gap
+    left by a term that has no label of its own, so a client can always
+    render the breakdown as a stacked bar that reaches the total.
+    """
+    if predicted is None:
+        return breakdown
+    residual = predicted.expected - sum(b["expected_ms"] for b in breakdown)
+    if residual > 0.01:
+        return breakdown + [
+            {"label": "Other", "expected_ms": round(residual, 3)}
+        ]
+    return breakdown
+
+
+def _itemized_ms(items, dimension: str) -> float:
+    """How much of a dimension's total is represented as its own table row.
+
+    Scene dispatch is priced in aggregate but only individually actionable
+    offenders become rows, so summing the table legitimately falls short of
+    the budget total. Reporting the covered figure lets a client show
+    "rows account for X of Y ms" instead of looking like it lost time.
+    """
+    return round(
+        sum(
+            item.impact[dimension].expected
+            for item in items
+            if dimension in item.impact
+        ),
+        3,
+    )
+
+
+def _frame_line(cpu_total, gpu_total, profile) -> FrameLine:
+    """Predicted frame time from the CPU and GPU axes.
+
+    Frame time is NOT cpu + gpu. The two run pipelined — the GPU renders
+    frame N while the CPU builds N+1 — so the frame is paced by whichever
+    axis is slower. Adding them double-counts the overlapped work and
+    overstates the frame by roughly the smaller axis, which is exactly the
+    mismatch a client hits when it sums the two lines and compares against
+    the budget.
+    """
+    cpu_ms = cpu_total.expected if cpu_total else 0.0
+    gpu_ms = gpu_total.expected if gpu_total else 0.0
+    if cpu_total is None and gpu_total is None:
+        return FrameLine(budget_ms=profile.frame_budget_ms)
+
+    bottleneck = "cpu" if cpu_ms >= gpu_ms else "gpu"
+    return FrameLine(
+        budget_ms=profile.frame_budget_ms,
+        predicted_ms=round(max(cpu_ms, gpu_ms), 3),
+        bottleneck=bottleneck,
+        note=(
+            "Frame time is paced by the slower axis, not the sum: CPU and GPU "
+            f"work overlaps across frames. {bottleneck.upper()}-bound at "
+            f"{max(cpu_ms, gpu_ms):.2f} ms (CPU {cpu_ms:.2f} / GPU {gpu_ms:.2f})."
+        ),
+    )
 
 
 def _impact_key(item, profile) -> tuple:
@@ -80,9 +180,11 @@ def analyze_oneshot(request: AnalyzeRequest) -> PredictiveReport:
 
     # Rank items: budget-normalized cost magnitude first (an expensive
     # unflagged asset outranks a cheap flagged issue), severity as tiebreak.
-    items = sorted(l1.items + l2.items + l3.items, key=lambda i: _impact_key(i, profile))
+    priced_items = [i for i in l1.items + l2.items + l3.items if _has_cost(i)]
+    items = sorted(priced_items, key=lambda i: _impact_key(i, profile))
     for rank, item in enumerate(items, start=1):
         item.rank = rank
+        _set_primary_cost(item, profile)
 
     # Scene dispatch + code patterns share the CPU budget.
     has_cpu_data = bool(l3.items or l2.scenes_analyzed)
@@ -126,7 +228,7 @@ def analyze_oneshot(request: AnalyzeRequest) -> PredictiveReport:
             cpu=BudgetLine(
                 budget_ms=profile.cpu_budget_ms,
                 predicted=cpu_total if has_cpu_data else None,
-                breakdown=(
+                breakdown=_with_residual(
                     (
                         [{"label": "Code patterns",
                           "expected_ms": l3.cpu_total.expected}]
@@ -138,18 +240,29 @@ def analyze_oneshot(request: AnalyzeRequest) -> PredictiveReport:
                           "expected_ms": l2.cpu_total.expected}]
                         if l2.scenes_analyzed
                         else []
-                    )
+                    ),
+                    cpu_total if has_cpu_data else None,
                 ),
+                itemized_ms=_itemized_ms(items, "cpu_ms_frame"),
             ),
             gpu=BudgetLine(
                 budget_ms=profile.gpu_budget_ms,
                 predicted=l2.gpu_total if l2.scenes_analyzed else None,
-                breakdown=(
-                    [{"label": "Dynamic lights + GPU particles",
-                      "expected_ms": l2.gpu_total.expected}]
-                    if l2.scenes_analyzed
-                    else []
+                breakdown=_with_residual(
+                    (
+                        [{"label": "Dynamic lights + GPU particles",
+                          "expected_ms": l2.gpu_total.expected}]
+                        if l2.scenes_analyzed
+                        else []
+                    ),
+                    l2.gpu_total if l2.scenes_analyzed else None,
                 ),
+                itemized_ms=_itemized_ms(items, "gpu_ms_frame"),
+            ),
+            frame=_frame_line(
+                cpu_total if has_cpu_data else None,
+                l2.gpu_total if l2.scenes_analyzed else None,
+                profile,
             ),
         ),
         memory=MemoryReport(

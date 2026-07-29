@@ -167,7 +167,18 @@ def analyze_assets(
     items: list[CostItem] = []
     items_by_path: dict[str, CostItem] = {}
     index = start_index
+    seen_paths: set[str] = set()
+    duplicates_skipped = 0
     for asset in assets:
+        # One row per asset path. A client that walks several search roots (or
+        # re-sends a chunk on retry) can list the same asset twice; pricing it
+        # twice both duplicates the table row AND double-counts its VRAM in the
+        # project total, so the second sighting is dropped outright.
+        path = str(asset.get("asset_path", ""))
+        if path and path in seen_paths:
+            duplicates_skipped += 1
+            continue
+
         vram = asset_vram(asset)
         if vram is None:
             continue
@@ -175,6 +186,8 @@ def analyze_assets(
         vram_parts.append(vram)
         build_parts.append(build)
 
+        if path:
+            seen_paths.add(path)
         item = _base_item(asset, vram, build, index)
         items.append(item)
         items_by_path[item.source.get("path", "")] = item
@@ -205,5 +218,7 @@ def analyze_assets(
         vram_total=vram_total,
         build_total=build_total,
         items=items,
-        assets_analyzed=len(assets),
+        # Deduped, so this reconciles with the row count instead of counting
+        # the same asset twice when the client sends it twice.
+        assets_analyzed=len(assets) - duplicates_skipped,
     )

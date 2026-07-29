@@ -273,7 +273,8 @@ it is the simulator's input.**
       "breakdown": [
         {"label": "Code patterns", "expected_ms": 0.68},
         {"label": "Scene dispatch", "expected_ms": 0.86}
-      ]
+      ],
+      "itemized_ms": 0.68
     },
     "gpu": {
       "budget_ms": 22.0,
@@ -282,7 +283,14 @@ it is the simulator's input.**
                     "basis": "Σ dynamic lights + GPU particles across 1 scenes"},
       "breakdown": [
         {"label": "Dynamic lights + GPU particles", "expected_ms": 0.6}
-      ]
+      ],
+      "itemized_ms": 0.6
+    },
+    "frame": {
+      "budget_ms": 33.3,
+      "predicted_ms": 1.54,
+      "bottleneck": "cpu",
+      "note": "Frame time is paced by the slower axis, not the sum: CPU and GPU work overlaps across frames. CPU-bound at 1.54 ms (CPU 1.54 / GPU 0.60)."
     }
   },
   "memory": {
@@ -318,6 +326,8 @@ it is the simulator's input.**
                     "confidence": "high",
                     "basis": "ASTC_6x6 4096×4096, mips included"}
       },
+      "primary_cost": {"dimension": "vram_mb", "value": 9.48,
+                       "unit": "MB", "label": "VRAM"},
       "remediation": {
         "action": "Recoverable: 7.11 MB VRAM",
         "recovery": {
@@ -333,6 +343,7 @@ it is the simulator's input.**
   "scene_summaries": [
     {
       "scene_name": "MainScene",
+      "scene_path": "Assets/Scenes/MainScene.unity",
       "complexity_score": 30,
       "runtime_cost": {
         "cpu_ms_frame": {"expected": 0.86, "min": 0.36, "max": 2.06,
@@ -367,6 +378,37 @@ Reading the report:
   portion — `impact >= remediation.recovery` when a remediation exists.
   Every asset appears in `cost_items` (name + cost), whether or not it has
   a remediation; `title` never contains a validator sentence.
+
+### Rendering the table and the frame
+
+- **`frame_budget.frame` is the frame figure — never add `cpu` + `gpu`.**
+  The two axes are pipelined (the GPU renders frame N while the CPU builds
+  N+1), so the frame is paced by the slower one. `frame.bottleneck` names
+  it and `frame.note` is a ready-made explanation string. Summing the axes
+  overstates the frame by roughly the smaller one.
+- **Use `CostItem.primary_cost` for a one-column table.** Items are priced
+  in different units — an asset costs MB, a Tick pattern costs ms. A fixed
+  "ms" column renders `0` for every asset, which reads as "free" when it
+  actually means "not measured in ms". `primary_cost` carries the dominant
+  `dimension`, its `value`, `unit` ("MB" / "ms" / "MB/min") and a display
+  `label`. It is never null on a returned report.
+- **No row ever prices to zero.** Items whose every dimension is 0 are
+  dropped before the report is built — a 0-cost row can't be ranked or
+  simulated.
+- **Rows are unique.** An asset sent twice is priced once (it would
+  otherwise double-count VRAM), and two rules firing on the same
+  `file:line` merge into one row whose `source.rule_ids` lists every
+  contributing rule.
+- **`breakdown` always sums to `predicted`**, so it stacks cleanly.
+  `itemized_ms` says how much of that total appears as its own row: the
+  aggregate scene dispatch is priced whole but only individually actionable
+  offenders earn a row, so the table legitimately sums to less than the
+  total. Render it as "rows account for `itemized_ms` of `predicted` ms"
+  rather than treating the gap as missing data.
+- **`scene_summaries[].scene_path`** echoes the digest's `scene_path` so a
+  client can resolve a scene back to its asset (icon, thumbnail,
+  open-in-editor). Send `scene_path` in the digest to get it back; it comes
+  back empty if you don't.
 
 ## Impact Simulator
 

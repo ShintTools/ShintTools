@@ -77,6 +77,70 @@ def _title_for(issue: dict[str, Any]) -> str:
     return path or str(issue.get("rule_id") or "issue")
 
 
+_SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2}
+
+
+def _merge_by_location(items: list[CostItem], start_index: int) -> list[CostItem]:
+    """Collapse items that share a source location into one row.
+
+    Titles are locations ("file:line"), so two different rules firing on the
+    same line render as two visually identical rows — the "repeated elements"
+    the table shows. They are genuinely distinct patterns, but the row's unit
+    of meaning is the location, so their costs are summed into a single row
+    and the contributing rules are kept in ``source.rule_ids``.
+
+    Budget totals are unaffected: the same Predictions are summed here as
+    were accumulated into cpu/gc/ram totals above.
+    """
+    merged: dict[tuple, CostItem] = {}
+    order: list[tuple] = []
+
+    for item in items:
+        key = (item.source.get("path", ""), item.source.get("line"))
+        if not key[0]:  # no location to merge on — keep as its own row
+            key = ("\x00unkeyed", item.item_id)
+
+        existing = merged.get(key)
+        if existing is None:
+            item.source["rule_ids"] = [item.rule_id] if item.rule_id else []
+            merged[key] = item
+            order.append(key)
+            continue
+
+        for dim, pred in item.impact.items():
+            existing.impact[dim] = (
+                existing.impact[dim].plus(pred) if dim in existing.impact else pred
+            )
+        if item.remediation and existing.remediation:
+            for dim, pred in item.remediation.recovery.items():
+                existing.remediation.recovery[dim] = (
+                    existing.remediation.recovery[dim].plus(pred)
+                    if dim in existing.remediation.recovery
+                    else pred
+                )
+            existing.remediation.auto_fixable = (
+                existing.remediation.auto_fixable and item.remediation.auto_fixable
+            )
+        elif item.remediation:
+            existing.remediation = item.remediation
+
+        if _SEVERITY_ORDER.get(item.severity, 1) < _SEVERITY_ORDER.get(
+            existing.severity, 1
+        ):
+            existing.severity = item.severity
+        if item.rule_id and item.rule_id not in existing.source["rule_ids"]:
+            existing.source["rule_ids"].append(item.rule_id)
+
+    result = [merged[key] for key in order]
+    # Re-number so ids stay contiguous after the merge (the simulator selects
+    # by item_id, so they must be stable within the report).
+    for offset, item in enumerate(result):
+        item.item_id = f"ci-{start_index + offset:04d}"
+        if len(item.source.get("rule_ids", [])) > 1:
+            item.rule_id = ", ".join(item.source["rule_ids"])
+    return result
+
+
 def analyze_code(
     code_issues: list[dict[str, Any]],
     scene_actor_count: int = 0,
@@ -139,6 +203,7 @@ def analyze_code(
         index += 1
 
     costed = len(items)
+    items = _merge_by_location(items, start_index)
     table = load_rule_costs()
     cpu_total = sum_predictions(
         cpu_parts,
