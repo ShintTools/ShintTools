@@ -31,6 +31,19 @@ RUN CMAKE_ARGS="-DGGML_NATIVE=OFF -DLLAMA_NATIVE=OFF" \
 
 COPY . .
 
+# Strip every tests/ tree (root ``tests/`` + each module's own ``tests/``,
+# fixtures and conftest.py included) from the shipped image. `COPY . .`
+# above had no ``.dockerignore`` to stop it, so both editions were baking
+# ~75 test files straight into the container filesystem — reachable by any
+# studio that opens a shell in the image, regardless of tier. Tests run in
+# CI against the source checkout, never inside the built image, so nothing
+# here is needed at runtime; `setup_cython.py` already documented the
+# "tests/ not shipped to client" intent, this just enforces it. Applies to
+# BOTH the free and paid edition builds — this is a production-hygiene
+# strip, not a tier gate.
+RUN find . -type d -name tests -prune -exec rm -rf {} + && \
+    find . -type f \( -name "conftest.py" -o -name "test_*.py" -o -name "*_test.py" \) -delete
+
 # Compile protected modules -> .so, then strip sources so the image ships
 # only binaries for proprietary logic. Cython is installed inline and removed
 # after compilation to keep the final image lean.
