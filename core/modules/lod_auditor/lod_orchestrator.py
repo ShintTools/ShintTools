@@ -81,7 +81,15 @@ from lod_auditor.rules.lod_textures import (
     check_lt014,
     check_lt016,
 )
+from lod_auditor.recommended_filter import filter_recommended
 from lod_auditor.schema import AuditResponse, AuditSummary, Finding
+from lod_auditor.vram_model import (
+    effective_texture_size,
+    estimate_texture_vram_mb,
+    is_analyzable_texture_format,
+    resolve_texture_bpp,
+    texture_asset_vram_mb,
+)
 
 # A rule detector — per-asset check_xxNNN(asset, engine[, thresholds]) or a
 # cross-asset check_lxNNN(assets, engine[, thresholds]). The registries mix both
@@ -233,6 +241,12 @@ CROSS_RULES: list[RuleFn] = [
 # the same asset — one finding per root cause (§18.1 LM008).
 _SUPPRESSED_BY: dict[str, list[str]] = {"LM008": ["LM001"]}
 
+# Rules whose fix removes the asset outright rather than optimising it. Their
+# saving is the asset's full cost, so _clamp_savings must not reconcile them
+# against the resize/recompress model (which would cap a deletion at whatever
+# a resize would have saved).
+_REMOVAL_RULES: frozenset[str] = frozenset({"LX001", "LX005"})
+
 # ── Threshold injection ───────────────────────────────────────────────────────
 #
 # A rule "opts in" to per-request thresholds simply by declaring a
@@ -339,6 +353,17 @@ def _dispatch_asset(
 
     rules: list = []
     if asset_type in _TEXTURE_ASSET_TYPES:
+        # Skip textures we cannot price honestly: palette-indexed payloads
+        # (whose cost is the palette + index table, not width*height*bpp) and
+        # unmapped formats the client sent no measurement for. Both would
+        # otherwise be priced through the RGBA8 fallback — inventing a
+        # baseline, and from it inventing savings, "uncompressed" verdicts and
+        # resize recommendations for a texture nobody can characterise. No
+        # issues, no fixes, no savings: they are left out of the audit.
+        if not is_analyzable_texture_format(
+            asset.get("compression", "") or "", asset.get("size_kb")
+        ):
+            return []
         rules.extend(TEXTURE_RULES)
         rules.extend(MOBILE_RULES_BY_TYPE.get("Texture", []))
     if asset_type in _MATERIAL_ASSET_TYPES:
@@ -375,6 +400,26 @@ def _dispatch_asset(
     return _apply_suppression(findings)
 
 
+def _analyzable_assets(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop textures the audit cannot price (indexed / unmapped-unmeasured).
+
+    Mirrors the guard in _dispatch_asset so cross-asset rules see the same
+    world the per-asset pass did — otherwise an excluded texture would still
+    surface through LX001 (dead), LX005 (duplicate) or LT015 (streaming pool).
+    Non-texture assets pass through untouched.
+    """
+    kept: list[dict[str, Any]] = []
+    for asset in assets:
+        if asset.get("asset_type", "") in _TEXTURE_ASSET_TYPES and (
+            not is_analyzable_texture_format(
+                asset.get("compression", "") or "", asset.get("size_kb")
+            )
+        ):
+            continue
+        kept.append(asset)
+    return kept
+
+
 def _apply_suppression(findings: list[Finding]) -> list[Finding]:
     """Drop a finding when any of its _SUPPRESSED_BY suppressors also fired on
     the same asset — one finding per root cause (§18.1 LM008)."""
@@ -404,6 +449,182 @@ def _run_cross_rules(
         else:
             findings.extend(cross_fn(assets, engine))
     return findings
+
+
+def _sanitize_recommended(findings: list[Finding], engine: str) -> None:
+    """Reduce every finding's ``recommended`` to what *engine*'s client can apply.
+
+    Rules build ``recommended`` for two audiences at once — applicable
+    properties and analysis values (vram_mb, confidence, advisory strings).
+    Only the former may cross the wire; see recommended_filter for why the
+    whitelist is per-engine and why it lives at the boundary rather than at
+    each rule.
+
+    A finding whose recommendation filters down to nothing cannot be applied
+    by definition, so ``auto_fixable`` is corrected to False. Leaving it True
+    would have the client offer a "Fix" button that resolves to a no-op.
+    """
+    for finding in findings:
+        finding.recommended = filter_recommended(
+            finding.category, engine, finding.recommended
+        )
+        if not finding.recommended:
+            finding.auto_fixable = False
+
+
+def _clamp_savings(findings: list[Finding], assets: list[dict[str, Any]]) -> None:
+    """Make per-asset savings physically coherent.
+
+    Three invariants, all previously violable:
+
+    1. No saving is negative. A rule whose "after" estimate lands above its
+       "before" (a resize that squares a long strip, an unmapped format priced
+       differently at two sizes) would otherwise subtract from the totals.
+
+    2. The savings claimed against one asset never exceed what that asset
+       actually occupies — the direct cause of the negative "potential
+       memory" figure in the panel, which renders as `current - claimed`.
+
+    3. Overlapping optimisations are reconciled against their *joint* result,
+       not summed. Rules price independently and each measures against the
+       same baseline, so a 4K uncompressed texture collected a full "resize"
+       saving AND a full "compress" saving — 128 MB claimed against an 85 MB
+       texture. Capping at 85 MB satisfies (2) but still implies the texture
+       ends up free. What actually happens is 2048 + BC7 = 5.33 MB resident,
+       so the honest figure is 80 MB. This recomputes the texture's cost with
+       every recommendation applied at once and distributes that real total
+       across the contributing findings in proportion to their individual
+       claims — preserving their relative weight (and the top-offenders
+       ranking) while making both the parts and the sum true.
+
+    Only texture VRAM has a well-defined joint model here — mesh and material
+    savings are priced against buffers/instructions this function has no
+    baseline for, so they are left alone beyond the non-negative rule.
+    """
+    for finding in findings:
+        if finding.estimated_saving.vram_mb < 0:
+            finding.estimated_saving.vram_mb = 0.0
+        if finding.estimated_saving.build_size_mb < 0:
+            finding.estimated_saving.build_size_mb = 0.0
+        if finding.estimated_saving.shader_instructions < 0:
+            finding.estimated_saving.shader_instructions = 0
+
+    by_path: dict[str, dict[str, Any]] = {
+        str(a.get("asset_path", "")): a for a in assets if a.get("asset_path")
+    }
+
+    # Group every texture finding per asset — including the ones claiming no
+    # VRAM (LT002/LT009 turning mips ON, which *adds* 33%). The joint state
+    # must reflect everything we are telling the studio to do, or the reported
+    # saving contradicts our own advice.
+    per_asset: dict[str, list[Finding]] = {}
+    for finding in findings:
+        if finding.category != "Texture":
+            continue
+        per_asset.setdefault(finding.asset_path, []).append(finding)
+
+    for path, group in per_asset.items():
+        claimants = [f for f in group if f.estimated_saving.vram_mb > 0]
+        if not claimants:
+            continue
+        asset = by_path.get(path)
+        if asset is None:
+            continue
+        current = texture_asset_vram_mb(asset)
+        if current <= 0:
+            continue  # unpriceable asset — no honest baseline to reconcile against
+
+        # Removing the asset and optimising it are alternative strategies, not
+        # additive ones: deleting a dead 4K texture frees all of it, and the
+        # "resize it" saving is then moot (and vice versa). Deletion dominates,
+        # so it claims the asset's full cost and the optimisation findings on
+        # the same asset drop to zero rather than being summed alongside it —
+        # summing them was claiming 277 MB against an 85 MB texture.
+        removals = [f for f in claimants if f.rule_id in _REMOVAL_RULES]
+        if removals:
+            share = round(current / len(removals), 2)
+            for finding in removals:
+                finding.estimated_saving.vram_mb = share
+            for finding in claimants:
+                if finding not in removals:
+                    finding.estimated_saving.vram_mb = 0.0
+            continue
+
+        achievable = round(
+            max(0.0, current - _post_fix_texture_vram(asset, group)), 2
+        )
+        claimed = sum(f.estimated_saving.vram_mb for f in claimants)
+        if claimed <= achievable or claimed <= 0:
+            continue
+
+        scale = achievable / claimed
+        for finding in claimants:
+            finding.estimated_saving.vram_mb = round(
+                finding.estimated_saving.vram_mb * scale, 2
+            )
+        # Rounding each share to 2dp leaves the parts off the total by a few
+        # hundredths; settle the remainder on the largest share so the
+        # per-finding figures still add up to the asset's real achievable
+        # saving (the panel sums them and would otherwise drift past it).
+        drift = round(
+            achievable - sum(f.estimated_saving.vram_mb for f in claimants), 2
+        )
+        if drift:
+            biggest = max(claimants, key=lambda f: f.estimated_saving.vram_mb)
+            biggest.estimated_saving.vram_mb = max(
+                0.0, round(biggest.estimated_saving.vram_mb + drift, 2)
+            )
+
+
+def _post_fix_texture_vram(asset: dict[str, Any], group: list[Finding]) -> float:
+    """Resident VRAM of *asset* with every recommendation in *group* applied.
+
+    Only three recommended fields move VRAM — max_texture_size, compression
+    and mips_enabled — and both engines expose all three, so the joint figure
+    is identical for Unity and UE5 given the same findings. Where several
+    findings recommend the same field, the most aggressive value wins: this
+    figure is the *potential* saving, i.e. the best case if the studio applies
+    everything on offer.
+    """
+    width, height = effective_texture_size(
+        asset.get("width", 0), asset.get("height", 0), asset.get("max_texture_size", 0)
+    )
+    fmt = asset.get("compression", "RGBA8") or "RGBA8"
+    mips = bool(asset.get("mips_enabled", True))
+    measured_kb = asset.get("size_kb")
+
+    sizes = [
+        int(f.recommended["max_texture_size"])
+        for f in group
+        if isinstance(f.recommended.get("max_texture_size"), int)
+        and f.recommended["max_texture_size"] > 0
+    ]
+    if sizes:
+        width, height = effective_texture_size(width, height, min(sizes))
+
+    # Pick whichever recommended format is cheapest per pixel — rules can
+    # disagree (LT001 wants the usage-correct format, LT007 any compression)
+    # and the cheapest is the best case this "potential" figure represents.
+    formats = [
+        f.recommended["compression"]
+        for f in group
+        if isinstance(f.recommended.get("compression"), str)
+        and f.recommended["compression"]
+    ]
+    candidates = [fmt] + formats
+    fmt = min(
+        candidates,
+        key=lambda c: resolve_texture_bpp(c, width, height, mips, measured_kb),
+    )
+
+    for finding in group:
+        if isinstance(finding.recommended.get("mips_enabled"), bool):
+            mips = finding.recommended["mips_enabled"]
+
+    bpp = resolve_texture_bpp(fmt, width, height, mips, measured_kb)
+    return estimate_texture_vram_mb(
+        width, height, fmt, with_mips=mips, bpp_override=bpp
+    )
 
 
 def _compute_summary(findings: list[Finding], assets_audited: int) -> AuditSummary:
@@ -462,12 +683,22 @@ def audit_assets(
         findings = _dispatch_asset(asset, engine, thresholds)
         all_findings.extend(findings)
 
-    # Cross-asset rules see the full batch in one pass
-    all_findings.extend(_run_cross_rules(assets, engine, thresholds))
+    # Cross-asset rules see the full batch in one pass — minus the textures
+    # the per-asset pass already excluded as unpriceable, so an indexed
+    # texture can't reappear through a duplicate/dead/streaming-pool finding.
+    all_findings.extend(
+        _run_cross_rules(_analyzable_assets(assets), engine, thresholds)
+    )
 
     # Apply tier filter once at the end
     if allowed_rules is not None:
         all_findings = [f for f in all_findings if f.rule_id in allowed_rules]
+
+    # Output boundary, in order: restrict recommendations to what this
+    # engine's client can apply, then make the savings physically coherent.
+    # Both run before the summary so the aggregate reflects what shipped.
+    _sanitize_recommended(all_findings, engine)
+    _clamp_savings(all_findings, assets)
 
     # Enrich every finding with rule_name / rule_explanation / engine.
     for finding in all_findings:

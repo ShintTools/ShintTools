@@ -17,6 +17,7 @@ from typing import Any
 from lod_auditor.config import load_profile
 from lod_auditor.schema import Finding, Saving
 from lod_auditor.vram_model import (
+    effective_texture_size,
     estimate_texture_vram_mb,
     normalize_compression,
     resolve_texture_bpp,
@@ -54,8 +55,14 @@ def check_lx001_dead_textures(
         if refs != 0:
             continue
 
-        width: int = asset.get("width", 0)
-        height: int = asset.get("height", 0)
+        # Price the resident (import-capped) upload, matching every per-asset
+        # texture rule — reading the source resolution here reported a dead
+        # 4K-source/2K-capped texture as wasting 4x what it actually holds.
+        width, height = effective_texture_size(
+            asset.get("width", 0),
+            asset.get("height", 0),
+            asset.get("max_texture_size", 0),
+        )
         compression_raw: str = asset.get("compression", "RGBA8")
         compression: str = normalize_compression(compression_raw)
         mips_enabled: bool = asset.get("mips_enabled", True)
