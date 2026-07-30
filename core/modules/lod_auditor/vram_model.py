@@ -189,6 +189,83 @@ def normalize_compression(raw: str) -> str:
     return _FORMAT_ALIASES.get(raw, raw)
 
 
+# ── Unsupported / non-analyzable formats ──────────────────────────────────────
+
+# Palette-indexed and otherwise non-linear-addressable payloads. None of our
+# optimisations apply to them: a palette's cost is driven by the palette + index
+# table, not width*height*bpp, so every VRAM figure we could derive would be
+# fiction — and a fictional baseline produces fictional savings and bogus
+# "compress this" recommendations. They are skipped outright rather than
+# guessed at (see is_analyzable_texture_format).
+_INDEXED_FORMAT_TOKENS: tuple[str, ...] = (
+    "INDEXED",
+    "PALETTE",
+    "PALETTIZED",
+    "PAL4",
+    "PAL8",
+    "P8",
+    "CI8",
+    "CI4",
+)
+
+# Exact canonical/raw names that are indexed or otherwise unpriceable.
+_UNSUPPORTED_FORMATS: frozenset[str] = frozenset(
+    {
+        "INDEXED",
+        "INDEXED8",
+        "INDEXED16",
+        "PALETTE",
+        "PALETTED",
+        "PAL8",
+        "PAL4",
+        "P8",
+        "CI8",
+        "CI4",
+        "BGRA8_INDEXED",
+        "PNG8",
+        "GIF",
+    }
+)
+
+
+def is_indexed_format(fmt: str) -> bool:
+    """True when *fmt* names a palette-indexed (or equivalent) texture payload.
+
+    Matching is token-based and case-insensitive so engine-specific spellings
+    ("TSF_P8", "TextureFormat.Indexed8", "PVRTC_Palette") are all caught
+    without enumerating every vendor name.
+    """
+    if not fmt:
+        return False
+    upper = str(fmt).upper()
+    if upper in _UNSUPPORTED_FORMATS:
+        return True
+    return any(token in upper for token in _INDEXED_FORMAT_TOKENS)
+
+
+def is_analyzable_texture_format(
+    fmt: str, measured_kb: float | None = None
+) -> bool:
+    """True when a texture's memory cost can be priced honestly.
+
+    A format qualifies when it maps to a known bytes-per-pixel figure, or when
+    the client measured the asset's real size (which lets resolve_texture_bpp
+    back the figure out — this is how Unity's "Automatic" import setting is
+    handled).
+
+    Indexed formats never qualify. Neither does an unmapped format with no
+    measurement: resolve_texture_bpp falls back to RGBA8 there, which
+    over-states a compressed texture by up to 8x and makes every downstream
+    number — the baseline, the saving, and the "this is uncompressed" verdict
+    — wrong. Callers skip those assets instead of publishing a guess.
+    """
+    if is_indexed_format(fmt):
+        return False
+    if normalize_compression(fmt) in BYTES_PER_PIXEL:
+        return True
+    return bool(measured_kb and measured_kb > 0)
+
+
 # ── VRAM estimator ────────────────────────────────────────────────────────────
 
 
@@ -288,6 +365,79 @@ def estimate_texture_vram_mb(
     base_bytes = width * height * bpp
     total_bytes = base_bytes * MIP_MULTIPLIER if with_mips else base_bytes
     return round(total_bytes / BYTES_PER_MB, 2)
+
+
+# ── Effective (engine-resident) texture size ──────────────────────────────────
+
+
+def effective_texture_size(
+    width: int, height: int, max_texture_size: int | None = 0
+) -> tuple[int, int]:
+    """Dimensions the engine actually uploads, after the import size cap.
+
+    ``width``/``height`` are the *source* dimensions of the file on disk.
+    Both engines let the importer clamp the resident texture below that:
+    Unity's ``TextureImporterPlatformSettings.maxTextureSize`` and UE5's
+    ``UTexture::MaxTextureSize`` (0 = uncapped in both). The GPU never sees
+    anything larger, so every memory figure and every resize recommendation
+    must be derived from the capped size — not from the source resolution.
+
+    Reading the source instead was a live defect: a 4096 source with
+    max_texture_size=2048 was reported as ~4096, priced 4x too high, and
+    generated a "reduce it to 2048" recommendation for a texture that was
+    already 2048 on the GPU.
+
+    The cap applies to the long edge and preserves aspect ratio, matching
+    both importers. Returns the input unchanged when there is no cap or the
+    texture is already within it.
+    """
+    try:
+        w = int(width or 0)
+        h = int(height or 0)
+        cap = int(max_texture_size or 0)
+    except (TypeError, ValueError):
+        return (0, 0)
+
+    if w <= 0 or h <= 0:
+        return (max(w, 0), max(h, 0))
+
+    long_edge = max(w, h)
+    if cap <= 0 or long_edge <= cap:
+        return (w, h)
+
+    scale = cap / long_edge
+    return (max(1, int(round(w * scale))), max(1, int(round(h * scale))))
+
+
+def texture_asset_vram_mb(asset: dict) -> float:
+    """Current resident VRAM of a texture asset, in MB — the one baseline.
+
+    Every rule that prices a texture saving, and the orchestrator's
+    per-asset savings clamp, resolve the asset's current cost through this
+    function so they can never disagree with each other. It applies the
+    import size cap (see effective_texture_size) and resolves
+    bytes-per-pixel once at those dimensions.
+
+    Returns 0.0 for an asset whose format cannot be priced honestly
+    (indexed, or unmapped with no measurement) — callers treat that as
+    "no baseline", not as "free".
+    """
+    fmt = asset.get("compression", "RGBA8") or "RGBA8"
+    measured_kb = asset.get("size_kb")
+    if not is_analyzable_texture_format(fmt, measured_kb):
+        return 0.0
+
+    width, height = effective_texture_size(
+        asset.get("width", 0), asset.get("height", 0), asset.get("max_texture_size", 0)
+    )
+    if width <= 0 or height <= 0:
+        return 0.0
+
+    mips = bool(asset.get("mips_enabled", True))
+    bpp = resolve_texture_bpp(fmt, width, height, mips, measured_kb)
+    return estimate_texture_vram_mb(
+        width, height, fmt, with_mips=mips, bpp_override=bpp
+    )
 
 
 # ── Mesh buffer estimator (Part-2 LG/LD rules) ────────────────────────────────

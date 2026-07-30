@@ -36,7 +36,11 @@ _BASE: dict = {
     "mip_count": 12,
     "streaming": True,
     "lod_group": "World",
-    "max_texture_size": 2048,
+    # 0 = uncapped (both engines' "no import limit" convention). The fixture
+    # must not carry a cap by default: tests that override width/height mean
+    # a texture of that size, and a stale 2048 cap here silently turned every
+    # "4096 texture" case into an already-capped 2048 one.
+    "max_texture_size": 0,
     "referenced_by_materials": 1,
 }
 

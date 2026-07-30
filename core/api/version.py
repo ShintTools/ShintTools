@@ -3,4 +3,4 @@
 # (see .github/workflows/publish-core.yml). Imported by both the FastAPI
 # app metadata and the /health + /status endpoints so they never drift.
 
-CORE_VERSION = "2.11.1"
+CORE_VERSION = "2.12.0"

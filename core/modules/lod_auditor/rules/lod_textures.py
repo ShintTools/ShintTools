@@ -13,6 +13,7 @@ import logging
 from lod_auditor.config import load_profile
 from lod_auditor.schema import Finding, Saving
 from lod_auditor.vram_model import (
+    effective_texture_size,
     estimate_texture_vram_mb,
     normalize_compression,
     resolve_texture_bpp,
@@ -140,11 +141,17 @@ def check_lt003(
     """LT003: Texture resolution exceeds the slot budget for its LOD group."""
     T = thresholds if thresholds is not None else THRESHOLDS
     lod_group: str = asset.get("lod_group", "World")
-    width: int = asset.get("width", 0)
-    height: int = asset.get("height", 0)
     compression_raw: str = asset.get("compression", "RGBA8")
     compression: str = normalize_compression(compression_raw)
     mips_enabled: bool = asset.get("mips_enabled", True)
+
+    # Judge the texture the engine actually uploads, not the source file. A
+    # 4096 source already capped to max_texture_size=2048 is a 2048 texture on
+    # the GPU: flagging it as "4096, reduce to 2048" was both a false positive
+    # and a 4x over-estimate of its cost.
+    width, height = effective_texture_size(
+        asset.get("width", 0), asset.get("height", 0), asset.get("max_texture_size", 0)
+    )
 
     budget_map: dict = T["LT003_MAX_SIZE_BY_LOD_GROUP"]
     if lod_group not in budget_map:
@@ -190,7 +197,7 @@ def check_lt003(
         with_mips=mips_enabled,
         bpp_override=bpp,
     )
-    vram_saved: float = round(current_vram - recommended_vram, 2)
+    vram_saved: float = max(0.0, round(current_vram - recommended_vram, 2))
 
     return Finding(
         asset_path=asset["asset_path"],
@@ -221,7 +228,14 @@ def check_lt003(
 def check_lt004(asset: dict, engine: str = "unreal") -> Finding | None:
     """LT004: sRGB flag does not match the texture's data type."""
     usage: str = asset.get("usage", "")
-    srgb: bool = asset.get("srgb", True)
+
+    # Abstain when the client doesn't report the flag at all. Defaulting to
+    # True made this fire on every Normal/Mask/HDR/Data texture from a client
+    # that omits the field (the Unity collector does not send `srgb`), which
+    # is a guaranteed false positive on an entire engine rather than a finding.
+    if "srgb" not in asset or asset.get("srgb") is None:
+        return None
+    srgb: bool = bool(asset.get("srgb"))
 
     if usage in _DATA_USAGES and srgb:
         return Finding(
@@ -270,11 +284,14 @@ def check_lt005(
 ) -> Finding | None:
     """LT005: Large texture with streaming disabled occupies VRAM permanently."""
     T = thresholds if thresholds is not None else THRESHOLDS
-    width: int = asset.get("width", 0)
-    height: int = asset.get("height", 0)
     streaming: bool = asset.get("streaming", True)
     compression_raw: str = asset.get("compression", "RGBA8")
     compression: str = normalize_compression(compression_raw)
+
+    # Resident cost is what the GPU holds — the import-capped size, not source.
+    width, height = effective_texture_size(
+        asset.get("width", 0), asset.get("height", 0), asset.get("max_texture_size", 0)
+    )
 
     min_edge: int = T["LT005_STREAMING_MIN_EDGE"]
     long_edge: int = max(width, height)
@@ -343,11 +360,16 @@ def check_lt006(
     exempt — they sample at fixed pixel sizes and NPOT is idiomatic there.
     """
     T = thresholds if thresholds is not None else THRESHOLDS
-    width: int = asset.get("width", 0)
-    height: int = asset.get("height", 0)
     lod_group: str = asset.get("lod_group", "World")
     compression: str = normalize_compression(asset.get("compression", "RGBA8"))
     mips_enabled: bool = asset.get("mips_enabled", True)
+
+    # POT-ness is a property of the resident texture. A capped import can turn
+    # an NPOT source into a POT upload (and vice versa), so judge the capped
+    # dimensions — flagging the source would report padding that isn't there.
+    width, height = effective_texture_size(
+        asset.get("width", 0), asset.get("height", 0), asset.get("max_texture_size", 0)
+    )
 
     if lod_group == "UI":
         return None
@@ -413,8 +435,6 @@ def check_lt007(
     test_orchestrator.test_findings_have_valid_severity_values.)
     """
     T = thresholds if thresholds is not None else THRESHOLDS
-    width: int = asset.get("width", 0)
-    height: int = asset.get("height", 0)
     compression: str = normalize_compression(asset.get("compression", "RGBA8"))
     mips_enabled: bool = asset.get("mips_enabled", True)
 
@@ -422,6 +442,11 @@ def check_lt007(
     # uncompressed UE5/Unity format onto "RGBA8".
     if compression != "RGBA8":
         return None
+
+    # Price the compression win against the resident (import-capped) size.
+    width, height = effective_texture_size(
+        asset.get("width", 0), asset.get("height", 0), asset.get("max_texture_size", 0)
+    )
 
     min_edge: int = T["LT007_UNCOMPRESSED_MIN_EDGE"]
     max_edge: int = T["LT007_UNCOMPRESSED_MAX_EDGE"]
@@ -480,8 +505,10 @@ def check_lt008(
     if compression not in _RDO_FORMATS:
         return None
 
-    width: int = asset.get("width", 0)
-    height: int = asset.get("height", 0)
+    # The cooked payload is the capped upload, not the source file.
+    width, height = effective_texture_size(
+        asset.get("width", 0), asset.get("height", 0), asset.get("max_texture_size", 0)
+    )
     min_edge: int = T["LT008_RDO_MIN_EDGE"]
     if max(width, height) < min_edge:
         return None
@@ -537,8 +564,9 @@ def check_lt009(
     usage = asset.get("usage", "")
     if usage == "UI":
         return None  # UI renders at a fixed pixel size — mips are wasteful (LT002)
-    width = int(asset.get("width", 0) or 0)
-    height = int(asset.get("height", 0) or 0)
+    width, height = effective_texture_size(
+        asset.get("width", 0), asset.get("height", 0), asset.get("max_texture_size", 0)
+    )
     mips_enabled = asset.get("mips_enabled", True)
     mip_count = int(asset.get("mip_count", 0) or 0)
     missing = (not mips_enabled) or (
@@ -643,8 +671,10 @@ def check_lt014(
 ) -> Finding | None:
     """LT014: A single texture exceeds the absolute per-asset VRAM ceiling."""
     T = thresholds if thresholds is not None else THRESHOLDS
-    width = int(asset.get("width", 0) or 0)
-    height = int(asset.get("height", 0) or 0)
+    # The ceiling is about resident VRAM, so measure the capped upload size.
+    width, height = effective_texture_size(
+        asset.get("width", 0), asset.get("height", 0), asset.get("max_texture_size", 0)
+    )
     if width <= 0 or height <= 0:
         return None
     compression = normalize_compression(asset.get("compression", "RGBA8"))
@@ -659,20 +689,24 @@ def check_lt014(
     )
     if current_vram <= ceiling:
         return None
-    # Largest power-of-two square that fits under the ceiling.
+    # Largest max_texture_size that lands under the ceiling. The candidate is
+    # evaluated through effective_texture_size because that is what the cap
+    # actually does — it clamps the long edge and preserves aspect ratio.
+    # Measuring square candidates instead over-stated a non-square texture's
+    # post-fix cost by the aspect ratio (a 8192×1024 was priced as 8192×8192),
+    # which under-reported the saving by the same factor.
     long_edge = max(width, height)
     target_edge = long_edge
-    while (
-        target_edge > 1
-        and estimate_texture_vram_mb(
-            target_edge, target_edge, compression, with_mips=mips, bpp_override=bpp
+
+    def _vram_at(cap: int) -> float:
+        w, h = effective_texture_size(width, height, cap)
+        return estimate_texture_vram_mb(
+            w, h, compression, with_mips=mips, bpp_override=bpp
         )
-        > ceiling
-    ):
+
+    while target_edge > 1 and _vram_at(target_edge) > ceiling:
         target_edge //= 2
-    recommended_vram = estimate_texture_vram_mb(
-        target_edge, target_edge, compression, with_mips=mips, bpp_override=bpp
-    )
+    recommended_vram = _vram_at(target_edge)
     return Finding(
         asset_path=asset["asset_path"],
         rule_id="LT014",
