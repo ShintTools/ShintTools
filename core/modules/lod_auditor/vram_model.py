@@ -179,6 +179,45 @@ _FORMAT_ALIASES: dict[str, str] = {
 }
 
 
+# Unity's TextureImporterType, translated to the usage vocabulary the rules
+# speak (UE5's). Only the values that genuinely assert what the texture is for
+# are mapped: a rule keying off usage is claiming to know the texture's role,
+# and Unity's "Default" asserts nothing — it is equally a base color, a
+# roughness mask or a lookup table. Mapping it to BaseColor would have made
+# LT001 demand BC7 and LT004 demand sRGB on every mask in the project.
+#
+# Without this table the whole usage-driven family (LT001 format-vs-usage,
+# LT002/LT009 mips, LT004 sRGB) was silently inert on Unity: the collector
+# sends "NormalMap", the rules look for "Normal", nothing matches, no finding
+# is ever raised. A normal map stored as BC1 — common, and visibly wrong —
+# went unreported for the entire engine.
+#
+# "Lightmap" is deliberately absent for the same reason: it names a role, but
+# the format that role implies depends on the project's color space and on
+# whether lighting is HDR or dLDR-encoded, so demanding BC6H would misfire on
+# every mobile-encoded project.
+_UNITY_USAGE_ALIASES: dict[str, str] = {
+    "NormalMap": "Normal",
+    "GUI": "UI",
+    "Sprite": "UI",
+    "Cursor": "UI",
+    "Cookie": "Mask",
+    "SingleChannel": "Mask",
+}
+
+
+def normalize_usage(raw: str) -> str:
+    """Canonical usage name for *raw*, whichever engine's vocabulary it is in.
+
+    Unrecognised values pass through unchanged, so a rule that keys off usage
+    simply finds no match and abstains — the same behaviour as an absent
+    field, and the right one for Unity's non-committal "Default".
+    """
+    if not raw:
+        return ""
+    return _UNITY_USAGE_ALIASES.get(raw.strip(), raw.strip())
+
+
 def normalize_compression(raw: str) -> str:
     """Return the canonical format name for *raw*.
 
@@ -431,6 +470,49 @@ def effective_texture_size(
 
     scale = cap / long_edge
     return (max(1, int(round(w * scale))), max(1, int(round(h * scale))))
+
+
+# Bytes per pixel at or above which a payload is an uncompressed 32-bit
+# texture. Every block format tops out at 1.0 (BC7/BC3/ASTC_4x4) and the
+# 16-bit uncompressed formats sit at 2.0, so 3.0 separates the classes with
+# room for the rounding in a client's measurement.
+_UNCOMPRESSED_BPP_FLOOR: float = 3.0
+
+
+def is_effectively_uncompressed(asset: dict) -> bool:
+    """True when the texture's resident payload is uncompressed 32-bit.
+
+    The declared format answers this whenever it is one the Core maps. When
+    it is not, the client's measurement still does: four bytes per pixel is
+    uncompressed no matter what the importer setting happens to be called.
+
+    That fallback is not an edge case. Unity's
+    TextureImporterPlatformSettings.format reports "Automatic" for any
+    platform without an explicit override — the default state on Standalone —
+    so a plain format-string comparison made the single largest saving in the
+    tool ("this is uncompressed, compress it") invisible on every Standalone
+    scan, while the same texture on Android, where an override is normally
+    set, reported the full saving. Same bytes, same texture, two answers.
+    """
+    fmt = asset.get("compression", "") or ""
+    canonical = normalize_compression(fmt)
+    mapped = BYTES_PER_PIXEL.get(canonical)
+    if mapped is not None:
+        return canonical == "RGBA8"
+
+    measured_kb = asset.get("size_kb")
+    if not measured_kb or is_indexed_format(fmt):
+        return False
+
+    width, height = effective_texture_size(
+        asset.get("width", 0), asset.get("height", 0), asset.get("max_texture_size", 0)
+    )
+    if width <= 0 or height <= 0:
+        return False
+
+    mips = bool(asset.get("mips_enabled", True))
+    pixels = width * height * (MIP_MULTIPLIER if mips else 1.0)
+    return (measured_kb * 1024.0) / pixels >= _UNCOMPRESSED_BPP_FLOOR
 
 
 def texture_asset_vram_mb(asset: dict) -> float:

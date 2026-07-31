@@ -13,11 +13,13 @@ from __future__ import annotations
 from lod_auditor.lod_orchestrator import audit_assets
 from lod_auditor.lod_report import top_offenders
 from lod_auditor.recommended_filter import filter_recommended
-from lod_auditor.rules.lod_textures import check_lt003, check_lt004
+from lod_auditor.rules.lod_textures import check_lt001, check_lt003, check_lt004
 from lod_auditor.vram_model import (
     effective_texture_size,
     is_analyzable_texture_format,
+    is_effectively_uncompressed,
     is_indexed_format,
+    normalize_usage,
     texture_asset_vram_mb,
 )
 
@@ -287,6 +289,83 @@ class TestIndexedTexturesAreIgnored:
 
 
 # ── 5/6. Cross-engine consistency ─────────────────────────────────────────────
+
+
+class TestPlatformDoesNotChangeThePhysics:
+    """Reported from the panel: Standalone scans reported far smaller savings
+    than mobile ones. Same textures, same bytes — only the importer's format
+    string differed, because Unity reports "Automatic" whenever a platform
+    carries no explicit override (the Standalone default)."""
+
+    def _uncompressed_2k(self, compression: str) -> dict:
+        return _tex(
+            width=2048, height=2048, max_texture_size=2048, usage="Default",
+            compression=compression,
+            size_kb=2048 * 2048 * 4 * (4 / 3) / 1024,  # measured: 4 B/px
+        )
+
+    def test_automatic_and_an_explicit_format_report_the_same_saving(self):
+        standalone = audit_assets([self._uncompressed_2k("Automatic")],
+                                  engine="unity")
+        android = audit_assets([self._uncompressed_2k("RGBA32")], engine="unity")
+        assert (
+            standalone.summary.estimated_vram_saved_mb
+            == android.summary.estimated_vram_saved_mb
+            == 16.0
+        )
+
+    def test_a_measured_payload_is_classified_by_its_density(self):
+        assert is_effectively_uncompressed(self._uncompressed_2k("Automatic"))
+        compressed = _tex(
+            width=2048, height=2048, max_texture_size=2048,
+            compression="Automatic",
+            size_kb=2048 * 2048 * 1.0 * (4 / 3) / 1024,  # 1 B/px — BC7 class
+        )
+        assert not is_effectively_uncompressed(compressed)
+
+    def test_declared_format_still_wins_when_it_is_known(self):
+        """A measurement never overrules a format the Core can map."""
+        lying = _tex(compression="BC7", size_kb=99999)
+        assert not is_effectively_uncompressed(lying)
+
+    def test_a_mobile_target_is_never_told_to_use_a_desktop_format(self):
+        """Mobile GPUs cannot sample BC/DXT. "Compress to BC7" there makes the
+        runtime decompress to RGBA32 — the fix multiplies memory by 8."""
+        asset = self._uncompressed_2k("RGBA32")
+        mobile = audit_assets([asset], engine="unity", profile="mobile")
+        proposed = {
+            f.recommended.get("compression")
+            for f in mobile.results
+            if f.recommended.get("compression")
+        }
+        assert proposed, "expected a compression recommendation on mobile"
+        assert not any(p.startswith(("BC", "DXT")) for p in proposed), proposed
+
+    def test_a_desktop_target_still_gets_bc7(self):
+        desktop = audit_assets([self._uncompressed_2k("RGBA32")], engine="unity")
+        lt007 = [f for f in desktop.results if f.rule_id == "LT007"][0]
+        assert lt007.recommended["compression"] == "BC7"
+
+
+class TestUnityUsageVocabulary:
+    """The usage-driven rules speak UE5's vocabulary. Unity sends
+    TextureImporterType, so nothing matched and LT001/LT002/LT004 never fired
+    on a Unity project at all."""
+
+    def test_unity_texture_types_reach_the_usage_rules(self):
+        normal_map = _tex(usage="NormalMap", compression="BC1")
+        assert check_lt001(normal_map) is not None, "BC1 normal map must be flagged"
+
+    def test_default_asserts_nothing_and_is_left_alone(self):
+        """Unity's "Default" is equally a base color, a mask or a lookup
+        table. Treating it as BaseColor would demand BC7 and sRGB on every
+        mask in the project."""
+        assert normalize_usage("Default") == "Default"
+        assert check_lt001(_tex(usage="Default", compression="BC1")) is None
+
+    def test_unreal_usages_are_unaffected(self):
+        for usage in ("BaseColor", "Normal", "Mask", "HDR", "Data", "UI"):
+            assert normalize_usage(usage) == usage
 
 
 class TestEngineConsistency:

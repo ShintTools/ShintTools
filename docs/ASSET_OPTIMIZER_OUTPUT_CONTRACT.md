@@ -178,7 +178,36 @@ Optional, and each one removes a specific class of wrong answer:
 
 ---
 
-## 6. Engine consistency
+## 6. Target platform
+
+Two platforms of the same project **should** report different numbers — a
+mobile target usually carries a smaller size cap and an ASTC override, so the
+same source texture is physically cheaper there. That difference must come
+from the payload, not from the Core being unable to read it.
+
+Two things make it work:
+
+**Send the resident format per platform.** A texture's cost and its verdict
+follow the format the selected platform actually uploads. Where the importer
+reports no explicit override (Unity's `Automatic`, the Standalone default),
+the Core classifies the payload from `size_kb` instead — 4 bytes per pixel is
+uncompressed whatever the setting is named. Before that, a Standalone scan
+reported **zero** savings on textures whose Android scan reported the full
+compression win: same bytes, same texture, different answer.
+
+**Send `profile: "mobile"` for mobile targets.** The profile selects the
+threshold set — halved size budgets, tighter uncompressed limits — *and* the
+format vocabulary. Recommendations are profile-driven because they have to
+be: mobile GPUs cannot sample BC/DXT at all, so proposing BC7 there makes the
+runtime decompress to RGBA32 and the "fix" multiplies the texture's memory by
+eight. On the mobile profile the Core proposes ASTC, and abstains entirely for
+HDR and Data textures rather than guess an encoding.
+
+A client that pins `profile: "default"` while scanning an Android target gets
+desktop budgets and desktop formats. Drive it from the same control that
+selects the platform.
+
+## 7. Engine consistency
 
 Given the same asset, Unity and Unreal receive identical memory figures,
 identical savings and identical rule outcomes. The only permitted differences
