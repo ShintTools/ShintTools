@@ -44,6 +44,10 @@ from lod_auditor.rules.lod_materials import (
     check_lm012,
     check_lm013,
     check_lm014,
+    check_lm015,
+    check_lm016,
+    check_lm017,
+    check_lm018,
 )
 from lod_auditor.rules.lod_meshes import (
     check_ld001,
@@ -138,6 +142,11 @@ MATERIAL_RULES: list[RuleFn] = [
     check_lm012,
     check_lm013,
     check_lm014,
+    # Unity-native levers — each abstains on any other engine.
+    check_lm015,
+    check_lm016,
+    check_lm017,
+    check_lm018,
 ]
 MESH_RULES: list[RuleFn] = [
     check_ld001,

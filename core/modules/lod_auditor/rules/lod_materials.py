@@ -13,6 +13,17 @@ from lod_auditor.schema import Finding, Saving
 THRESHOLDS = load_profile()
 
 
+# UE5-only concepts. Unity has no Material Instance, no material usage flags,
+# no Material Layers and no Runtime Virtual Texture, so these rules describe
+# machinery that does not exist there. They stayed quiet on Unity only because
+# the collector sent none of their inputs — an accident, not a decision: the
+# moment a Unity payload carries used_by_primitives (which the collector spec
+# now asks for), LM003 would start telling Unity users to convert a material
+# into an Unreal Material Instance. Gate on the concept, not on the data.
+def _unreal_only(engine: str) -> bool:
+    return engine.strip().lower() not in {"unity"}
+
+
 # ── LM001 ─────────────────────────────────────────────────────────────────────
 
 
@@ -105,6 +116,8 @@ def check_lm002(asset: dict, engine: str = "unreal") -> Finding | None:
 
 def check_lm003(asset: dict, engine: str = "unreal") -> Finding | None:
     """LM003: Non-instanced material shared across many primitives."""
+    if not _unreal_only(engine):
+        return None
     is_material_instance: bool = asset.get("is_material_instance", False)
     used_by_primitives: int = asset.get("used_by_primitives", 1)
     threshold: int = THRESHOLDS["LM003_PRIMITIVES_THRESHOLD"]
@@ -249,6 +262,8 @@ def check_lm007(
     asset: dict, engine: str = "unreal", thresholds: dict | None = None
 ) -> Finding | None:
     """LM007: Too many material layers (each multiplies base-pass cost)."""
+    if not _unreal_only(engine):
+        return None
     T = thresholds if thresholds is not None else THRESHOLDS
     layers = int(asset.get("layer_count", 0) or 0)
     blend = asset.get("blend_mode", "Opaque")
@@ -283,6 +298,8 @@ def check_lm008(
     Suppressed by the orchestrator whenever LM001 fires on the same asset
     (one finding per root cause — see lod_orchestrator._SUPPRESSED_BY).
     """
+    if not _unreal_only(engine):
+        return None
     T = thresholds if thresholds is not None else THRESHOLDS
     layers = int(asset.get("layer_count", 0) or 0)
     if layers < 2:
@@ -318,6 +335,8 @@ def check_lm009(
     asset: dict, engine: str = "unreal", thresholds: dict | None = None
 ) -> Finding | None:
     """LM009: RVT setup cost on a material used by too few primitives to amortise."""
+    if not _unreal_only(engine):
+        return None
     T = thresholds if thresholds is not None else THRESHOLDS
     if not asset.get("uses_rvt"):
         return None
@@ -350,6 +369,8 @@ def check_lm010(
     asset: dict, engine: str = "unreal", thresholds: dict | None = None
 ) -> Finding | None:
     """LM010: Many dynamic parameters, worse on a non-instanced material."""
+    if not _unreal_only(engine):
+        return None
     T = thresholds if thresholds is not None else THRESHOLDS
     dynamic = int(asset.get("dynamic_parameter_count", 0) or 0)
     if dynamic <= T["LM010_MAX_DYNAMIC"]:
@@ -433,6 +454,8 @@ def check_lm012(
     asset: dict, engine: str = "unreal", thresholds: dict | None = None
 ) -> Finding | None:
     """LM012: Checked usage flags never hit by any referencing component type."""
+    if not _unreal_only(engine):
+        return None
     T = thresholds if thresholds is not None else THRESHOLDS
     unused = asset.get("usage_flags_unused", []) or []
     if not unused:
@@ -530,4 +553,195 @@ def check_lm014(
         estimated_saving=Saving(),
         auto_fixable=False,
         guidance=guidance_for("LM014", engine),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Unity-native material rules (LM015 – LM018)
+#
+# LM001-LM014 above are UE5-shaped: material instances, usage flags, layers,
+# RVT, WPO. None of those exist in Unity, so a Unity material scan could reach
+# exactly one rule (LM004) and nothing it produced was applicable — the panel's
+# Materials tab had no fixes to offer at all.
+#
+# These four price the levers Unity actually exposes on a Material, all of them
+# settable from the editor without touching the shader. They abstain on any
+# other engine rather than translate a concept that has no counterpart.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def _is_unity(engine: str) -> bool:
+    return engine.strip().lower() == "unity"
+
+
+# ── LM015 ─────────────────────────────────────────────────────────────────────
+
+
+def check_lm015(
+    asset: dict, engine: str = "unreal", thresholds: dict | None = None
+) -> Finding | None:
+    """LM015: GPU Instancing off on a material shared by many renderers."""
+    T = thresholds if thresholds is not None else THRESHOLDS
+    if not _is_unity(engine):
+        return None
+
+    instancing = asset.get("gpu_instancing")
+    if instancing is None or instancing:
+        return None
+
+    prims = int(asset.get("used_by_primitives", -1))
+    if prims < T["LM015_MIN_PRIMITIVES"]:
+        return None
+
+    # Under URP/HDRP the SRP Batcher takes precedence: a batcher-compatible
+    # material ignores the instancing flag entirely, so recommending it there
+    # would be a fix that changes nothing. Only claim the win where it lands —
+    # the Built-in pipeline, or a material the batcher cannot take.
+    pipeline = str(asset.get("render_pipeline", "") or "").strip().lower()
+    srp_compatible = asset.get("srp_batcher_compatible")
+    if pipeline in {"urp", "hdrp"} and srp_compatible is not False:
+        return None
+    if not pipeline and srp_compatible is not False:
+        return None  # cannot tell which path this material takes
+
+    return Finding(
+        asset_path=asset["asset_path"],
+        rule_id="LM015",
+        category="Material",
+        severity="warning",
+        message=(
+            f"GPU Instancing is off on a material shared by {prims} renderers — "
+            "each one costs its own draw call. Enabling it batches identical "
+            "mesh + material pairs into a single call."
+        ),
+        current={"gpu_instancing": False, "used_by_primitives": prims},
+        recommended={"enable_instancing": True},
+        estimated_saving=Saving(),
+        auto_fixable=True,
+        guidance=guidance_for("LM015", engine),
+    )
+
+
+# ── LM016 ─────────────────────────────────────────────────────────────────────
+
+
+def check_lm016(asset: dict, engine: str = "unreal") -> Finding | None:
+    """LM016: Material is not SRP Batcher compatible under URP/HDRP."""
+    if not _is_unity(engine):
+        return None
+    if asset.get("srp_batcher_compatible") is not False:
+        return None
+
+    pipeline = str(asset.get("render_pipeline", "") or "").strip().lower()
+    if pipeline not in {"urp", "hdrp"}:
+        return None  # the batcher only exists on the scriptable pipelines
+
+    return Finding(
+        asset_path=asset["asset_path"],
+        rule_id="LM016",
+        category="Material",
+        severity="warning",
+        message=(
+            "Shader is not SRP Batcher compatible — every renderer using this "
+            "material re-uploads its constants and breaks the batch. Move the "
+            "per-material properties into the UnityPerMaterial CBUFFER."
+        ),
+        current={"srp_batcher_compatible": False, "render_pipeline": pipeline},
+        # Deliberately advisory: compatibility is decided by how the shader
+        # declares its constant buffer, which no material property can change.
+        recommended={},
+        estimated_saving=Saving(),
+        auto_fixable=False,
+        guidance=guidance_for("LM016", engine),
+    )
+
+
+# ── LM017 ─────────────────────────────────────────────────────────────────────
+
+# Unity's queue ranges. A material whose queue sits in the wrong band either
+# sorts against the wrong set (transparents drawn before the opaques they
+# blend with) or forfeits the early-Z the opaque pass depends on.
+_QUEUE_GEOMETRY: int = 2000
+_QUEUE_ALPHATEST: int = 2450
+_QUEUE_TRANSPARENT: int = 3000
+_QUEUE_BANDS: dict[str, tuple[int, int, int]] = {
+    # blend mode -> (band start, band end exclusive, canonical queue)
+    "opaque": (_QUEUE_GEOMETRY, _QUEUE_ALPHATEST, _QUEUE_GEOMETRY),
+    "masked": (_QUEUE_ALPHATEST, _QUEUE_TRANSPARENT, _QUEUE_ALPHATEST),
+    "cutout": (_QUEUE_ALPHATEST, _QUEUE_TRANSPARENT, _QUEUE_ALPHATEST),
+    "transparent": (_QUEUE_TRANSPARENT, 4000, _QUEUE_TRANSPARENT),
+    "additive": (_QUEUE_TRANSPARENT, 4000, _QUEUE_TRANSPARENT),
+    "fade": (_QUEUE_TRANSPARENT, 4000, _QUEUE_TRANSPARENT),
+}
+
+
+def check_lm017(asset: dict, engine: str = "unreal") -> Finding | None:
+    """LM017: Render queue override contradicts the material's blend mode."""
+    if not _is_unity(engine):
+        return None
+
+    queue = asset.get("render_queue")
+    if queue is None:
+        return None
+    queue = int(queue)
+    if queue < 0:
+        return None  # -1 = "from shader", i.e. no override at all
+
+    band = _QUEUE_BANDS.get(str(asset.get("blend_mode", "") or "").strip().lower())
+    if band is None:
+        return None
+
+    start, end, canonical = band
+    if start <= queue < end:
+        return None
+
+    return Finding(
+        asset_path=asset["asset_path"],
+        rule_id="LM017",
+        category="Material",
+        severity="warning",
+        message=(
+            f"Render queue is overridden to {queue}, outside the "
+            f"{start}–{end - 1} band its '{asset.get('blend_mode')}' blend mode "
+            f"sorts in. Opaques drawn late lose early-Z; transparents drawn "
+            f"early blend against an unfinished frame."
+        ),
+        current={"render_queue": queue, "blend_mode": asset.get("blend_mode")},
+        recommended={"render_queue": canonical},
+        estimated_saving=Saving(),
+        auto_fixable=True,
+        guidance=guidance_for("LM017", engine),
+    )
+
+
+# ── LM018 ─────────────────────────────────────────────────────────────────────
+
+
+def check_lm018(asset: dict, engine: str = "unreal") -> Finding | None:
+    """LM018: Double-sided GI on a single-sided material costs bake time."""
+    if not _is_unity(engine):
+        return None
+
+    if asset.get("double_sided_gi") is not True:
+        return None
+    # Only wasteful when the material itself is single-sided: a genuinely
+    # two-sided surface needs both faces to receive and bounce light.
+    if asset.get("two_sided") is not False:
+        return None
+
+    return Finding(
+        asset_path=asset["asset_path"],
+        rule_id="LM018",
+        category="Material",
+        severity="info",
+        message=(
+            "Double Sided Global Illumination is on for a single-sided "
+            "material — the lightmapper traces both faces of geometry that "
+            "only renders one, lengthening every bake for no visual change."
+        ),
+        current={"double_sided_gi": True, "two_sided": False},
+        recommended={"double_sided_gi": False},
+        estimated_saving=Saving(),
+        auto_fixable=True,
+        guidance=guidance_for("LM018", engine),
     )

@@ -126,6 +126,11 @@ LOD_RULE_NAMES: dict[str, str] = {
     "LM012": "Unused usage flags",
     "LM013": "Expensive material nodes",
     "LM014": "Vertex shader too costly",
+    # ── Unity-native material levers (LM015-LM018) ───────
+    "LM015": "GPU Instancing disabled",
+    "LM016": "Not SRP Batcher compatible",
+    "LM017": "Render queue mismatch",
+    "LM018": "Needless double-sided GI",
     # ── Texture completion (LT) ──────────────────────────
     "LT009": "Missing mipmaps",
     "LT010": "Wrong texture group",

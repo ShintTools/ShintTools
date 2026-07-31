@@ -426,6 +426,35 @@ LOD_GUIDANCE: dict[str, dict[str, str]] = {
         ),
         _DEFAULT: "Reduce vertex-shader (WPO) cost or restrict to low-vertex meshes.",
     },
+    # ══ Unity-native material levers (LM015-LM018) ══════════════════════════
+    "LM015": {
+        "unity": (
+            "Tick Enable GPU Instancing on the material. It only applies where "
+            "the SRP Batcher does not already own the draw."
+        ),
+        _DEFAULT: "Enable GPU instancing on this material.",
+    },
+    "LM016": {
+        "unity": (
+            "Declare the material's properties inside the UnityPerMaterial "
+            "CBUFFER so the SRP Batcher can keep the batch."
+        ),
+        _DEFAULT: "Make the shader SRP Batcher compatible.",
+    },
+    "LM017": {
+        "unity": (
+            "Reset the render queue to From Shader, or set it inside the band "
+            "its blend mode sorts in."
+        ),
+        _DEFAULT: "Align the render queue with the material's blend mode.",
+    },
+    "LM018": {
+        "unity": (
+            "Untick Double Sided Global Illumination — it only pays off on a "
+            "material that renders both faces."
+        ),
+        _DEFAULT: "Disable double-sided GI on single-sided materials.",
+    },
     # ══ Part 2 — rendering (LR) ══════════════════════════════════════════════
     "LR001": {
         "unreal": (
