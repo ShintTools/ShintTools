@@ -63,9 +63,17 @@ class LodAssetFile(BaseModel):
     compression: str = ""
     width: int = 0
     height: int = 0
-    srgb: bool = True
-    mips_enabled: bool = True
-    streaming: bool = False
+    # Tri-state on purpose: None means "the collector did not report this",
+    # which is not the same as False. Declaring a bool default here re-injected
+    # it into every payload and destroyed the distinction the rules rely on —
+    # srgb defaulting to True fired LT004 on every Normal/Mask/HDR texture in
+    # a Unity project (its collector does not send the field), and streaming
+    # defaulting to False reported "streaming disabled" for any client that
+    # omits it. _to_audit_dict drops the Nones so each rule falls back to its
+    # own documented default instead.
+    srgb: bool | None = None
+    mips_enabled: bool | None = None
+    streaming: bool | None = None
     lod_group: str = "World"
     referenced_by_materials: int = -1  # -1 = plugin did not compute
 
@@ -221,7 +229,10 @@ def _to_audit_dict(asset_model: LodAssetFile) -> dict[str, Any]:
         asset_dict["height"] = asset_dict["resolution_y"]
     if asset_dict["streaming_enabled"] and not asset_dict["streaming"]:
         asset_dict["streaming"] = True
-    return asset_dict
+    # A field the collector never sent must stay absent, not arrive as None —
+    # rules read through dict.get(key, default) and would otherwise receive
+    # None instead of their own documented fallback.
+    return {k: v for k, v in asset_dict.items() if v is not None}
 
 
 def _normalize_engine(raw: str) -> str:

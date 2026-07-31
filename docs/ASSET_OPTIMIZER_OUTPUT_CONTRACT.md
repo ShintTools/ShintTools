@@ -82,6 +82,17 @@ asset's full cost and the resize/compress findings on that same asset report
 `0` — they are alternative routes to a subset of the same memory, not
 additional savings.
 
+**The message quotes the same figure as `estimated_saving`.** Where a message
+names a VRAM saving, it is the reconciled number, not the rule's isolated
+estimate. A panel can render both without them contradicting each other.
+
+**A saving is independent of whether the client can apply the fix.** Some
+findings are advisory by nature — LT006's power-of-two resize is a DCC
+round-trip, not an importer property — so they arrive with `recommended: {}`
+and `auto_fixable: false` while still reporting the memory they would free.
+Do not infer "no saving" from "no fix", or drop advisory rows from the memory
+totals.
+
 ---
 
 ## 3. Sizes come from the resident texture, not the source file
@@ -126,6 +137,20 @@ Sending `size_kb` (the client's own measured size) makes an otherwise-unmapped
 format analysable — the Core backs the real bytes-per-pixel out of it. This is
 the recommended way to get `Automatic`-import textures covered.
 
+**A measurement is authoritative and is reproduced exactly.** When `size_kb`
+resolves the format, the Core's memory figure for that asset equals the
+client's own — so a panel that shows its measured size next to the Core's
+findings never displays two different numbers for one texture. The only
+sanity check applied is that the measurement can be bytes-for-these-pixels at
+all (0.1–32 B/px); the previous 4 B/px ceiling rejected legitimate readings
+(RGBAHalf is 8 B/px, and a Read/Write-enabled texture's CPU copy counts too)
+and silently substituted the model's figure.
+
+The measured bytes-per-pixel is anchored at the texture's **current** size.
+A proposed downsize keeps that density instead of re-deriving it, and a
+proposed *format* is priced from the model — a measurement of BC1 says
+nothing about what BC7 would cost.
+
 ---
 
 ## 5. Rules abstain on data they were not given
@@ -135,6 +160,21 @@ than assuming a default. The concrete case: `srgb` is absent from the Unity
 collector's payload, and defaulting it to `true` made LT004 fire on **every**
 Normal/Mask/HDR/Data texture in a Unity project — an entire engine's worth of
 false positives. LT004 now abstains unless `srgb` is present.
+
+This holds at the HTTP boundary too: an omitted optional boolean stays
+omitted. It is not materialised as `false`. Send a field only when the
+collector actually read it — sending `srgb: true` because the DTO needed
+*something* re-arms exactly the false positives this rule avoids.
+
+### Fields worth adding to a collector
+
+Optional, and each one removes a specific class of wrong answer:
+
+| Field | Effect when sent |
+|---|---|
+| `size_kb` | Makes `Automatic`/unmapped formats analysable and pins the Core's memory figure to the engine's own (§4). |
+| `npot_scale` | Unity's `TextureImporter.npotScale`. Anything but `None` means the upload is already power-of-two, and LT006 abstains instead of reporting padding that does not exist. |
+| `compression` as the **resident** format | Unity's `TextureImporterPlatformSettings.format` is `Automatic` whenever a platform has no explicit override, which tells the Core nothing about the payload. `Texture2D.format` (what the panel already displays in its Format column) lets the Core name and price the real format, and suppresses claims that only apply to uncompressed data. |
 
 ---
 

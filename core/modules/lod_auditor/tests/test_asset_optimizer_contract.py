@@ -96,6 +96,58 @@ class TestSavingsArePhysicallyCoherent:
 # ── 2. Max texture size ───────────────────────────────────────────────────────
 
 
+class TestReportedFiguresAgreeWithEachOther:
+    """The panel puts the message, the savings column and the client's own
+    measured size on the same row. Any two of them disagreeing is the defect,
+    regardless of which one is 'more correct'."""
+
+    # What a Unity collector actually sends: the importer reports "Automatic"
+    # for any platform without an explicit format override, and size_kb is
+    # Profiler.GetRuntimeMemorySizeLong — the engine's own accounting.
+    def _measured(self, **overrides) -> dict:
+        return _tex(compression="Automatic", size_kb=2.67 * 1024,
+                    max_texture_size=2048, **overrides)
+
+    def test_message_quotes_the_same_figure_as_the_savings_column(self):
+        report = audit_assets(
+            [_tex(width=4096, height=4096, compression="RGBA32", streaming=False)],
+            engine="unity",
+        )
+        for finding in report.results:
+            if "MB VRAM" not in finding.message:
+                continue
+            assert "{vram_saving}" not in finding.message, "token left unrendered"
+            assert f"{finding.estimated_saving.vram_mb:g} MB VRAM" in finding.message
+
+    def test_client_measurement_is_reproduced_not_overridden(self):
+        """A measured size above one RGBA8 texel used to be discarded as
+        implausible, so the Core printed its model's figure next to the
+        engine's — 14.22 MB against the panel's 24.88 MB on the same row."""
+        asset = _tex(width=5184, height=3456, compression="Automatic",
+                     max_texture_size=2048, size_kb=24.88 * 1024)
+        assert round(texture_asset_vram_mb(asset), 2) == 24.88
+
+    def test_a_resize_still_saves_when_the_size_was_measured(self):
+        """The measured bytes-per-pixel is anchored at the current size.
+        Re-deriving it after the proposed downsize spread the same bytes over
+        fewer pixels and priced every Unity resize as free."""
+        report = audit_assets([self._measured(width=4000, height=2664)],
+                              engine="unity")
+        resize = [f for f in report.results if f.rule_id == "LT006"]
+        assert resize and resize[0].estimated_saving.vram_mb > 0
+
+    def test_a_saving_survives_a_recommendation_the_client_cannot_apply(self):
+        """LT006's fix is a DCC round-trip, so its recommendation is filtered
+        out at the boundary. The memory it saves is still real — reading the
+        filtered dict made the joint model conclude nothing changes."""
+        report = audit_assets([self._measured(width=4000, height=2664)],
+                              engine="unity")
+        lt006 = [f for f in report.results if f.rule_id == "LT006"][0]
+        assert lt006.recommended == {}
+        assert lt006.auto_fixable is False
+        assert lt006.estimated_saving.vram_mb > 0
+
+
 class TestEffectiveTextureSize:
     def test_import_cap_defines_the_resident_size(self):
         assert effective_texture_size(4096, 4096, 2048) == (2048, 2048)

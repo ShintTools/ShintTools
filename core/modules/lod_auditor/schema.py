@@ -225,6 +225,15 @@ class AuditRequest(BaseModel):
 # ── Output models ─────────────────────────────────────────────────────────────
 
 
+# Placeholder a rule writes into its message where it wants to quote its own
+# VRAM saving. The figure is only final after the orchestrator reconciles
+# overlapping optimisations against their joint result, so a rule that
+# formatted the number itself would print its pre-reconciliation estimate next
+# to the panel's reconciled one — two different figures for the same fix, one
+# column apart. lod_orchestrator._render_saving_tokens substitutes it last.
+VRAM_SAVING_TOKEN: str = "{vram_saving}"
+
+
 class Saving(BaseModel):
     """Estimated resource saving if the fix is applied."""
 
