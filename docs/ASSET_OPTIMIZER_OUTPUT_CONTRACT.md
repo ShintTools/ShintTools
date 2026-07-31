@@ -26,7 +26,7 @@ The whitelist is **per engine**, because the two clients genuinely differ:
 |---|---|---|
 | Texture | `compression`, `max_texture_size`, `srgb`, `streaming`, `mips_enabled` | the same, plus `never_stream`, `lod_group`, `mip_gen` |
 | Mesh | `import_uniform_scale` | plus `build_scale`, `recompute_normals`, `recompute_tangents`, `remove_degenerates`, `use_full_precision_uvs`, `generate_lightmap_uvs`, `nanite_enabled`, `complex_as_simple`, `has_simple_collision`, `fallback_percent`, `lod_count`, `screen_sizes`, `lods`, `triangle_ratio_band` |
-| Material | `blend_mode`, `two_sided` | plus `clear_usage_flags`, `set_usage_flags` |
+| Material | `blend_mode`, `two_sided`, `enable_instancing`, `render_queue`, `double_sided_gi` | `blend_mode`, `two_sided`, `clear_usage_flags`, `set_usage_flags` |
 
 The Unity column mirrors the `AssetOptimizer*ScannerOutputFileRecommendedData`
 DTOs exactly. The Unreal column mirrors `FShintLodFixerRegistry`'s recognised

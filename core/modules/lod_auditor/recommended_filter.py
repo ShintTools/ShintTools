@@ -45,6 +45,12 @@ _UNITY_FIELDS: dict[str, dict[str, type]] = {
     "Material": {
         "blend_mode": str,
         "two_sided": bool,
+        # Unity-native levers (LM015/LM017/LM018). Every one is a property on
+        # UnityEngine.Material that the editor can set without touching the
+        # shader: enableInstancing, renderQueue, doubleSidedGI.
+        "enable_instancing": bool,
+        "render_queue": int,
+        "double_sided_gi": bool,
     },
 }
 

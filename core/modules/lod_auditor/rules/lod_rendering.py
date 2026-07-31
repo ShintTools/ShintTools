@@ -22,6 +22,17 @@ def _prims(asset: dict) -> int:
     return n if n >= 0 else 0
 
 
+# UE5-only concepts. Unity has no Material Instance, no material usage flags,
+# no Material Layers and no Runtime Virtual Texture, so these rules describe
+# machinery that does not exist there. They stayed quiet on Unity only because
+# the collector sent none of their inputs — an accident, not a decision: the
+# moment a Unity payload carries used_by_primitives (which the collector spec
+# now asks for), LM003 would start telling Unity users to convert a material
+# into an Unreal Material Instance. Gate on the concept, not on the data.
+def _unreal_only(engine: str) -> bool:
+    return engine.strip().lower() not in {"unity"}
+
+
 def _rec(recommended: dict, rationale: str) -> dict:
     recommended["rationale"] = rationale
     recommended["confidence"] = "high"
@@ -237,6 +248,8 @@ def check_lr007(
     asset: dict, engine: str = "unreal", thresholds: dict | None = None
 ) -> Finding | None:
     """LR007: World-Position-Offset on a heavy or Nanite mesh referencer."""
+    if not _unreal_only(engine):
+        return None
     T = thresholds if thresholds is not None else THRESHOLDS
     if not asset.get("uses_wpo"):
         return None
@@ -273,6 +286,8 @@ def check_lr008(
     asset: dict, engine: str = "unreal", thresholds: dict | None = None
 ) -> Finding | None:
     """LR008: Pixel Depth Offset disables early-Z for every covered pixel."""
+    if not _unreal_only(engine):
+        return None
     T = thresholds if thresholds is not None else THRESHOLDS
     if not asset.get("uses_pdo") or _prims(asset) <= T["LR008_MIN_PRIMS"]:
         return None

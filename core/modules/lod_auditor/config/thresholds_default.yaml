@@ -59,6 +59,9 @@ LM001_BUDGET_BY_BLEND_MODE:
 
 LM001_DEFAULT_BUDGET: 400
 LM003_PRIMITIVES_THRESHOLD: 3
+# LM015 — GPU Instancing: only worth flagging once a material is
+# shared widely enough that the per-renderer draw calls add up.
+LM015_MIN_PRIMITIVES: 20
 
 # ── Meshes ────────────────────────────────────────────────────────────────────
 
