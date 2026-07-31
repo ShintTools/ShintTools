@@ -8,13 +8,21 @@ description: "Mobile (iOS A14 / Android Adreno 660) — tight VRAM and shader bu
 
 # ── Textures ──────────────────────────────────────────────────────────────────
 
+# Mobile GPUs cannot sample the BC/DXT family at all. Recommending BC7 here —
+# as this profile did — was advice that makes things worse, not better: the
+# runtime falls back to decompressing into RGBA32, so "compress it" would have
+# multiplied the texture's memory by 8. ASTC is the baseline this profile
+# already targets (iOS A14 / Adreno 660).
+#
+# HDR and Data are deliberately unmapped: mobile HDR encoding varies by
+# project (ASTC HDR vs RGB9e5 vs RGBM) and lossy block compression is unsafe
+# for lookup data. The rule abstains rather than guessing — no advice beats
+# wrong advice.
 LT001_EXPECTED_FORMAT:
-  BaseColor: BC7
-  Normal: BC5
-  Mask: BC4
-  HDR: BC6H
+  BaseColor: ASTC_6x6
+  Normal: ASTC_5x5
+  Mask: ASTC_8x8
   UI: RGBA8
-  Data: BC4
 
 # Half the desktop budget across the board
 LT003_MAX_SIZE_BY_LOD_GROUP:
@@ -37,6 +45,8 @@ LT005_STREAMING_MIN_EDGE: 1024
 LT006_NPOT_MIN_EDGE: 128
 LT007_UNCOMPRESSED_MIN_EDGE: 128
 LT007_UNCOMPRESSED_MAX_EDGE: 512
+# Same reason as LT001 above — never propose a BC format to a mobile target.
+LT007_RECOMMENDED_FORMAT: ASTC_6x6
 LT008_RDO_MIN_EDGE: 128
 
 # ── Materials ─────────────────────────────────────────────────────────────────

@@ -16,8 +16,11 @@ from lod_auditor.vram_model import (
     BYTES_PER_PIXEL,
     effective_texture_size,
     estimate_texture_vram_mb,
+    is_effectively_uncompressed,
     normalize_compression,
+    normalize_usage,
     resolve_texture_bpp,
+    texture_asset_vram_mb,
 )
 
 _logger = logging.getLogger("shinttools.lod_auditor")
@@ -50,7 +53,7 @@ def check_lt001(
 ) -> Finding | None:
     """LT001: Compression format not optimal for the texture's declared usage."""
     T = thresholds if thresholds is not None else THRESHOLDS
-    usage: str = asset.get("usage", "")
+    usage: str = normalize_usage(asset.get("usage", ""))
     compression_raw: str = asset.get("compression", "")
     compression: str = normalize_compression(compression_raw)
 
@@ -92,7 +95,7 @@ def check_lt001(
 
 def check_lt002(asset: dict, engine: str = "unreal") -> Finding | None:
     """LT002: MIP chain configuration does not match the texture's usage."""
-    usage: str = asset.get("usage", "")
+    usage: str = normalize_usage(asset.get("usage", ""))
     mips_enabled: bool = asset.get("mips_enabled", True)
 
     if usage in _MIPS_REQUIRED_USAGES and not mips_enabled:
@@ -228,7 +231,7 @@ def check_lt003(
 
 def check_lt004(asset: dict, engine: str = "unreal") -> Finding | None:
     """LT004: sRGB flag does not match the texture's data type."""
-    usage: str = asset.get("usage", "")
+    usage: str = normalize_usage(asset.get("usage", ""))
 
     # Abstain when the client doesn't report the flag at all. Defaulting to
     # True made this fire on every Normal/Mask/HDR/Data texture from a client
@@ -478,12 +481,13 @@ def check_lt007(
     test_orchestrator.test_findings_have_valid_severity_values.)
     """
     T = thresholds if thresholds is not None else THRESHOLDS
-    compression: str = normalize_compression(asset.get("compression", "RGBA8"))
     mips_enabled: bool = asset.get("mips_enabled", True)
 
-    # Only uncompressed payloads — normalize_compression collapses every
-    # uncompressed UE5/Unity format onto "RGBA8".
-    if compression != "RGBA8":
+    # Only uncompressed payloads. Judged on the resident bytes, not on the
+    # importer's format string — Unity says "Automatic" on any platform with
+    # no explicit override, and a string comparison there hid the saving
+    # entirely (see is_effectively_uncompressed).
+    if not is_effectively_uncompressed(asset):
         return None
 
     # Price the compression win against the resident (import-capped) size.
@@ -497,8 +501,13 @@ def check_lt007(
     if long_edge < min_edge:
         return None
 
-    recommended: str = "BC7"
-    current_vram: float = estimate_texture_vram_mb(
+    # Profile-driven: proposing BC7 to a mobile target is worse than saying
+    # nothing — those GPUs cannot sample it, so the runtime decompresses to
+    # RGBA32 and the "fix" multiplies the texture's memory instead.
+    recommended: str = T.get("LT007_RECOMMENDED_FORMAT", "BC7")
+    # The measured size wins over the model when the client sent one, so the
+    # "before" figure matches what the panel already shows for this asset.
+    current_vram: float = texture_asset_vram_mb(asset) or estimate_texture_vram_mb(
         width, height, "RGBA8", with_mips=mips_enabled
     )
     recommended_vram: float = estimate_texture_vram_mb(
@@ -604,7 +613,7 @@ def check_lt009(
 ) -> Finding | None:
     """LT009: Missing mipmaps on a 3D-sampled texture (minification shimmer)."""
     T = thresholds if thresholds is not None else THRESHOLDS
-    usage = asset.get("usage", "")
+    usage = normalize_usage(asset.get("usage", ""))
     if usage == "UI":
         return None  # UI renders at a fixed pixel size — mips are wasteful (LT002)
     width, height = effective_texture_size(
@@ -647,7 +656,7 @@ def check_lt010(
     if engine == "unity":
         return None  # texture LOD groups are a UE5 concept (§13.9)
     T = thresholds if thresholds is not None else THRESHOLDS
-    usage = asset.get("usage", "")
+    usage = normalize_usage(asset.get("usage", ""))
     expected_map: dict = T["LT010_EXPECTED_GROUP"]
     expected = expected_map.get(usage)
     if not expected:
@@ -682,7 +691,7 @@ def check_lt013(
 ) -> Finding | None:
     """LT013: Single-channel masks that could pack into one RGBA texture."""
     T = thresholds if thresholds is not None else THRESHOLDS
-    if asset.get("usage") not in ("Mask", "Data"):
+    if normalize_usage(asset.get("usage", "")) not in ("Mask", "Data"):
         return None
     # The client precomputes the pack set via the material cross-join and sends
     # it as pack_candidates; per-asset we can't join, so we abstain without it.
@@ -776,7 +785,7 @@ def check_lt016(
     asset: dict, engine: str = "unreal", thresholds: dict | None = None
 ) -> Finding | None:
     """LT016: Always-resident UI/effects texture left in the streaming pool."""
-    usage = asset.get("usage", "")
+    usage = normalize_usage(asset.get("usage", ""))
     lod_group = asset.get("lod_group", "")
     if not asset.get("streaming", False):
         return None

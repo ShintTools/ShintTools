@@ -41,6 +41,9 @@ LT006_NPOT_MIN_EDGE: 128
 # LT007 — uncompressed: below min stays quiet; at/above max escalates to error.
 LT007_UNCOMPRESSED_MIN_EDGE: 256
 LT007_UNCOMPRESSED_MAX_EDGE: 1024
+# Replacement format proposed for an uncompressed payload. Profile-driven:
+# a desktop GPU wants BC7, a mobile one cannot sample it at all.
+LT007_RECOMMENDED_FORMAT: BC7
 
 # LT008 — Oodle/RDO: only flag block-compressed textures at or above this edge.
 LT008_RDO_MIN_EDGE: 256
