@@ -11,8 +11,9 @@
 import logging
 
 from lod_auditor.config import load_profile
-from lod_auditor.schema import Finding, Saving
+from lod_auditor.schema import VRAM_SAVING_TOKEN, Finding, Saving
 from lod_auditor.vram_model import (
+    BYTES_PER_PIXEL,
     effective_texture_size,
     estimate_texture_vram_mb,
     normalize_compression,
@@ -212,7 +213,7 @@ def check_lt003(
                 else f"{width}×{height} texture exceeds the {budget} px "
                 f"max-size budget. "
             )
-            + f"Estimated saving: {vram_saved} MB VRAM."
+            + f"Estimated saving: {VRAM_SAVING_TOKEN} MB VRAM."
         ),
         current={"max_texture_size": long_edge, "vram_mb": current_vram},
         recommended={"max_texture_size": budget, "vram_mb": recommended_vram},
@@ -346,6 +347,15 @@ def _floor_pow2(n: int) -> int:
 # uncompressed and HDR payloads have nothing for it to shrink.
 _RDO_FORMATS: frozenset[str] = frozenset({"BC1", "BC3", "BC4", "BC5", "BC7"})
 
+# Formats that already store the payload in fixed-size blocks. LT006 must not
+# warn that NPOT "can disable block compression" about one of these.
+_BLOCK_COMPRESSED_PREFIXES: tuple[str, ...] = ("BC", "ASTC", "ETC", "EAC", "PVRTC")
+_BLOCK_COMPRESSED_FORMATS: frozenset[str] = frozenset(
+    fmt
+    for fmt in BYTES_PER_PIXEL
+    if fmt.upper().startswith(_BLOCK_COMPRESSED_PREFIXES)
+)
+
 
 # ── LT006 ─────────────────────────────────────────────────────────────────────
 
@@ -374,6 +384,15 @@ def check_lt006(
     if lod_group == "UI":
         return None
 
+    # Unity's importer can scale an NPOT source to a power of two on import
+    # (TextureImporter.npotScale). When it is set to anything but None the
+    # upload is already POT and there is no padding to report — the source
+    # resolution is not what the GPU holds. Absent field = no scaling, which
+    # is UE5's behaviour and Unity's default for compressed textures.
+    npot_scale: str = str(asset.get("npot_scale", "") or "").strip().lower()
+    if npot_scale and npot_scale not in {"none", "0"}:
+        return None
+
     min_edge: int = T["LT006_NPOT_MIN_EDGE"]
     if max(width, height) < min_edge:
         return None
@@ -395,26 +414,50 @@ def check_lt006(
     )
     vram_saved: float = round(current_vram - recommended_vram, 2)
 
+    # Two claims we must not make blindly. "Block compression is disabled" is
+    # false for a texture already stored in a block format — the panel shows
+    # the format one column away from the message. And a per-axis floor to POT
+    # squashes any non-square texture (2048×1364 → 2048×1024), which is a
+    # re-authoring decision, not a checkbox: say so instead of implying the
+    # importer can do it.
+    already_block_compressed: bool = compression in _BLOCK_COMPRESSED_FORMATS
+    aspect_preserved: bool = width * rec_height == height * rec_width
+
+    size = f"{width}×{height} (imported size)"
+    if engine == "unity":
+        head = f"{size} is not power-of-two — this wastes memory"
+        head += (
+            "."
+            if already_block_compressed
+            else " and can disable block compression."
+        )
+    else:
+        head = f"{size} is not power-of-two — UE5 pads it on the GPU."
+
+    tail = (
+        f" Resize the source to {rec_width}×{rec_height} "
+        f"(≈ {VRAM_SAVING_TOKEN} MB VRAM)."
+    )
+    if not aspect_preserved:
+        tail += (
+            " Note this changes the aspect ratio, so the art has to be re-authored "
+            "or cropped — no importer setting can do it for you."
+        )
+
     return Finding(
         asset_path=asset["asset_path"],
         rule_id="LT006",
         category="Texture",
         severity="warning",
-        message=(
-            (
-                f"{width}×{height} is not power-of-two — UE5 pads it on the GPU. "
-                f"Resize to {rec_width}×{rec_height} to drop the padding "
-                if engine != "unity"
-                else f"{width}×{height} is not power-of-two — this wastes memory "
-                f"and can disable block compression. Resize to "
-                f"{rec_width}×{rec_height} "
-            )
-            + f"(≈ {vram_saved} MB VRAM)."
-        ),
+        message=head + tail,
         current={"width": width, "height": height},
         recommended={"width": rec_width, "height": rec_height},
         estimated_saving=Saving(vram_mb=max(0.0, vram_saved), shader_instructions=0),
-        auto_fixable=True,
+        # Source dimensions are not an importer property in either engine: the
+        # fix is a DCC round-trip (or Unity's npotScale, which the collectors
+        # do not expose yet). Advertising a "Fix" button here would resolve to
+        # a no-op — see ASSET_OPTIMIZER_OUTPUT_CONTRACT §1.
+        auto_fixable=False,
         guidance=None,
     )
 
@@ -472,7 +515,7 @@ def check_lt007(
         severity=severity,
         message=(
             f"{width}×{height} texture is uncompressed (RGBA8) — "
-            f"compress to {recommended} to save ≈ {vram_saved} MB VRAM."
+            f"compress to {recommended} to save ≈ {VRAM_SAVING_TOKEN} MB VRAM."
         ),
         current={"compression": "RGBA8", "vram_mb": current_vram},
         recommended={"compression": recommended, "vram_mb": recommended_vram},

@@ -170,6 +170,75 @@ class TestBasicAudit:
 # ── Tier Gating ────────────────────────────────────────────────────────────
 
 
+class TestAbsentFieldsStayAbsent:
+    """The request model must not invent values for fields the collector never
+    sent. Declaring `srgb: bool = True` re-materialised it in every payload,
+    which silently defeated the rules' own "abstain on missing data" logic —
+    the boundary looked harmless and undid a fix made two layers down.
+
+    Exercised through _to_audit_dict + audit_assets rather than the HTTP
+    client: this is a payload-translation invariant, and it should hold
+    without an app, a tier or a database.
+    """
+
+    @staticmethod
+    def _translate(payload: dict) -> dict:
+        from api.routes.lod_audit import LodAssetFile, _to_audit_dict
+
+        return _to_audit_dict(LodAssetFile(**payload))
+
+    def test_unsent_booleans_do_not_reach_the_rules(self):
+        # Unity's texture collector sends no srgb field at all.
+        translated = self._translate(
+            {"asset_path": "Assets/T_Rock_N.png", "asset_type": "Texture2D",
+             "usage": "Normal", "compression": "BC5", "width": 2048,
+             "height": 2048}
+        )
+        assert "srgb" not in translated
+        assert "streaming" not in translated
+
+    def test_sent_booleans_survive_translation(self):
+        translated = self._translate(
+            {"asset_path": "Assets/T_Rock_N.png", "asset_type": "Texture2D",
+             "usage": "Normal", "compression": "BC5", "width": 2048,
+             "height": 2048, "srgb": True, "streaming": False}
+        )
+        assert translated["srgb"] is True
+        assert translated["streaming"] is False
+
+    def test_missing_srgb_does_not_fire_the_srgb_rule(self):
+        """Defaulting srgb to True fired LT004 on every Normal/Mask/HDR
+        texture in a Unity project — an entire engine of false positives."""
+        from lod_auditor.lod_orchestrator import audit_assets
+
+        asset = self._translate(
+            {"asset_path": "Assets/T_Rock_N.png", "asset_type": "Texture2D",
+             "usage": "Normal", "compression": "BC5", "width": 2048,
+             "height": 2048}
+        )
+        report = audit_assets([asset], engine="unity")
+        assert [f for f in report.results if f.rule_id == "LT004"] == []
+
+    def test_missing_streaming_is_not_read_as_disabled(self):
+        from lod_auditor.lod_orchestrator import audit_assets
+
+        asset = self._translate(
+            {"asset_path": "Assets/T_Big.png", "asset_type": "Texture2D",
+             "usage": "BaseColor", "compression": "BC7", "width": 4096,
+             "height": 4096}
+        )
+        report = audit_assets([asset], engine="unity")
+        assert [f for f in report.results if f.rule_id == "LT005"] == []
+
+    def test_legacy_streaming_enabled_alias_still_works(self):
+        translated = self._translate(
+            {"asset_path": "Assets/T.png", "asset_type": "Texture2D",
+             "compression": "BC7", "width": 2048, "height": 2048,
+             "streaming_enabled": True}
+        )
+        assert translated["streaming"] is True
+
+
 class TestTierGating:
     """LOD Auditor is Studio-exclusive. Free and Indie get 403."""
 

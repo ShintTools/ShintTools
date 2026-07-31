@@ -287,10 +287,39 @@ class TestLT006:
         result_unity = check_lt006(tex, engine="unity")
         assert result_ue5 is not None and result_unity is not None
         assert "UE5 pads it" in result_ue5.message
-        assert "disable block compression" in result_unity.message
         assert result_ue5.recommended == result_unity.recommended == {
             "width": 1024, "height": 512,
         }
+
+    def test_block_compression_warning_only_when_not_already_compressed(self):
+        """The panel shows the format one column from the message — claiming
+        NPOT "can disable block compression" about a BC7 texture contradicts
+        it. The clause belongs only to uncompressed payloads."""
+        compressed = check_lt006(
+            _tex(width=1500, height=900, compression="BC7"), engine="unity"
+        )
+        uncompressed = check_lt006(
+            _tex(width=1500, height=900, compression="RGBA8"), engine="unity"
+        )
+        assert "disable block compression" not in compressed.message
+        assert "disable block compression" in uncompressed.message
+
+    def test_aspect_changing_resize_says_so(self):
+        """1500×900 → 1024×512 is a squash, not an importer setting."""
+        squashed = check_lt006(_tex(width=1500, height=900), engine="unity")
+        assert "changes the aspect ratio" in squashed.message
+        kept = check_lt006(_tex(width=1500, height=1500), engine="unity")
+        assert "changes the aspect ratio" not in kept.message
+
+    def test_resize_is_not_advertised_as_auto_fixable(self):
+        """Neither client can resize source art — a Fix button would no-op."""
+        assert check_lt006(_tex(width=1500, height=900)).auto_fixable is False
+
+    def test_abstains_when_the_importer_already_scales_to_power_of_two(self):
+        """Unity's npotScale makes the upload POT — the source resolution is
+        not what the GPU holds, so there is no padding to report."""
+        assert check_lt006(_tex(width=1500, height=900, npot_scale="ToNearest")) is None
+        assert check_lt006(_tex(width=1500, height=900, npot_scale="None")) is not None
 
 
 # ── LT007 ─────────────────────────────────────────────────────────────────────

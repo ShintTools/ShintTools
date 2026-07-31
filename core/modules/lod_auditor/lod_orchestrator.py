@@ -82,11 +82,18 @@ from lod_auditor.rules.lod_textures import (
     check_lt016,
 )
 from lod_auditor.recommended_filter import filter_recommended
-from lod_auditor.schema import AuditResponse, AuditSummary, Finding
+from lod_auditor.schema import (
+    VRAM_SAVING_TOKEN,
+    AuditResponse,
+    AuditSummary,
+    Finding,
+)
 from lod_auditor.vram_model import (
+    BYTES_PER_PIXEL,
     effective_texture_size,
     estimate_texture_vram_mb,
     is_analyzable_texture_format,
+    normalize_compression,
     resolve_texture_bpp,
     texture_asset_vram_mb,
 )
@@ -472,8 +479,21 @@ def _sanitize_recommended(findings: list[Finding], engine: str) -> None:
             finding.auto_fixable = False
 
 
-def _clamp_savings(findings: list[Finding], assets: list[dict[str, Any]]) -> None:
+def _clamp_savings(
+    findings: list[Finding],
+    assets: list[dict[str, Any]],
+    raw_recommended: list[dict[str, Any]] | None = None,
+) -> None:
     """Make per-asset savings physically coherent.
+
+    *raw_recommended* is the findings' recommendations as the rules built
+    them, parallel to *findings*, captured before _sanitize_recommended
+    narrowed them to the client's applicable keys. The joint model is
+    physics, not UI: it must reason about every change a rule proposes,
+    including the ones no client can apply directly (LT006's POT resize).
+    Reading the filtered dict instead made those findings look like
+    no-op fixes, so the achievable total came out 0 and every one of their
+    savings was scaled away.
 
     Three invariants, all previously violable:
 
@@ -513,18 +533,26 @@ def _clamp_savings(findings: list[Finding], assets: list[dict[str, Any]]) -> Non
         str(a.get("asset_path", "")): a for a in assets if a.get("asset_path")
     }
 
+    proposals: list[dict[str, Any]] = (
+        raw_recommended
+        if raw_recommended is not None and len(raw_recommended) == len(findings)
+        else [f.recommended for f in findings]
+    )
+
     # Group every texture finding per asset — including the ones claiming no
     # VRAM (LT002/LT009 turning mips ON, which *adds* 33%). The joint state
     # must reflect everything we are telling the studio to do, or the reported
-    # saving contradicts our own advice.
-    per_asset: dict[str, list[Finding]] = {}
-    for finding in findings:
+    # saving contradicts our own advice. Each entry carries the rule's own
+    # proposal alongside the finding, since the finding's own dict has already
+    # been narrowed to what the client can apply.
+    per_asset: dict[str, list[tuple[Finding, dict[str, Any]]]] = {}
+    for finding, proposal in zip(findings, proposals):
         if finding.category != "Texture":
             continue
-        per_asset.setdefault(finding.asset_path, []).append(finding)
+        per_asset.setdefault(finding.asset_path, []).append((finding, proposal))
 
     for path, group in per_asset.items():
-        claimants = [f for f in group if f.estimated_saving.vram_mb > 0]
+        claimants = [f for f, _ in group if f.estimated_saving.vram_mb > 0]
         if not claimants:
             continue
         asset = by_path.get(path)
@@ -576,15 +604,21 @@ def _clamp_savings(findings: list[Finding], assets: list[dict[str, Any]]) -> Non
             )
 
 
-def _post_fix_texture_vram(asset: dict[str, Any], group: list[Finding]) -> float:
+def _post_fix_texture_vram(
+    asset: dict[str, Any], group: list[tuple[Finding, dict[str, Any]]]
+) -> float:
     """Resident VRAM of *asset* with every recommendation in *group* applied.
 
-    Only three recommended fields move VRAM — max_texture_size, compression
-    and mips_enabled — and both engines expose all three, so the joint figure
-    is identical for Unity and UE5 given the same findings. Where several
-    findings recommend the same field, the most aggressive value wins: this
-    figure is the *potential* saving, i.e. the best case if the studio applies
-    everything on offer.
+    *group* pairs each finding with the recommendation its rule authored, not
+    the filtered one the client receives — the physics of "what would this
+    texture cost afterwards" does not care which properties a plugin happens
+    to expose a button for.
+
+    Four recommended fields move VRAM: max_texture_size, an explicit
+    width/height resize (LT006's power-of-two target), compression and
+    mips_enabled. Where several findings touch the same field the most
+    aggressive value wins: this figure is the *potential* saving, i.e. the
+    best case if the studio applies everything on offer.
     """
     width, height = effective_texture_size(
         asset.get("width", 0), asset.get("height", 0), asset.get("max_texture_size", 0)
@@ -593,38 +627,75 @@ def _post_fix_texture_vram(asset: dict[str, Any], group: list[Finding]) -> float
     mips = bool(asset.get("mips_enabled", True))
     measured_kb = asset.get("size_kb")
 
+    # Bytes-per-pixel of the payload as it is today, anchored at today's
+    # dimensions. When it comes from the client's measurement (Unity reports
+    # "Automatic" for any platform without an explicit override, so this is the
+    # common path there), re-deriving it after a proposed downsize would spread
+    # the same measured bytes over fewer pixels and price the resize as free —
+    # which zeroed every size-based saving in the Unity pipeline.
+    current_bpp = resolve_texture_bpp(fmt, width, height, mips, measured_kb)
+
     sizes = [
-        int(f.recommended["max_texture_size"])
-        for f in group
-        if isinstance(f.recommended.get("max_texture_size"), int)
-        and f.recommended["max_texture_size"] > 0
+        int(rec["max_texture_size"])
+        for _, rec in group
+        if isinstance(rec.get("max_texture_size"), int) and rec["max_texture_size"] > 0
     ]
     if sizes:
         width, height = effective_texture_size(width, height, min(sizes))
 
+    # An explicit target resolution (LT006 resizing to power-of-two) is not a
+    # long-edge cap — it can change each axis independently — so it is applied
+    # as a pair, keeping whichever proposal ends up smallest in area.
+    resizes = [
+        (int(rec["width"]), int(rec["height"]))
+        for _, rec in group
+        if isinstance(rec.get("width"), int)
+        and isinstance(rec.get("height"), int)
+        and rec["width"] > 0
+        and rec["height"] > 0
+    ]
+    if resizes:
+        target = min(resizes, key=lambda wh: wh[0] * wh[1])
+        if target[0] * target[1] < width * height:
+            width, height = target
+
     # Pick whichever recommended format is cheapest per pixel — rules can
     # disagree (LT001 wants the usage-correct format, LT007 any compression)
     # and the cheapest is the best case this "potential" figure represents.
-    formats = [
-        f.recommended["compression"]
-        for f in group
-        if isinstance(f.recommended.get("compression"), str)
-        and f.recommended["compression"]
-    ]
-    candidates = [fmt] + formats
-    fmt = min(
-        candidates,
-        key=lambda c: resolve_texture_bpp(c, width, height, mips, measured_kb),
-    )
+    # A *proposed* format is a hypothesis, so it is priced from the model; the
+    # measurement describes the format the texture has today and says nothing
+    # about what another one would cost.
+    for _, rec in group:
+        proposed = rec.get("compression")
+        if not isinstance(proposed, str) or not proposed:
+            continue
+        modelled = BYTES_PER_PIXEL.get(normalize_compression(proposed))
+        if modelled is not None and modelled < current_bpp:
+            current_bpp = modelled
 
-    for finding in group:
-        if isinstance(finding.recommended.get("mips_enabled"), bool):
-            mips = finding.recommended["mips_enabled"]
+    for _, rec in group:
+        if isinstance(rec.get("mips_enabled"), bool):
+            mips = rec["mips_enabled"]
 
-    bpp = resolve_texture_bpp(fmt, width, height, mips, measured_kb)
     return estimate_texture_vram_mb(
-        width, height, fmt, with_mips=mips, bpp_override=bpp
+        width, height, fmt, with_mips=mips, bpp_override=current_bpp
     )
+
+
+def _render_saving_tokens(findings: list[Finding]) -> None:
+    """Substitute VRAM_SAVING_TOKEN with each finding's final saving.
+
+    Runs after _clamp_savings, so the figure quoted in the message is the same
+    one the panel renders in its savings column. A rule cannot format this
+    itself: at rule time it only knows what its own fix would save in
+    isolation, which is not what the studio gets once the fix overlaps with
+    the other findings on the same asset.
+    """
+    for finding in findings:
+        if VRAM_SAVING_TOKEN in finding.message:
+            finding.message = finding.message.replace(
+                VRAM_SAVING_TOKEN, f"{finding.estimated_saving.vram_mb:g}"
+            )
 
 
 def _compute_summary(findings: list[Finding], assets_audited: int) -> AuditSummary:
@@ -697,8 +768,14 @@ def audit_assets(
     # Output boundary, in order: restrict recommendations to what this
     # engine's client can apply, then make the savings physically coherent.
     # Both run before the summary so the aggregate reflects what shipped.
+    # The savings model keeps working from the rules' own proposals — what a
+    # client can *apply* and what physically changes the texture are different
+    # questions, and answering the second with the first zeroed out every
+    # saving whose fix is not a plugin-side property (LT006's POT resize).
+    proposals = [dict(f.recommended) for f in all_findings]
     _sanitize_recommended(all_findings, engine)
-    _clamp_savings(all_findings, assets)
+    _clamp_savings(all_findings, assets, proposals)
+    _render_saving_tokens(all_findings)
 
     # Enrich every finding with rule_name / rule_explanation / engine.
     for finding in all_findings:

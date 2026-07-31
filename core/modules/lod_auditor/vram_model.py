@@ -274,8 +274,20 @@ def is_analyzable_texture_format(
 # fattest common one at 4.0. Anything outside this is a bad measurement
 # (wrong dimensions, a partially loaded asset, a streaming texture measured
 # mid-eviction) and is discarded rather than trusted.
+# Sanity band for a client-measured size, in bytes per pixel. It exists to
+# reject a measurement that cannot be "bytes for these pixels" at all (a zero,
+# or a client sending MB where KB was asked for), not to second-guess the
+# engine's own accounting.
+#
+# The ceiling used to be 4.0 — one RGBA8 texel — which silently rejected every
+# legitimate reading above it and fell back to the modelled 4.0. Real textures
+# exceed it routinely: RGBAHalf is 8 B/px, RGBAFloat 16, and a Read/Write-
+# enabled texture keeps a second CPU-side copy that Unity's
+# Profiler.GetRuntimeMemorySizeLong counts (correctly — the project really is
+# paying for it). Discarding those made the Core print a figure 43% below the
+# engine's own, one column away from it in the panel.
 _MIN_PLAUSIBLE_BPP: float = 0.1
-_MAX_PLAUSIBLE_BPP: float = 4.0
+_MAX_PLAUSIBLE_BPP: float = 32.0
 
 
 def resolve_texture_bpp(
@@ -316,6 +328,18 @@ def resolve_texture_bpp(
                 measured_kb,
             )
             return derived
+        _logger.warning(
+            "Discarding the client's %.1f KB measurement for unmapped format "
+            "%r at %dx%d — %.2f bytes/px is outside the plausible band "
+            "[%.1f, %.1f]. The reported size will not match the client's.",
+            measured_kb,
+            fmt,
+            width,
+            height,
+            derived,
+            _MIN_PLAUSIBLE_BPP,
+            _MAX_PLAUSIBLE_BPP,
+        )
 
     # Nothing usable: assume uncompressed. That is the safe worst case, but it
     # over-estimates a compressed texture up to 8x, so leave a trace instead of
