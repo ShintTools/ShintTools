@@ -268,6 +268,7 @@ def generate(
     temperature: float = 0.2,
     stop: list[str] | None = None,
     repeat_penalty: float = 1.1,
+    grammar_str: str | None = None,
 ) -> str:
     """Run a synchronous completion against the loaded model.
 
@@ -281,9 +282,22 @@ def generate(
     JSON-structured callers (custom rule checker) whose output legitimately
     repeats punctuation. Prose callers (the explainer) pass a stronger value
     to stop the small model looping into long repetitive paragraphs.
+
+    `grammar_str` (optional) is a GBNF grammar source. When set, decoding is
+    physically constrained to strings the grammar accepts — the mechanism
+    the assistant's intent router relies on: a classification cannot fall
+    outside its closed menu because those tokens are never candidates. This
+    is deliberately stronger than prompting for a protocol and hoping (the
+    approach that sank the old tool-calling agent).
     """
     if _llama is None:
         raise RuntimeError("Model not loaded — call load_model() first.")
+
+    grammar = None
+    if grammar_str:
+        import llama_cpp
+
+        grammar = llama_cpp.LlamaGrammar.from_string(grammar_str, verbose=False)
 
     effective_stop = stop if stop is not None else _DEFAULT_STOPS
     out = _llama(
@@ -292,6 +306,7 @@ def generate(
         temperature=temperature,
         stop=effective_stop,
         repeat_penalty=repeat_penalty,
+        grammar=grammar,
     )
     return out["choices"][0]["text"]
 

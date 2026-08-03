@@ -1,10 +1,13 @@
 # core/tests/test_assistant.py
 #
 # M0 — conversation skeleton + per-intent tier gating.
+# M1 — closed-menu intent router + explain_finding action.
 #
 # The assistant serves EVERY tier; what a tier cannot do is an intent-level
 # 403, never a blanket 403 on the route. Mongo is absent in this test
-# environment, so these also exercise the in-process fallback store.
+# environment, so these also exercise the in-process fallback store, and
+# the LLM is never loaded, so the router's keyword layer and the action's
+# deterministic degradation are what run — exactly the free-image path.
 
 from __future__ import annotations
 
@@ -12,6 +15,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from modules.assistant.actions import explain_finding
+from modules.assistant.intent_router import (
+    INTENT_GRAMMAR,
+    classify,
+    classify_by_keywords,
+)
 from modules.assistant.tiers import (
     ALL_INTENTS,
     allowed_intents_for,
@@ -146,3 +155,110 @@ class TestMessageEndpoint:
         assert data["memory"] == "session"
         assert "why_rule" in data["intents"]
         assert "simulate_change" not in data["intents"]
+
+
+# ── M1: intent router ─────────────────────────────────────────────────────────
+
+
+class TestIntentRouter:
+    def test_grammar_covers_the_whole_menu_and_nothing_else(self):
+        # The grammar is rebuilt from ALL_INTENTS at import — it must name
+        # every intent exactly once and contain no other terminal.
+        for intent in ALL_INTENTS:
+            assert f'"{intent}"' in INTENT_GRAMMAR
+        terminals = INTENT_GRAMMAR.split("::=")[1].count('"') // 2
+        assert terminals == len(ALL_INTENTS)
+
+    def test_keyword_layer_routes_both_languages(self):
+        cases = {
+            "why is this flagged on my texture?": "explain_finding",
+            "explica este warning": "explain_finding",
+            "dame un resumen del scan": "summarize_module",
+            "what if I fix these 5 issues?": "simulate_change",
+            "qué pasaría si bajo las sombras": "simulate_change",
+            "crea una regla: prohibido TCHAR_TO_ANSI": "define_rule",
+            "recuerda que usamos Nanite en personajes": "remember_fact",
+            "¿qué decidimos sobre los lightmaps?": "recall_fact",
+            "why does this rule exist": "why_rule",
+        }
+        for message, expected in cases.items():
+            assert classify_by_keywords(message) == expected, message
+
+    def test_unmatched_text_defaults_to_help_never_guesses(self):
+        assert classify_by_keywords("buenos días") == "general_help"
+        assert classify_by_keywords("") == "general_help"
+
+    def test_classify_without_llm_reports_keyword_source(self):
+        # No model in this environment — the router must degrade, not raise.
+        intent, source = classify("explica este issue")
+        assert intent == "explain_finding"
+        assert source == "keywords"
+
+    @pytest.mark.anyio
+    async def test_free_text_message_is_routed(self, async_client, monkeypatch):
+        _patch_tier(monkeypatch, "studio")
+        resp = await async_client.post(
+            "/assistant/message",
+            json={"message": "dame un resumen del último scan"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["intent"] == "summarize_module"
+
+
+# ── M1: explain_finding action ────────────────────────────────────────────────
+
+_FINDING = {
+    "rule_id": "LT003",
+    "rule_name": "Texture over budget",
+    "rule_explanation": (
+        "Texture resolution exceeds the slot budget for its LOD group."
+    ),
+    "message": "4096×4096 texture exceeds the 2048 px max-size budget.",
+    "fix_suggestion": "Set max_texture_size to 2048.",
+    "auto_fixable": True,
+}
+
+
+class TestExplainFinding:
+    @pytest.mark.anyio
+    async def test_inline_finding_degrades_to_grounded_text(self):
+        # No LLM loaded -> deterministic reply built ONLY from rule-engine
+        # fields; nothing invented.
+        result = await explain_finding.run({"finding": dict(_FINDING)})
+        assert result["resolved"] is True
+        assert result["degraded"] is True
+        assert "Texture over budget" in result["reply"]
+        assert "2048" in result["reply"]
+        assert "Auto-Fix" in result["reply"]
+
+    @pytest.mark.anyio
+    async def test_no_target_is_an_honest_ask_not_a_guess(self):
+        result = await explain_finding.run({"message": "why?"})
+        assert result["resolved"] is False
+        assert "rule id" in result["reply"]
+
+    @pytest.mark.anyio
+    async def test_unresolvable_context_ref_is_honest(self):
+        # Mongo is down in tests — the lookup must degrade to "not found".
+        result = await explain_finding.run(
+            {"context_ref": "an-000000000000", "rule_id": "LT003"}
+        )
+        assert result["resolved"] is False
+
+    @pytest.mark.anyio
+    async def test_end_to_end_explain_via_endpoint(
+        self, async_client, monkeypatch
+    ):
+        _patch_tier(monkeypatch, "free")
+        resp = await async_client.post(
+            "/assistant/message",
+            json={
+                "message": "why is this flagged?",
+                "intent": "explain_finding",
+                "finding": _FINDING,
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["intent"] == "explain_finding"
+        assert "Texture over budget" in data["reply"]["raw_text"]

@@ -48,6 +48,7 @@ class TestGenerate:
             temperature=0.7,
             stop=["</s>"],
             repeat_penalty=1.1,
+            grammar=None,  # no grammar_str given -> unconstrained decoding
         )
 
     def test_raises_when_model_not_loaded(self):

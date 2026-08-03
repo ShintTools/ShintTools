@@ -11,6 +11,7 @@ import logging
 import os
 import sys
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -230,8 +231,12 @@ async def scan_assets(payload: AssetScanRequest):
         "total_available": total_before_cap,
     }
 
+    # analysis_id doubles as the assistant's context_ref — generated even
+    # when the insert fails (then simply unresolvable, reported honestly).
+    analysis_id = f"an-{uuid.uuid4().hex[:12]}"
     try:
         doc = {
+            "analysis_id": analysis_id,
             "report_type": "asset_naming",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "summary": summary,
@@ -241,7 +246,7 @@ async def scan_assets(payload: AssetScanRequest):
     except Exception:
         pass
 
-    return {"summary": summary, "issues": issues}
+    return {"summary": summary, "issues": issues, "analysis_id": analysis_id}
 
 
 @router.post("/assets/fix")

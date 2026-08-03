@@ -50,13 +50,20 @@ class AssistantMessageRequest(BaseModel):
     # Omitted on the first turn; the response returns the id to continue.
     conversation_id: str = ""
     # The intent, when the UI already knows it (an "Explain" button knows it
-    # is explain_finding). Empty = M1's router will classify; in M0 empty
-    # falls back to general_help.
+    # is explain_finding). Empty -> the closed-menu router classifies the
+    # free text (grammar-constrained LLM when loaded, keyword table
+    # otherwise — never an open-ended guess).
     intent: str = ""
     # What the user is looking at: an analysis_id from a finished scan.
     # Resolved server-side against analysis_results — the assistant never
     # re-collects project data on its own.
     context_ref: str = ""
+    # Selectors within the referenced analysis (which row is "this one").
+    rule_id: str = ""
+    asset_path: str = ""
+    # The finding itself, inline — the UI has the row on screen. Same shape
+    # /agent/explain receives today; skips the context_ref lookup.
+    finding: dict = Field(default_factory=dict)
     # Grounding metadata the client already has on screen.
     studio_id: str = ""
     project_id: str = ""
@@ -95,22 +102,43 @@ _NOT_READY_TEXT = (
 )
 
 
-def _resolve_intent(requested: str) -> str:
-    """M0: trust the UI's declared intent; empty/unknown -> general_help.
-
-    M1 replaces the fallback branch with the grammar-constrained LLM router.
-    """
+def _resolve_intent(requested: str, message: str) -> str:
+    """The UI's declared intent wins; free text goes through the closed
+    router (grammar-constrained LLM when loaded, keyword table otherwise)."""
     candidate = (requested or "").strip().lower()
-    return candidate if candidate in ALL_INTENTS else "general_help"
+    if candidate in ALL_INTENTS:
+        return candidate
+    from modules.assistant.intent_router import classify
+
+    intent, source = classify(message)
+    logger.info("router: intent=%s source=%s", intent, source)
+    return intent
 
 
-def _dispatch(intent: str) -> str:
+async def _dispatch(intent: str, payload: AssistantMessageRequest) -> str:
     """Run the deterministic action for *intent* and return the reply text.
 
-    M0 ships only general_help; every other intent acknowledges honestly
-    instead of pretending. Actions land one per milestone under
-    modules/assistant/actions/ and replace branches here.
+    Intents without a shipped action acknowledge honestly instead of
+    pretending — actions land one per milestone under
+    modules/assistant/actions/.
     """
+    from modules.assistant.actions import ACTIONS
+
+    action = ACTIONS.get(intent)
+    if action is not None:
+        result = await action(
+            {
+                "message": payload.message,
+                "context_ref": payload.context_ref,
+                "rule_id": payload.rule_id,
+                "asset_path": payload.asset_path,
+                "finding": payload.finding,
+                "engine": payload.engine,
+                "project_id": payload.project_id,
+            }
+        )
+        return result["reply"]
+
     if intent == "general_help":
         return _HELP_TEXT
     return _NOT_READY_TEXT
@@ -125,7 +153,7 @@ async def assistant_message(
 ) -> AssistantMessageResponse:
     tier, reason = await resolve_tier_detailed(payload.api_key)
     caps = assistant_capabilities(tier)
-    intent = _resolve_intent(payload.intent)
+    intent = _resolve_intent(payload.intent, payload.message)
 
     if intent not in allowed_intents_for(tier):
         # Per-action gate: the endpoint always answers, the capability
@@ -165,7 +193,7 @@ async def assistant_message(
         context_ref=payload.context_ref,
     )
 
-    reply_text = _dispatch(intent)
+    reply_text = await _dispatch(intent, payload)
 
     turn = await append_turn(
         conversation_id,
