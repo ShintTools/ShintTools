@@ -620,3 +620,73 @@ class TestRuleLifecycle:
             json={"rule_id": created["rule_id"], "accept": True},
         )
         assert resp.status_code == 403
+
+
+# ── M4: model profiles + golden set ───────────────────────────────────────────
+
+
+class TestModelProfiles:
+    def test_light_always_resolves(self):
+        from modules.assistant.model_profile import resolve_profile
+
+        assert resolve_profile("light") == ("light", "")
+        assert resolve_profile("") == ("light", "")
+        assert resolve_profile("nonsense") == ("light", "")
+
+    def test_advanced_without_the_model_downgrades_with_reason(self):
+        # The 7B gguf is not installed in this environment.
+        from modules.assistant.model_profile import resolve_profile
+
+        profile, reason = resolve_profile("advanced")
+        assert profile == "light"
+        assert reason == "advanced_model_not_installed"
+
+    def test_env_can_force_a_profile(self, monkeypatch):
+        from modules.assistant.model_profile import resolve_profile
+
+        monkeypatch.setenv("SHINTTOOLS_ASSISTANT_PROFILE", "light")
+        # Even a Studio entitlement serves light when forced.
+        assert resolve_profile("advanced") == ("light", "")
+
+    def test_profiles_share_the_model_family(self):
+        # Same tokenizer/family so prompts + LoRA carry over — a profile
+        # swap must never mean a prompt-format migration.
+        from modules.assistant.model_profile import PROFILES
+
+        for config in PROFILES.values():
+            assert "Qwen2.5-Coder" in config["model_file"]
+
+
+class TestGoldenSet:
+    @staticmethod
+    def _pairs():
+        import yaml
+        from pathlib import Path
+
+        golden = (
+            Path(__file__).resolve().parent.parent
+            / "modules" / "assistant" / "eval" / "golden_intents.yaml"
+        )
+        return yaml.safe_load(golden.read_text(encoding="utf-8"))["pairs"]
+
+    def test_every_golden_intent_is_on_the_menu(self):
+        # Anti-drift: the golden set cannot reference intents that don't
+        # exist — same contract as rule_costs.yaml vs the rule catalog.
+        pairs = self._pairs()
+        assert len(pairs) >= 50
+        for pair in pairs:
+            assert pair["intent"] in ALL_INTENTS, pair
+
+    def test_every_intent_has_golden_coverage(self):
+        covered = {pair["intent"] for pair in self._pairs()}
+        assert covered == set(ALL_INTENTS)
+
+    def test_keyword_layer_never_leaves_the_menu_and_help_is_clean(self):
+        # The keyword layer's hard guarantees (accuracy belongs to the
+        # harness, not CI): always on-menu, and pure greetings never
+        # misroute into an action.
+        for pair in self._pairs():
+            got = classify_by_keywords(pair["message"])
+            assert got in ALL_INTENTS
+            if pair["intent"] == "general_help":
+                assert got == "general_help", pair["message"]
