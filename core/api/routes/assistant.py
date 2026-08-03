@@ -134,7 +134,10 @@ async def _dispatch(intent: str, payload: AssistantMessageRequest) -> str:
                 "asset_path": payload.asset_path,
                 "finding": payload.finding,
                 "engine": payload.engine,
+                "studio_id": payload.studio_id,
                 "project_id": payload.project_id,
+                "module_context": payload.module_context,
+                "conversation_id": payload.conversation_id,
             }
         )
         return result["reply"]
@@ -208,6 +211,19 @@ async def assistant_message(
             detail={"error": "Conversation not found or expired."},
         )
 
+    # Fold old turns into a summary once the thread grows long. Best-effort
+    # and non-blocking for the reply; no-op below the threshold or when the
+    # tier's memory doesn't persist.
+    if persist:
+        from modules.assistant import memory_store
+
+        try:
+            await memory_store.compact_conversation(
+                conversation_id, payload.studio_id, payload.project_id
+            )
+        except Exception:  # noqa: BLE001 — compaction must never fail a turn
+            logger.exception("conversation compaction failed")
+
     logger.info(
         "/assistant/message: tier=%s intent=%s conv=%s reason=%s",
         tier,
@@ -245,3 +261,90 @@ async def assistant_caps(api_key: str = ""):
         "model_profile": caps["model_profile"],
         "studio_rules": caps["studio_rules"],
     }
+
+
+# ── Memory (M2) ───────────────────────────────────────────────────────────────
+#
+# Facts are Studio-tier by capability table (memory="full"). The gate here
+# mirrors the per-intent one: a specific 403, never a hidden feature.
+
+
+async def _require_full_memory(api_key: str) -> str:
+    tier, _ = await resolve_tier_detailed(api_key)
+    if assistant_capabilities(tier)["memory"] != "full":
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "Persistent team memory requires a Studio plan.",
+                "current_tier": tier,
+            },
+        )
+    return tier
+
+
+class MemoryConfirmRequest(BaseModel):
+    api_key: str = ""
+    fact_id: str
+    accept: bool  # True -> confirmed; False -> retracted
+
+
+class MemoryMuteRequest(BaseModel):
+    api_key: str = ""
+    studio_id: str = ""
+    project_id: str = ""
+    muted: bool = True
+
+
+@router.get("/assistant/memory")
+async def assistant_memory(
+    api_key: str = "", studio_id: str = "", project_id: str = ""
+):
+    from modules.assistant import memory_store
+
+    await _require_full_memory(api_key)
+    facts = await memory_store.list_facts(studio_id, project_id)
+    muted = await memory_store.is_memory_muted(studio_id, project_id)
+    return {"facts": facts, "memory_muted": muted}
+
+
+@router.post("/assistant/memory/confirm")
+async def assistant_memory_confirm(payload: MemoryConfirmRequest):
+    from modules.assistant import memory_store
+
+    await _require_full_memory(payload.api_key)
+    status = "confirmed" if payload.accept else "retracted"
+    fact = await memory_store.set_fact_status(payload.fact_id, status)
+    if fact is None:
+        raise HTTPException(
+            status_code=404, detail={"error": "Fact not found."}
+        )
+    return {"fact": fact}
+
+
+@router.post("/assistant/memory/mute")
+async def assistant_memory_mute(payload: MemoryMuteRequest):
+    from modules.assistant import memory_store
+
+    await _require_full_memory(payload.api_key)
+    await memory_store.set_memory_muted(
+        payload.studio_id, payload.project_id, payload.muted
+    )
+    return {"studio_id": payload.studio_id, "project_id": payload.project_id,
+            "memory_muted": payload.muted}
+
+
+@router.delete("/assistant/memory/project")
+async def assistant_memory_purge(
+    api_key: str = "", studio_id: str = "", project_id: str = ""
+):
+    """Hard-delete a project's facts and summaries (NDA close-out)."""
+    from modules.assistant import memory_store
+
+    await _require_full_memory(api_key)
+    if not project_id:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "project_id is required for a purge."},
+        )
+    removed = await memory_store.purge_project(studio_id, project_id)
+    return {"removed": removed}

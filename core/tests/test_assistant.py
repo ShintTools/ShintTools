@@ -262,3 +262,148 @@ class TestExplainFinding:
         data = resp.json()
         assert data["intent"] == "explain_finding"
         assert "Texture over budget" in data["reply"]["raw_text"]
+
+
+# ── M2: memory ────────────────────────────────────────────────────────────────
+
+
+class TestMemory:
+    @pytest.mark.anyio
+    async def test_remember_proposes_and_never_self_confirms(self):
+        from modules.assistant import memory_store
+        from modules.assistant.actions import remember_fact
+
+        result = await remember_fact.run(
+            {
+                "message": "recuerda que usamos Nanite en todos los personajes",
+                "studio_id": "s1",
+                "project_id": "p1",
+            }
+        )
+        assert result["fact_status"] == "proposed"
+        assert result["fact_id"]
+        # The hard rule: a proposed fact is invisible to grounding.
+        assert await memory_store.confirmed_facts("s1", "p1") == []
+
+    @pytest.mark.anyio
+    async def test_recall_only_sees_confirmed_facts(self):
+        from modules.assistant import memory_store
+        from modules.assistant.actions import recall_fact, remember_fact
+
+        proposed = await remember_fact.run(
+            {
+                "message": "remember that all lightmaps bake at 512",
+                "studio_id": "s2",
+                "project_id": "p2",
+            }
+        )
+        # Before confirmation: recall knows nothing.
+        before = await recall_fact.run(
+            {"message": "what did we decide about lightmaps?",
+             "studio_id": "s2", "project_id": "p2"}
+        )
+        assert before["facts"] == []
+
+        await memory_store.set_fact_status(proposed["fact_id"], "confirmed")
+
+        after = await recall_fact.run(
+            {"message": "what did we decide about lightmaps?",
+             "studio_id": "s2", "project_id": "p2"}
+        )
+        assert proposed["fact_id"] in after["facts"]
+        assert "512" in after["reply"]
+
+    @pytest.mark.anyio
+    async def test_retracted_fact_stays_forgotten(self):
+        from modules.assistant import memory_store
+        from modules.assistant.actions import recall_fact, remember_fact
+
+        proposed = await remember_fact.run(
+            {"message": "remember that shadows are medium on Switch",
+             "studio_id": "s3", "project_id": "p3"}
+        )
+        await memory_store.set_fact_status(proposed["fact_id"], "confirmed")
+        await memory_store.set_fact_status(proposed["fact_id"], "retracted")
+
+        result = await recall_fact.run(
+            {"message": "shadows on Switch?", "studio_id": "s3",
+             "project_id": "p3"}
+        )
+        assert result["facts"] == []
+
+    @pytest.mark.anyio
+    async def test_muted_project_refuses_to_remember(self):
+        from modules.assistant import memory_store
+        from modules.assistant.actions import remember_fact
+
+        await memory_store.set_memory_muted("s4", "p4", True)
+        result = await remember_fact.run(
+            {"message": "remember that this is secret",
+             "studio_id": "s4", "project_id": "p4"}
+        )
+        assert result["fact_id"] == ""
+        assert "muted" in result["reply"]
+
+    @pytest.mark.anyio
+    async def test_purge_project_removes_everything(self):
+        from modules.assistant import memory_store
+        from modules.assistant.actions import remember_fact
+
+        proposed = await remember_fact.run(
+            {"message": "remember that the NDA build ships in june",
+             "studio_id": "s5", "project_id": "p5"}
+        )
+        await memory_store.set_fact_status(proposed["fact_id"], "confirmed")
+        removed = await memory_store.purge_project("s5", "p5")
+        assert removed >= 1
+        assert await memory_store.list_facts("s5", "p5") == []
+
+    @pytest.mark.anyio
+    async def test_memory_endpoints_are_studio_gated(
+        self, async_client, monkeypatch
+    ):
+        _patch_tier(monkeypatch, "indie")
+        resp = await async_client.get(
+            "/assistant/memory", params={"studio_id": "s1"}
+        )
+        assert resp.status_code == 403
+
+        _patch_tier(monkeypatch, "studio")
+        resp = await async_client.get(
+            "/assistant/memory", params={"studio_id": "s1"}
+        )
+        assert resp.status_code == 200
+
+    @pytest.mark.anyio
+    async def test_confirm_endpoint_round_trip(
+        self, async_client, monkeypatch
+    ):
+        from modules.assistant.actions import remember_fact
+
+        _patch_tier(monkeypatch, "studio")
+        proposed = await remember_fact.run(
+            {"message": "remember that props use 1k textures",
+             "studio_id": "s6", "project_id": "p6"}
+        )
+        resp = await async_client.post(
+            "/assistant/memory/confirm",
+            json={"fact_id": proposed["fact_id"], "accept": True},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["fact"]["status"] == "confirmed"
+
+    def test_extractor_strips_preamble_verbatim(self):
+        from modules.assistant.fact_extractor import (
+            classify_fact_type,
+            extract_statement,
+        )
+
+        assert extract_statement(
+            "recuerda que usamos Nanite en personajes"
+        ) == "usamos Nanite en personajes"
+        assert extract_statement(
+            "Remember that props use 1k textures"
+        ) == "props use 1k textures"
+        # Nothing paraphrased — the user's own words are the value.
+        assert classify_fact_type("hemos decidido usar Lumen") == "decision"
+        assert classify_fact_type("preferimos BC7 para albedo") == "preference"

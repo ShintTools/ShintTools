@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from . import explain_finding
+from . import explain_finding, recall_fact, remember_fact
 
 ActionFn = Callable[[dict], Any]
 
@@ -22,6 +22,8 @@ ActionFn = Callable[[dict], Any]
 # "not wired up yet" reply — never a fake answer.
 ACTIONS: dict[str, ActionFn] = {
     "explain_finding": explain_finding.run,
+    "remember_fact": remember_fact.run,
+    "recall_fact": recall_fact.run,
 }
 
 __all__ = ["ACTIONS"]
