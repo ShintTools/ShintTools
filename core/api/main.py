@@ -9,6 +9,7 @@ from pathlib import Path
 from api.middleware import setup_middlewares
 from api.routes import (
     assets,
+    assistant,
     config,
     health,
     license,
@@ -290,6 +291,7 @@ app.include_router(
 )  # GET /metrics/score/latest  GET /metrics/score/history
 app.include_router(license.router)  # POST /license
 app.include_router(unity.router)  # POST /validate/unity/scan
+app.include_router(assistant.router)  # POST /assistant/*  (all tiers, per-intent gate)
 
 # ── Paid surface (Indie + Studio) — paid image only ───────────────────────────
 # Registered solely when SHINT_CORE_EDITION=paid. The paid sources are *physically
