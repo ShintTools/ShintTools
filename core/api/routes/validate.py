@@ -9,6 +9,7 @@
 
 import logging
 import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -97,6 +98,9 @@ class ValidateProjectRequest(BaseModel):
     project_name: str = ""
     files: list[FileEntry] = Field(default_factory=list)
     engine: str = "unreal"
+    # Scopes which persistent studio rules apply (assistant M3). Optional
+    # and additive — clients that don't send it simply run built-ins only.
+    studio_id: str = ""
 
 
 class ValidateBlueprintsRequest(BaseModel):
@@ -257,14 +261,21 @@ async def _persist_result(
     report_type: str,
     summary: dict,
     issues: list[dict],
-) -> None:
+) -> str:
     """
     Save result to MongoDB for the dashboard.
     Best-effort — never blocks the response if MongoDB is
     unavailable.
+
+    Returns the analysis_id stamped on the stored document. Clients hand
+    it back as the assistant's `context_ref` ("explain this finding"), so
+    it is generated and returned even when the insert fails — the id is
+    then simply unresolvable, which the assistant reports honestly.
     """
+    analysis_id = f"an-{uuid.uuid4().hex[:12]}"
     try:
         doc = {
+            "analysis_id": analysis_id,
             "report_type": report_type,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "summary": summary,
@@ -273,6 +284,7 @@ async def _persist_result(
         await analysis_results.insert_one(doc)
     except Exception:
         pass
+    return analysis_id
 
 
 # ── Endpoints ─────────────────────────────────────────
@@ -316,9 +328,14 @@ async def validate_code(payload: ValidateCodeRequest):
     issues = filter_issues_by_tier(issues, tier)
 
     summary = _build_summary(issues, files_scanned=1, tier=tier)
-    await _persist_result("code_validator", summary, issues)
+    analysis_id = await _persist_result("code_validator", summary, issues)
 
-    return {"summary": summary, "issues": issues, "tier": tier}
+    return {
+        "summary": summary,
+        "issues": issues,
+        "tier": tier,
+        "analysis_id": analysis_id,
+    }
 
 
 @router.post("/validate/project")
@@ -342,6 +359,25 @@ async def validate_project(payload: ValidateProjectRequest):
     tier = await resolve_tier(payload.api_key)
     all_issues = filter_issues_by_tier(all_issues, tier)
 
+    # Persistent studio rules (assistant M3) — best-effort add-on; a
+    # failing studio rule never breaks the built-in scan. Only rules the
+    # user explicitly activated run here, and their findings carry
+    # source="studio_rule" so the panel can badge them.
+    if payload.studio_id:
+        try:
+            from modules.assistant.rule_runner import evaluate_studio_rules
+
+            all_issues.extend(
+                await evaluate_studio_rules(
+                    payload.studio_id,
+                    payload.project_id,
+                    payload.engine,
+                    [(f.path, f.content) for f in payload.files],
+                )
+            )
+        except Exception:
+            logger.exception("studio rules evaluation failed")
+
     files_scanned = len(payload.files)
 
     summary = _build_summary(
@@ -349,7 +385,9 @@ async def validate_project(payload: ValidateProjectRequest):
         files_scanned=files_scanned,
         tier=tier,
     )
-    await _persist_result("code_validator_project", summary, all_issues)
+    analysis_id = await _persist_result(
+        "code_validator_project", summary, all_issues
+    )
 
     # Compute and persist Quality Score automatically
     score_doc = compute_score(
@@ -366,6 +404,7 @@ async def validate_project(payload: ValidateProjectRequest):
         "issues": all_issues,
         "tier": tier,
         "quality_score": score_doc["overall_score"],
+        "analysis_id": analysis_id,
     }
 
 
@@ -399,7 +438,9 @@ async def validate_blueprints(
         files_scanned=blueprints_scanned,
         tier=tier,
     )
-    await _persist_result("code_validator_blueprints", summary, all_issues)
+    analysis_id = await _persist_result(
+        "code_validator_blueprints", summary, all_issues
+    )
 
     # Compute and persist Quality Score automatically
     score_doc = compute_score(
@@ -416,6 +457,7 @@ async def validate_blueprints(
         "issues": all_issues,
         "tier": tier,
         "quality_score": score_doc["overall_score"],
+        "analysis_id": analysis_id,
     }
 
 
@@ -557,7 +599,7 @@ async def validate_unity_graphs(payload: ValidateUnityGraphsRequest):
     tier = await resolve_tier(payload.api_key)
     normalized = filter_issues_by_tier(normalized, tier)
 
-    await _persist_result(
+    analysis_id = await _persist_result(
         "code_validator_unity_graphs",
         _build_summary(normalized, files_scanned=len(parsed_graphs), tier=tier),
         normalized,
@@ -566,6 +608,7 @@ async def validate_unity_graphs(payload: ValidateUnityGraphsRequest):
     return {
         "error": "",
         "time": round(time.perf_counter() - t0, 4),
+        "analysis_id": analysis_id,
         "files": normalized,
         "graphs_received": graphs_received,
         "graphs_parsed": len(parsed_graphs),

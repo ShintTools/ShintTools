@@ -1,0 +1,86 @@
+# Golden set for the assistant's intent router (M4).
+#
+# Each entry: {message, intent}. The anti-drift test asserts every intent
+# exists in the closed menu and reports the keyword layer's accuracy; the
+# full LLM evaluation (light vs advanced) runs locally through
+# scripts/assistant_router_eval.py where a model is installed — never in
+# CI. Grow this file with real user phrasings as they appear; entries are
+# grouped by intent, Spanish and English mixed on purpose.
+
+pairs:
+  # ── explain_finding ─────────────────────────────────────────────
+  - {message: "why is this texture flagged?", intent: explain_finding}
+  - {message: "explica este warning de LT003", intent: explain_finding}
+  - {message: "what does this finding mean?", intent: explain_finding}
+  - {message: "qué significa este issue en T_Rock?", intent: explain_finding}
+  - {message: "why is this flagged as a problem?", intent: explain_finding}
+  - {message: "no entiendo este warning, explícamelo", intent: explain_finding}
+  - {message: "explain the CP001 hit in MyActor.cpp", intent: explain_finding}
+  - {message: "por qué sale este error en el material?", intent: explain_finding}
+  - {message: "can you explain this issue?", intent: explain_finding}
+  - {message: "este finding es un falso positivo?", intent: explain_finding}
+
+  # ── summarize_module ────────────────────────────────────────────
+  - {message: "give me a summary of the scan", intent: summarize_module}
+  - {message: "resumen del último análisis", intent: summarize_module}
+  - {message: "how bad is the texture situation overall?", intent: summarize_module}
+  - {message: "overview of the LOD audit results", intent: summarize_module}
+  - {message: "resume el estado general del proyecto", intent: summarize_module}
+  - {message: "what's the overall state of the code scan?", intent: summarize_module}
+  - {message: "dame el estado general de materiales", intent: summarize_module}
+  - {message: "summarize what the validator found", intent: summarize_module}
+
+  # ── why_rule ────────────────────────────────────────────────────
+  - {message: "why does this rule exist?", intent: why_rule}
+  - {message: "por qué esta regla marca los ticks?", intent: why_rule}
+  - {message: "what's the rationale behind LT007?", intent: why_rule}
+  - {message: "why is GetAllActorsOfClass bad in Tick?", intent: why_rule}
+  - {message: "cuál es el coste de la regla CP006?", intent: why_rule}
+  - {message: "why rule CB003, raw new seems fine to me", intent: why_rule}
+  - {message: "what performance cost does this rule protect against?", intent: why_rule}
+
+  # ── simulate_change ─────────────────────────────────────────────
+  - {message: "what if I fix these 5 issues?", intent: simulate_change}
+  - {message: "qué pasaría si bajo las sombras a medium?", intent: simulate_change}
+  - {message: "simulate fixing all the texture findings", intent: simulate_change}
+  - {message: "what would I gain by compressing these?", intent: simulate_change}
+  - {message: "si arreglo los ticks, cuánto frame time recupero?", intent: simulate_change}
+  - {message: "simula el impacto de arreglar los LODs", intent: simulate_change}
+  - {message: "how much VRAM would that save?", intent: simulate_change}
+  - {message: "what happens to the frame budget if I fix CP002?", intent: simulate_change}
+
+  # ── define_rule ─────────────────────────────────────────────────
+  - {message: "new rule: never use TCHAR_TO_ANSI in headers", intent: define_rule}
+  - {message: "crea una regla: prohibido GetAllActorsOfClass", intent: define_rule}
+  - {message: "add a rule that all tests live under Source/Tests", intent: define_rule}
+  - {message: "define una regla de naming para widgets", intent: define_rule}
+  - {message: "I want to forbid raw new in gameplay code", intent: define_rule}
+  - {message: "convention: all SWidget classes start with SShint", intent: define_rule}
+  - {message: "prohibir el uso de FindObject fuera de BeginPlay", intent: define_rule}
+
+  # ── remember_fact ───────────────────────────────────────────────
+  - {message: "remember that we use Nanite on all characters", intent: remember_fact}
+  - {message: "recuerda que los lightmaps van a 512", intent: remember_fact}
+  - {message: "we decided to target 60fps on Series S", intent: remember_fact}
+  - {message: "hemos decidido usar Lumen en interiores", intent: remember_fact}
+  - {message: "apunta que el proyecto usa URP, no HDRP", intent: remember_fact}
+  - {message: "decidimos que las texturas de props van a 1k", intent: remember_fact}
+  - {message: "remember our shadow budget is 2ms", intent: remember_fact}
+
+  # ── recall_fact ─────────────────────────────────────────────────
+  - {message: "what did we decide about lightmaps?", intent: recall_fact}
+  - {message: "qué decidimos sobre el target de fps?", intent: recall_fact}
+  - {message: "do you remember our texture budget?", intent: recall_fact}
+  - {message: "te acuerdas de lo que dijimos de Nanite?", intent: recall_fact}
+  - {message: "what were our decisions on shadows?", intent: recall_fact}
+  - {message: "recuerdas el presupuesto de sombras?", intent: recall_fact}
+
+  # ── general_help ────────────────────────────────────────────────
+  - {message: "hola", intent: general_help}
+  - {message: "hello, what can you do?", intent: general_help}
+  - {message: "qué sabes hacer?", intent: general_help}
+  - {message: "help", intent: general_help}
+  - {message: "buenos días", intent: general_help}
+  - {message: "how do I use this assistant?", intent: general_help}
+  - {message: "thanks!", intent: general_help}
+  - {message: "gracias, muy útil", intent: general_help}

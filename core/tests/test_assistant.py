@@ -1,0 +1,868 @@
+# core/tests/test_assistant.py
+#
+# M0 — conversation skeleton + per-intent tier gating.
+# M1 — closed-menu intent router + explain_finding action.
+#
+# The assistant serves EVERY tier; what a tier cannot do is an intent-level
+# 403, never a blanket 403 on the route. Mongo is absent in this test
+# environment, so these also exercise the in-process fallback store, and
+# the LLM is never loaded, so the router's keyword layer and the action's
+# deterministic degradation are what run — exactly the free-image path.
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock
+
+import pytest
+
+from modules.assistant.actions import explain_finding
+from modules.assistant.intent_router import (
+    INTENT_GRAMMAR,
+    classify,
+    classify_by_keywords,
+)
+from modules.assistant.tiers import (
+    ALL_INTENTS,
+    allowed_intents_for,
+    assistant_capabilities,
+)
+
+
+def _patch_tier(monkeypatch, tier: str):
+    monkeypatch.setattr(
+        "api.routes.assistant.resolve_tier_detailed",
+        AsyncMock(return_value=(tier, "")),
+    )
+
+
+class TestCapabilityTable:
+    def test_every_tier_allows_something(self):
+        for tier in ("free", "indie", "studio", "enterprise"):
+            assert allowed_intents_for(tier), tier
+
+    def test_free_is_a_subset_of_indie_is_a_subset_of_studio(self):
+        assert allowed_intents_for("free") < allowed_intents_for("indie")
+        assert allowed_intents_for("indie") < allowed_intents_for("studio")
+        assert allowed_intents_for("studio") == ALL_INTENTS
+
+    def test_enterprise_is_exactly_studio(self):
+        # GH #37: Enterprise is a superset of Studio and must never drift.
+        assert assistant_capabilities("enterprise") is assistant_capabilities(
+            "studio"
+        )
+
+    def test_unknown_tier_defaults_to_free(self):
+        assert allowed_intents_for("") == allowed_intents_for("free")
+        assert allowed_intents_for("banana") == allowed_intents_for("free")
+
+
+class TestMessageEndpoint:
+    @pytest.mark.anyio
+    async def test_free_tier_can_talk(self, async_client, monkeypatch):
+        _patch_tier(monkeypatch, "free")
+        resp = await async_client.post(
+            "/assistant/message",
+            json={"message": "hola", "intent": "general_help"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["conversation_id"].startswith("ac-")
+        assert data["tier"] == "free"
+        assert data["reply"]["raw_text"]
+
+    @pytest.mark.anyio
+    async def test_free_tier_gated_per_intent_not_per_route(
+        self, async_client, monkeypatch
+    ):
+        _patch_tier(monkeypatch, "free")
+        resp = await async_client.post(
+            "/assistant/message",
+            json={"message": "simula esto", "intent": "simulate_change"},
+        )
+        assert resp.status_code == 403
+        detail = resp.json()["detail"]
+        assert detail["current_tier"] == "free"
+        assert "general_help" in detail["allowed_intents"]
+
+    @pytest.mark.anyio
+    async def test_studio_reaches_every_intent_gate(
+        self, async_client, monkeypatch
+    ):
+        _patch_tier(monkeypatch, "studio")
+        for intent in sorted(ALL_INTENTS):
+            resp = await async_client.post(
+                "/assistant/message",
+                json={"message": "x", "intent": intent},
+            )
+            assert resp.status_code == 200, intent
+
+    @pytest.mark.anyio
+    async def test_conversation_continues_across_turns(
+        self, async_client, monkeypatch
+    ):
+        _patch_tier(monkeypatch, "studio")
+        first = await async_client.post(
+            "/assistant/message", json={"message": "primero"}
+        )
+        conv_id = first.json()["conversation_id"]
+
+        second = await async_client.post(
+            "/assistant/message",
+            json={"message": "segundo", "conversation_id": conv_id},
+        )
+        assert second.json()["conversation_id"] == conv_id
+
+        history = await async_client.get(
+            f"/assistant/conversations/{conv_id}"
+        )
+        turns = history.json()["turns"]
+        # 2 user turns + 2 assistant replies, in order.
+        assert [t["role"] for t in turns] == [
+            "user", "assistant", "user", "assistant",
+        ]
+        assert turns[0]["raw_text"] == "primero"
+        assert turns[2]["raw_text"] == "segundo"
+
+    @pytest.mark.anyio
+    async def test_unknown_conversation_is_404(self, async_client, monkeypatch):
+        _patch_tier(monkeypatch, "studio")
+        resp = await async_client.post(
+            "/assistant/message",
+            json={"message": "x", "conversation_id": "ac-nope"},
+        )
+        assert resp.status_code == 404
+
+    @pytest.mark.anyio
+    async def test_unknown_intent_falls_back_to_help_not_500(
+        self, async_client, monkeypatch
+    ):
+        _patch_tier(monkeypatch, "free")
+        resp = await async_client.post(
+            "/assistant/message",
+            json={"message": "x", "intent": "hack_the_planet"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["intent"] == "general_help"
+
+    @pytest.mark.anyio
+    async def test_capabilities_endpoint_reports_the_table(
+        self, async_client, monkeypatch
+    ):
+        _patch_tier(monkeypatch, "indie")
+        resp = await async_client.get("/assistant/capabilities")
+        data = resp.json()
+        assert data["tier"] == "indie"
+        assert data["memory"] == "session"
+        assert "why_rule" in data["intents"]
+        assert "simulate_change" not in data["intents"]
+
+
+# ── M1: intent router ─────────────────────────────────────────────────────────
+
+
+class TestIntentRouter:
+    def test_grammar_covers_the_whole_menu_and_nothing_else(self):
+        # The grammar is rebuilt from ALL_INTENTS at import — it must name
+        # every intent exactly once and contain no other terminal.
+        for intent in ALL_INTENTS:
+            assert f'"{intent}"' in INTENT_GRAMMAR
+        terminals = INTENT_GRAMMAR.split("::=")[1].count('"') // 2
+        assert terminals == len(ALL_INTENTS)
+
+    def test_keyword_layer_routes_both_languages(self):
+        cases = {
+            "why is this flagged on my texture?": "explain_finding",
+            "explica este warning": "explain_finding",
+            "dame un resumen del scan": "summarize_module",
+            "what if I fix these 5 issues?": "simulate_change",
+            "qué pasaría si bajo las sombras": "simulate_change",
+            "crea una regla: prohibido TCHAR_TO_ANSI": "define_rule",
+            "recuerda que usamos Nanite en personajes": "remember_fact",
+            "¿qué decidimos sobre los lightmaps?": "recall_fact",
+            "why does this rule exist": "why_rule",
+        }
+        for message, expected in cases.items():
+            assert classify_by_keywords(message) == expected, message
+
+    def test_unmatched_text_defaults_to_help_never_guesses(self):
+        assert classify_by_keywords("buenos días") == "general_help"
+        assert classify_by_keywords("") == "general_help"
+
+    def test_classify_without_llm_reports_keyword_source(self):
+        # No model in this environment — the router must degrade, not raise.
+        intent, source = classify("explica este issue")
+        assert intent == "explain_finding"
+        assert source == "keywords"
+
+    @pytest.mark.anyio
+    async def test_free_text_message_is_routed(self, async_client, monkeypatch):
+        _patch_tier(monkeypatch, "studio")
+        resp = await async_client.post(
+            "/assistant/message",
+            json={"message": "dame un resumen del último scan"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["intent"] == "summarize_module"
+
+
+# ── M1: explain_finding action ────────────────────────────────────────────────
+
+_FINDING = {
+    "rule_id": "LT003",
+    "rule_name": "Texture over budget",
+    "rule_explanation": (
+        "Texture resolution exceeds the slot budget for its LOD group."
+    ),
+    "message": "4096×4096 texture exceeds the 2048 px max-size budget.",
+    "fix_suggestion": "Set max_texture_size to 2048.",
+    "auto_fixable": True,
+}
+
+
+class TestExplainFinding:
+    @pytest.mark.anyio
+    async def test_inline_finding_degrades_to_grounded_text(self):
+        # No LLM loaded -> deterministic reply built ONLY from rule-engine
+        # fields; nothing invented.
+        result = await explain_finding.run({"finding": dict(_FINDING)})
+        assert result["resolved"] is True
+        assert result["degraded"] is True
+        assert "Texture over budget" in result["reply"]
+        assert "2048" in result["reply"]
+        assert "Auto-Fix" in result["reply"]
+
+    @pytest.mark.anyio
+    async def test_no_target_is_an_honest_ask_not_a_guess(self):
+        result = await explain_finding.run({"message": "why?"})
+        assert result["resolved"] is False
+        assert "rule id" in result["reply"]
+
+    @pytest.mark.anyio
+    async def test_unresolvable_context_ref_is_honest(self):
+        # Mongo is down in tests — the lookup must degrade to "not found".
+        result = await explain_finding.run(
+            {"context_ref": "an-000000000000", "rule_id": "LT003"}
+        )
+        assert result["resolved"] is False
+
+    @pytest.mark.anyio
+    async def test_end_to_end_explain_via_endpoint(
+        self, async_client, monkeypatch
+    ):
+        _patch_tier(monkeypatch, "free")
+        resp = await async_client.post(
+            "/assistant/message",
+            json={
+                "message": "why is this flagged?",
+                "intent": "explain_finding",
+                "finding": _FINDING,
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["intent"] == "explain_finding"
+        assert "Texture over budget" in data["reply"]["raw_text"]
+
+
+# ── M2: memory ────────────────────────────────────────────────────────────────
+
+
+class TestMemory:
+    @pytest.mark.anyio
+    async def test_remember_proposes_and_never_self_confirms(self):
+        from modules.assistant import memory_store
+        from modules.assistant.actions import remember_fact
+
+        result = await remember_fact.run(
+            {
+                "message": "recuerda que usamos Nanite en todos los personajes",
+                "studio_id": "s1",
+                "project_id": "p1",
+            }
+        )
+        assert result["fact_status"] == "proposed"
+        assert result["fact_id"]
+        # The hard rule: a proposed fact is invisible to grounding.
+        assert await memory_store.confirmed_facts("s1", "p1") == []
+
+    @pytest.mark.anyio
+    async def test_recall_only_sees_confirmed_facts(self):
+        from modules.assistant import memory_store
+        from modules.assistant.actions import recall_fact, remember_fact
+
+        proposed = await remember_fact.run(
+            {
+                "message": "remember that all lightmaps bake at 512",
+                "studio_id": "s2",
+                "project_id": "p2",
+            }
+        )
+        # Before confirmation: recall knows nothing.
+        before = await recall_fact.run(
+            {"message": "what did we decide about lightmaps?",
+             "studio_id": "s2", "project_id": "p2"}
+        )
+        assert before["facts"] == []
+
+        await memory_store.set_fact_status(proposed["fact_id"], "confirmed")
+
+        after = await recall_fact.run(
+            {"message": "what did we decide about lightmaps?",
+             "studio_id": "s2", "project_id": "p2"}
+        )
+        assert proposed["fact_id"] in after["facts"]
+        assert "512" in after["reply"]
+
+    @pytest.mark.anyio
+    async def test_retracted_fact_stays_forgotten(self):
+        from modules.assistant import memory_store
+        from modules.assistant.actions import recall_fact, remember_fact
+
+        proposed = await remember_fact.run(
+            {"message": "remember that shadows are medium on Switch",
+             "studio_id": "s3", "project_id": "p3"}
+        )
+        await memory_store.set_fact_status(proposed["fact_id"], "confirmed")
+        await memory_store.set_fact_status(proposed["fact_id"], "retracted")
+
+        result = await recall_fact.run(
+            {"message": "shadows on Switch?", "studio_id": "s3",
+             "project_id": "p3"}
+        )
+        assert result["facts"] == []
+
+    @pytest.mark.anyio
+    async def test_muted_project_refuses_to_remember(self):
+        from modules.assistant import memory_store
+        from modules.assistant.actions import remember_fact
+
+        await memory_store.set_memory_muted("s4", "p4", True)
+        result = await remember_fact.run(
+            {"message": "remember that this is secret",
+             "studio_id": "s4", "project_id": "p4"}
+        )
+        assert result["fact_id"] == ""
+        assert "muted" in result["reply"]
+
+    @pytest.mark.anyio
+    async def test_purge_project_removes_everything(self):
+        from modules.assistant import memory_store
+        from modules.assistant.actions import remember_fact
+
+        proposed = await remember_fact.run(
+            {"message": "remember that the NDA build ships in june",
+             "studio_id": "s5", "project_id": "p5"}
+        )
+        await memory_store.set_fact_status(proposed["fact_id"], "confirmed")
+        removed = await memory_store.purge_project("s5", "p5")
+        assert removed >= 1
+        assert await memory_store.list_facts("s5", "p5") == []
+
+    @pytest.mark.anyio
+    async def test_memory_endpoints_are_studio_gated(
+        self, async_client, monkeypatch
+    ):
+        _patch_tier(monkeypatch, "indie")
+        resp = await async_client.get(
+            "/assistant/memory", params={"studio_id": "s1"}
+        )
+        assert resp.status_code == 403
+
+        _patch_tier(monkeypatch, "studio")
+        resp = await async_client.get(
+            "/assistant/memory", params={"studio_id": "s1"}
+        )
+        assert resp.status_code == 200
+
+    @pytest.mark.anyio
+    async def test_confirm_endpoint_round_trip(
+        self, async_client, monkeypatch
+    ):
+        from modules.assistant.actions import remember_fact
+
+        _patch_tier(monkeypatch, "studio")
+        proposed = await remember_fact.run(
+            {"message": "remember that props use 1k textures",
+             "studio_id": "s6", "project_id": "p6"}
+        )
+        resp = await async_client.post(
+            "/assistant/memory/confirm",
+            json={"fact_id": proposed["fact_id"], "accept": True},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["fact"]["status"] == "confirmed"
+
+    def test_extractor_strips_preamble_verbatim(self):
+        from modules.assistant.fact_extractor import (
+            classify_fact_type,
+            extract_statement,
+        )
+
+        assert extract_statement(
+            "recuerda que usamos Nanite en personajes"
+        ) == "usamos Nanite en personajes"
+        assert extract_statement(
+            "Remember that props use 1k textures"
+        ) == "props use 1k textures"
+        # Nothing paraphrased — the user's own words are the value.
+        assert classify_fact_type("hemos decidido usar Lumen") == "decision"
+        assert classify_fact_type("preferimos BC7 para albedo") == "preference"
+
+
+# ── M3: studio rules ──────────────────────────────────────────────────────────
+
+
+class TestRuleCompiler:
+    def test_forbidden_api_compiles_to_template(self):
+        from modules.assistant.rule_compiler import compile_rule
+
+        compiled = compile_rule("never use TCHAR_TO_ANSI in headers")
+        assert compiled["tier"] == "template"
+        assert compiled["template"]["template_id"] == "forbidden_api"
+        assert compiled["template"]["params"]["api"] == "TCHAR_TO_ANSI"
+        assert ".h" in compiled["template"]["params"]["scope_suffixes"]
+
+    def test_spanish_prohibition_compiles(self):
+        from modules.assistant.rule_compiler import compile_rule
+
+        compiled = compile_rule("prohibido GetAllActorsOfClass en el proyecto")
+        assert compiled["tier"] == "template"
+        assert compiled["template"]["params"]["api"] == "GetAllActorsOfClass"
+
+    def test_ambiguous_prose_falls_to_llm_tier_never_guesses(self):
+        from modules.assistant.rule_compiler import compile_rule
+
+        compiled = compile_rule(
+            "components should be initialized before use where sensible"
+        )
+        assert compiled["tier"] == "llm_evaluated"
+
+    def test_prose_never_is_not_an_api(self):
+        from modules.assistant.rule_compiler import compile_rule
+
+        # "never use more than 4 samplers" — "more" must not become an API.
+        compiled = compile_rule("never use more than 4 samplers per material")
+        assert compiled["tier"] == "llm_evaluated"
+
+
+class TestTemplateEvaluation:
+    def test_forbidden_api_flags_with_line_numbers(self):
+        from modules.assistant.rule_templates import evaluate_template_rule
+
+        rule = {
+            "name": "No TCHAR_TO_ANSI in headers",
+            "template": {
+                "template_id": "forbidden_api",
+                "params": {"api": "TCHAR_TO_ANSI", "scope_suffixes": [".h"]},
+            },
+        }
+        files = [
+            ("Source/Foo.h", "int x;\nauto s = TCHAR_TO_ANSI(*Name);\n"),
+            ("Source/Foo.cpp", "auto s = TCHAR_TO_ANSI(*Name);\n"),  # out of scope
+        ]
+        violations = evaluate_template_rule(rule, files)
+        assert len(violations) == 1
+        assert violations[0]["file"] == "Source/Foo.h"
+        assert violations[0]["line"] == 2
+        assert violations[0]["source"] == "studio_rule"
+
+    def test_file_location_template(self):
+        from modules.assistant.rule_templates import evaluate_template_rule
+
+        rule = {
+            "name": "Tests under Source/Tests",
+            "template": {
+                "template_id": "file_location",
+                "params": {
+                    "file_glob_suffix": "Test.cpp",
+                    "required_dir": "Source/Tests",
+                },
+            },
+        }
+        violations = evaluate_template_rule(
+            rule,
+            [
+                ("Source/Tests/FooTest.cpp", ""),
+                ("Source/Misc/BarTest.cpp", ""),
+            ],
+        )
+        assert [v["file"] for v in violations] == ["Source/Misc/BarTest.cpp"]
+
+    def test_broken_rule_never_breaks_the_scan(self):
+        from modules.assistant.rule_templates import evaluate_template_rule
+
+        assert evaluate_template_rule({"template": {}}, [("a.h", "x")]) == []
+        assert evaluate_template_rule(
+            {"template": {"template_id": "naming_pattern",
+                          "params": {"pattern": "([unclosed"}}},
+            [("a.h", "x")],
+        ) == []
+
+
+class TestRuleLifecycle:
+    @pytest.mark.anyio
+    async def test_define_rule_creates_a_draft_that_does_not_run(self):
+        from modules.assistant import rule_store
+        from modules.assistant.actions import define_rule
+
+        result = await define_rule.run(
+            {
+                "message": "never use TCHAR_TO_ANSI in headers",
+                "studio_id": "rs1",
+                "project_id": "rp1",
+                "engine": "unreal",
+            }
+        )
+        assert result["rule_tier"] == "template"
+        assert result["rule_status"] == "draft"
+        # A draft is invisible to scans until activated + confirmed.
+        assert await rule_store.active_rules("rs1", "rp1", "unreal") == []
+
+    @pytest.mark.anyio
+    async def test_activated_rule_runs_in_the_project_scan(
+        self, async_client, monkeypatch
+    ):
+        from modules.assistant import rule_store
+        from modules.assistant.actions import define_rule
+
+        _patch_tier(monkeypatch, "studio")
+        created = await define_rule.run(
+            {"message": "never use TCHAR_TO_ANSI in headers",
+             "studio_id": "rs2", "project_id": "rp2", "engine": "unreal"}
+        )
+        await rule_store.set_rule_status(
+            created["rule_id"], status="active", confirmed=True
+        )
+
+        monkeypatch.setattr(
+            "api.routes.validate.resolve_tier",
+            AsyncMock(return_value="studio"),
+        )
+        resp = await async_client.post(
+            "/validate/project",
+            json={
+                "studio_id": "rs2",
+                "project_id": "rp2",
+                "engine": "unreal",
+                "files": [
+                    {"name": "Foo.h", "path": "Source/Foo.h", "type": "h",
+                     "content": "auto s = TCHAR_TO_ANSI(*Name);\n"},
+                ],
+            },
+        )
+        assert resp.status_code == 200
+        studio_findings = [
+            i for i in resp.json()["issues"] if i.get("source") == "studio_rule"
+        ]
+        assert len(studio_findings) == 1
+        assert "TCHAR_TO_ANSI" in studio_findings[0]["message"]
+
+    @pytest.mark.anyio
+    async def test_scan_without_studio_id_runs_no_studio_rules(
+        self, async_client, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "api.routes.validate.resolve_tier",
+            AsyncMock(return_value="studio"),
+        )
+        resp = await async_client.post(
+            "/validate/project",
+            json={
+                "project_id": "rp3",
+                "engine": "unreal",
+                "files": [
+                    {"name": "Foo.h", "path": "Source/Foo.h", "type": "h",
+                     "content": "auto s = TCHAR_TO_ANSI(*Name);\n"},
+                ],
+            },
+        )
+        assert resp.status_code == 200
+        assert [
+            i for i in resp.json()["issues"] if i.get("source") == "studio_rule"
+        ] == []
+
+    @pytest.mark.anyio
+    async def test_llm_rule_cache_round_trip(self):
+        from modules.assistant import rule_store
+
+        key = rule_store.eval_cache_key("sr-x", 1, "file content")
+        assert await rule_store.get_cached_eval(key) is None
+        await rule_store.save_cached_eval(key, [{"message": "v"}])
+        assert await rule_store.get_cached_eval(key) == [{"message": "v"}]
+        # A different version is a different key — edits re-evaluate.
+        assert rule_store.eval_cache_key("sr-x", 2, "file content") != key
+
+    @pytest.mark.anyio
+    async def test_rules_endpoints_gated_by_capability(
+        self, async_client, monkeypatch
+    ):
+        _patch_tier(monkeypatch, "free")
+        resp = await async_client.get("/assistant/rules")
+        assert resp.status_code == 403
+
+        _patch_tier(monkeypatch, "indie")
+        resp = await async_client.get("/assistant/rules")
+        assert resp.status_code == 200
+
+    @pytest.mark.anyio
+    async def test_indie_cannot_activate_a_template_rule(
+        self, async_client, monkeypatch
+    ):
+        from modules.assistant.actions import define_rule
+
+        created = await define_rule.run(
+            {"message": "never use GetAllActorsOfClass in the project",
+             "studio_id": "rs4", "project_id": "rp4", "engine": "unreal"}
+        )
+        _patch_tier(monkeypatch, "indie")
+        resp = await async_client.post(
+            "/assistant/rules/confirm",
+            json={"rule_id": created["rule_id"], "accept": True},
+        )
+        assert resp.status_code == 403
+
+
+# ── M4: model profiles + golden set ───────────────────────────────────────────
+
+
+class TestModelProfiles:
+    def test_light_always_resolves(self):
+        from modules.assistant.model_profile import resolve_profile
+
+        assert resolve_profile("light") == ("light", "")
+        assert resolve_profile("") == ("light", "")
+        assert resolve_profile("nonsense") == ("light", "")
+
+    def test_advanced_without_the_model_downgrades_with_reason(self):
+        # The 7B gguf is not installed in this environment.
+        from modules.assistant.model_profile import resolve_profile
+
+        profile, reason = resolve_profile("advanced")
+        assert profile == "light"
+        assert reason == "advanced_model_not_installed"
+
+    def test_env_can_force_a_profile(self, monkeypatch):
+        from modules.assistant.model_profile import resolve_profile
+
+        monkeypatch.setenv("SHINTTOOLS_ASSISTANT_PROFILE", "light")
+        # Even a Studio entitlement serves light when forced.
+        assert resolve_profile("advanced") == ("light", "")
+
+    def test_profiles_share_the_model_family(self):
+        # Same tokenizer/family so prompts + LoRA carry over — a profile
+        # swap must never mean a prompt-format migration.
+        from modules.assistant.model_profile import PROFILES
+
+        for config in PROFILES.values():
+            assert "Qwen2.5-Coder" in config["model_file"]
+
+
+class TestGoldenSet:
+    @staticmethod
+    def _pairs():
+        import yaml
+        from pathlib import Path
+
+        golden = (
+            Path(__file__).resolve().parent.parent
+            / "modules" / "assistant" / "eval" / "golden_intents.yaml"
+        )
+        return yaml.safe_load(golden.read_text(encoding="utf-8"))["pairs"]
+
+    def test_every_golden_intent_is_on_the_menu(self):
+        # Anti-drift: the golden set cannot reference intents that don't
+        # exist — same contract as rule_costs.yaml vs the rule catalog.
+        pairs = self._pairs()
+        assert len(pairs) >= 50
+        for pair in pairs:
+            assert pair["intent"] in ALL_INTENTS, pair
+
+    def test_every_intent_has_golden_coverage(self):
+        covered = {pair["intent"] for pair in self._pairs()}
+        assert covered == set(ALL_INTENTS)
+
+    def test_keyword_layer_never_leaves_the_menu_and_help_is_clean(self):
+        # The keyword layer's hard guarantees (accuracy belongs to the
+        # harness, not CI): always on-menu, and pure greetings never
+        # misroute into an action.
+        for pair in self._pairs():
+            got = classify_by_keywords(pair["message"])
+            assert got in ALL_INTENTS
+            if pair["intent"] == "general_help":
+                assert got == "general_help", pair["message"]
+
+
+# ── M6: why_rule, simulator, decision monitor ────────────────────────────────
+
+
+class TestWhyRule:
+    @pytest.mark.anyio
+    async def test_cites_the_real_cost_engine(self):
+        from modules.assistant.actions import why_rule
+
+        result = await why_rule.run({"message": "why CP001?"})
+        assert result["rule_id"] == "CP001"
+        # The differentiator: real bands + calibration, not generic advice.
+        assert result["cost"]["dimensions"]
+        assert result["cost"]["calibration_version"]
+        assert "calibration" in result["reply"]
+
+    @pytest.mark.anyio
+    async def test_picks_the_rule_up_from_the_selected_finding(self):
+        from modules.assistant.actions import why_rule
+
+        result = await why_rule.run({"message": "why does this rule exist?",
+                                     "finding": {"rule_id": "CP001"}})
+        assert result["rule_id"] == "CP001"
+
+    @pytest.mark.anyio
+    async def test_uncosted_rule_says_so_instead_of_inventing(self):
+        from modules.assistant.actions import why_rule
+
+        # A real catalog rule with no rule_costs entry.
+        result = await why_rule.run({"rule_id": "LT003"})
+        assert result["rule_name"]
+        assert not result["cost"]
+        assert "no calibrated cost" in result["reply"]
+
+    @pytest.mark.anyio
+    async def test_unknown_rule_is_refused_not_improvised(self):
+        from modules.assistant.actions import why_rule
+
+        result = await why_rule.run({"rule_id": "ZZ999"})
+        assert "don't have ZZ999" in result["reply"]
+
+    @pytest.mark.anyio
+    async def test_no_rule_asks_instead_of_guessing(self):
+        from modules.assistant.actions import why_rule
+
+        result = await why_rule.run({"message": "why?"})
+        assert result["rule_id"] == ""
+        assert "Which rule" in result["reply"]
+
+
+class TestSimulateChange:
+    @pytest.mark.anyio
+    async def test_without_a_report_it_refuses_to_estimate(self):
+        from modules.assistant.actions import simulate_change
+
+        result = await simulate_change.run({"message": "what if I fix these?"})
+        assert result["simulated"] is False
+        assert "Predictive Profiler" in result["reply"]
+
+    @pytest.mark.anyio
+    async def test_without_a_selection_it_asks_for_one(self):
+        from modules.assistant.actions import simulate_change
+
+        result = await simulate_change.run({"report_id": "pr-abc"})
+        assert result["simulated"] is False
+        assert "Pick the issues" in result["reply"]
+
+    @pytest.mark.anyio
+    async def test_expired_report_is_honest(self):
+        from modules.assistant.actions import simulate_change
+
+        result = await simulate_change.run(
+            {"report_id": "pr-gone", "selected_item_ids": ["i1"]}
+        )
+        assert result["simulated"] is False
+
+
+class TestDecisionMonitor:
+    _FACT = {
+        "fact_id": "af-1",
+        "value": "all character meshes use Nanite",
+    }
+
+    def test_flags_a_finding_that_contradicts_a_decision(self):
+        from modules.assistant.decision_monitor import find_contradictions
+
+        findings = [
+            {
+                "rule_id": "LD012",
+                "rule_name": "Nanite candidate",
+                "asset_path": "/Game/Characters/SM_Hero",
+                "message": "High-poly character meshes should enable Nanite.",
+            }
+        ]
+        pairs = find_contradictions([self._FACT], findings)
+        assert len(pairs) == 1
+        assert pairs[0]["fact_id"] == "af-1"
+        assert len(pairs[0]["shared_terms"]) >= 2
+
+    def test_unrelated_finding_is_not_paired(self):
+        from modules.assistant.decision_monitor import find_contradictions
+
+        findings = [
+            {
+                "rule_id": "LT003",
+                "rule_name": "Texture over budget",
+                "asset_path": "/Game/Props/T_Barrel",
+                "message": "4096 texture exceeds the 2048 budget.",
+            }
+        ]
+        assert find_contradictions([self._FACT], findings) == []
+
+    def test_a_vague_fact_never_pairs(self):
+        from modules.assistant.decision_monitor import find_contradictions
+
+        vague = {"fact_id": "af-2", "value": "we use it"}
+        findings = [{"rule_id": "LT003", "message": "texture too big"}]
+        assert find_contradictions([vague], findings) == []
+
+    @pytest.mark.anyio
+    async def test_proposed_facts_never_produce_a_nudge(self):
+        from modules.assistant import decision_monitor
+        from modules.assistant.actions import remember_fact
+
+        await remember_fact.run(
+            {"message": "remember that all character meshes use Nanite",
+             "studio_id": "dm1", "project_id": "dp1"}
+        )
+        findings = [
+            {"rule_id": "LD012", "rule_name": "Nanite candidate",
+             "asset_path": "/Game/Characters/SM_Hero",
+             "message": "High-poly character meshes should enable Nanite."}
+        ]
+        # Unconfirmed -> silent, by contract.
+        assert await decision_monitor.check_scan("dm1", "dp1", findings) == []
+
+    @pytest.mark.anyio
+    async def test_confirmed_fact_produces_a_rendered_nudge(self):
+        from modules.assistant import decision_monitor, memory_store
+        from modules.assistant.actions import remember_fact
+
+        proposed = await remember_fact.run(
+            {"message": "remember that all character meshes use Nanite",
+             "studio_id": "dm2", "project_id": "dp2"}
+        )
+        await memory_store.set_fact_status(proposed["fact_id"], "confirmed")
+
+        findings = [
+            {"rule_id": "LD012", "rule_name": "Nanite candidate",
+             "asset_path": "/Game/Characters/SM_Hero",
+             "message": "High-poly character meshes should enable Nanite."}
+        ]
+        pairs = await decision_monitor.check_scan("dm2", "dp2", findings)
+        assert len(pairs) == 1
+        assert "SM_Hero" in pairs[0]["nudge"]
+        assert "Nanite" in pairs[0]["nudge"]
+
+
+class TestSummarizeModule:
+    @pytest.mark.anyio
+    async def test_without_a_scan_it_asks_for_one(self):
+        from modules.assistant.actions import summarize_module
+
+        result = await summarize_module.run({})
+        assert result["resolved"] is False
+        assert "Run a scan" in result["reply"]
+
+
+class TestActionCoverage:
+    def test_every_intent_has_an_action(self):
+        from modules.assistant.actions import ACTIONS
+
+        # general_help is answered by the route itself; everything else
+        # must have a deterministic action behind it.
+        assert set(ACTIONS) == ALL_INTENTS - {"general_help"}
