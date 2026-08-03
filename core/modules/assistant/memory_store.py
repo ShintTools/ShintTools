@@ -243,6 +243,32 @@ def digest_turns(turns: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+async def latest_summary(conversation_id: str) -> str:
+    """The newest compaction digest for *conversation_id*, or "".
+
+    The read side of compact_conversation. Without it the digest is a
+    record nobody consults, and a thread that has been compacted loses its
+    early context entirely — the turns are gone and the summary that
+    replaced them was never surfaced. conversation_context prepends this
+    to the verbatim window it feeds the model.
+    """
+    db = await _db()
+    if db is None:
+        return ""
+    _, _, summaries = db
+
+    try:
+        cursor = (
+            summaries.find({"conversation_id": conversation_id}, {"_id": 0})
+            .sort("created_at", -1)
+            .limit(1)
+        )
+        docs = await cursor.to_list(length=1)
+    except Exception:  # noqa: BLE001 — Mongo best-effort, as everywhere
+        return ""
+    return str(docs[0].get("summary_text", "")) if docs else ""
+
+
 async def compact_conversation(
     conversation_id: str, studio_id: str, project_id: str
 ) -> bool:

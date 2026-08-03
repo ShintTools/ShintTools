@@ -19,9 +19,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
+from dataclasses import dataclass
+from typing import AsyncIterator
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from api.database import resolve_tier_detailed
@@ -82,6 +86,10 @@ class AssistantTurn(BaseModel):
     intent: str = ""
     raw_text: str = ""
     context_ref: str = ""
+    # The grounding this turn resolved to — echoed so a panel can show what
+    # "this" meant, and so a reopened thread restores its own context.
+    rule_id: str = ""
+    asset_path: str = ""
 
 
 class AssistantMessageResponse(BaseModel):
@@ -89,6 +97,10 @@ class AssistantMessageResponse(BaseModel):
     conversation_id: str = ""
     tier: str = "free"
     intent: str = ""
+    # True when the intent was inherited from the previous turn rather than
+    # classified — lets a panel show "following up on …" instead of making
+    # the user wonder why a two-word question was understood.
+    continued: bool = False
     reply: AssistantTurn = Field(default_factory=AssistantTurn)
 
 
@@ -107,25 +119,48 @@ _NOT_READY_TEXT = (
 )
 
 
-def _resolve_intent(requested: str, message: str) -> str:
-    """The UI's declared intent wins; free text goes through the closed
-    router (grammar-constrained LLM when loaded, keyword table otherwise)."""
+def _resolve_intent(
+    requested: str, message: str, prior_intent: str = ""
+) -> tuple[str, bool]:
+    """Resolve the intent for this turn; returns (intent, continued).
+
+    Three sources, in order:
+      1. The UI declared it — a button knows its own intent.
+      2. Deterministic continuation: a short anaphoric message ("and why?")
+         inherits the previous turn's intent. Python decides this, not the
+         model, and it can only ever reuse a target the user already had on
+         screen.
+      3. The closed router (grammar-constrained LLM, else keyword table).
+    """
     candidate = (requested or "").strip().lower()
     if candidate in ALL_INTENTS:
-        return candidate
+        return candidate, False
+
+    from modules.assistant.conversation_context import is_continuation
+
+    if prior_intent and is_continuation(message):
+        logger.info("router: intent=%s source=continuation", prior_intent)
+        return prior_intent, True
+
     from modules.assistant.intent_router import classify
 
     intent, source = classify(message)
     logger.info("router: intent=%s source=%s", intent, source)
-    return intent
+    return intent, False
 
 
-async def _dispatch(intent: str, payload: AssistantMessageRequest) -> str:
+async def _dispatch(
+    intent: str, payload: AssistantMessageRequest, history: str = ""
+) -> str:
     """Run the deterministic action for *intent* and return the reply text.
 
     Intents without a shipped action acknowledge honestly instead of
     pretending — actions land one per milestone under
     modules/assistant/actions/.
+
+    ``history`` is the rendered thread so far. Actions that narrate use it
+    so a follow-up reads as a continuation; actions that answer from a
+    table ignore it.
     """
     from modules.assistant.actions import ACTIONS
 
@@ -134,6 +169,7 @@ async def _dispatch(intent: str, payload: AssistantMessageRequest) -> str:
         result = await action(
             {
                 "message": payload.message,
+                "history": history,
                 "context_ref": payload.context_ref,
                 "rule_id": payload.rule_id,
                 "asset_path": payload.asset_path,
@@ -158,13 +194,46 @@ async def _dispatch(intent: str, payload: AssistantMessageRequest) -> str:
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 
-@router.post("/assistant/message", response_model=AssistantMessageResponse)
-async def assistant_message(
-    payload: AssistantMessageRequest,
-) -> AssistantMessageResponse:
-    tier, reason = await resolve_tier_detailed(payload.api_key)
+@dataclass
+class _TurnPlan:
+    """Everything both the blocking and the streaming endpoint need.
+
+    Built once by _plan_turn so the two paths cannot drift on tier gating,
+    continuation handling or history assembly — the differences between
+    them start after this point and are purely about delivery.
+    """
+
+    tier: str
+    persist: bool
+    intent: str
+    continued: bool
+    conversation_id: str
+    history: str
+    payload: AssistantMessageRequest
+
+
+async def _plan_turn(payload: AssistantMessageRequest) -> _TurnPlan:
+    """Resolve tier, intent, conversation and history. Raises 403/404."""
+    tier, _reason = await resolve_tier_detailed(payload.api_key)
     caps = assistant_capabilities(tier)
-    intent = _resolve_intent(payload.intent, payload.message)
+    persist = caps["memory"] != "none"
+
+    from modules.assistant import conversation_context, memory_store
+
+    existing: dict | None = None
+    conversation_id = payload.conversation_id.strip()
+    if conversation_id:
+        existing = await get_conversation(conversation_id)
+        if existing is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "Conversation not found or expired."},
+            )
+
+    prior = conversation_context.last_grounding(existing)
+    intent, continued = _resolve_intent(
+        payload.intent, payload.message, prior["intent"]
+    )
 
     if intent not in allowed_intents_for(tier):
         # Per-action gate: the endpoint always answers, the capability
@@ -178,17 +247,18 @@ async def assistant_message(
             },
         )
 
-    persist = caps["memory"] != "none"
+    # Inherit what the user was already looking at, field by field, only
+    # where this request didn't say. An explicit value always wins.
+    inherited = {
+        field: prior[field]
+        for field in ("context_ref", "rule_id", "asset_path")
+        if not getattr(payload, field).strip() and prior[field]
+    }
+    if inherited:
+        payload = payload.model_copy(update=inherited)
+        logger.info("continuation: inherited %s", sorted(inherited))
 
-    conversation_id = payload.conversation_id.strip()
-    if conversation_id:
-        existing = await get_conversation(conversation_id)
-        if existing is None:
-            raise HTTPException(
-                status_code=404,
-                detail={"error": "Conversation not found or expired."},
-            )
-    else:
+    if not conversation_id:
         conversation_id = await start_conversation(
             payload.studio_id,
             payload.project_id,
@@ -196,54 +266,209 @@ async def assistant_message(
             persist=persist,
         )
 
-    await append_turn(
-        conversation_id,
-        "user",
-        payload.message,
-        intent=intent,
-        context_ref=payload.context_ref,
+    # Built from the conversation as it stood BEFORE this turn's message was
+    # appended — the question being answered is passed separately, and
+    # showing it twice would only invite the model to answer the older copy.
+    history = conversation_context.build_history(
+        existing, await memory_store.latest_summary(conversation_id)
     )
 
-    reply_text = await _dispatch(intent, payload)
+    return _TurnPlan(
+        tier=tier,
+        persist=persist,
+        intent=intent,
+        continued=continued,
+        conversation_id=conversation_id,
+        history=history,
+        payload=payload,
+    )
 
+
+async def _record_user_turn(plan: _TurnPlan) -> None:
+    await append_turn(
+        plan.conversation_id,
+        "user",
+        plan.payload.message,
+        intent=plan.intent,
+        context_ref=plan.payload.context_ref,
+        rule_id=plan.payload.rule_id,
+        asset_path=plan.payload.asset_path,
+    )
+
+
+async def _record_assistant_turn(
+    plan: _TurnPlan, reply_text: str
+) -> dict | None:
     turn = await append_turn(
-        conversation_id,
+        plan.conversation_id,
         "assistant",
         reply_text,
-        intent=intent,
-        context_ref=payload.context_ref,
+        intent=plan.intent,
+        context_ref=plan.payload.context_ref,
+        rule_id=plan.payload.rule_id,
+        asset_path=plan.payload.asset_path,
     )
+    # Fold old turns into a summary once the thread grows long. Best-effort;
+    # no-op below the threshold or when the tier's memory doesn't persist.
+    if turn is not None and plan.persist:
+        from modules.assistant import memory_store
+
+        try:
+            await memory_store.compact_conversation(
+                plan.conversation_id,
+                plan.payload.studio_id,
+                plan.payload.project_id,
+            )
+        except Exception:  # noqa: BLE001 — compaction must never fail a turn
+            logger.exception("conversation compaction failed")
+    return turn
+
+
+@router.post("/assistant/message", response_model=AssistantMessageResponse)
+async def assistant_message(
+    payload: AssistantMessageRequest,
+) -> AssistantMessageResponse:
+    plan = await _plan_turn(payload)
+    await _record_user_turn(plan)
+
+    reply_text = await _dispatch(plan.intent, plan.payload, plan.history)
+
+    turn = await _record_assistant_turn(plan, reply_text)
     if turn is None:  # conversation evaporated between the two writes
         raise HTTPException(
             status_code=404,
             detail={"error": "Conversation not found or expired."},
         )
 
-    # Fold old turns into a summary once the thread grows long. Best-effort
-    # and non-blocking for the reply; no-op below the threshold or when the
-    # tier's memory doesn't persist.
-    if persist:
-        from modules.assistant import memory_store
-
-        try:
-            await memory_store.compact_conversation(
-                conversation_id, payload.studio_id, payload.project_id
-            )
-        except Exception:  # noqa: BLE001 — compaction must never fail a turn
-            logger.exception("conversation compaction failed")
-
     logger.info(
-        "/assistant/message: tier=%s intent=%s conv=%s reason=%s",
-        tier,
-        intent,
-        conversation_id,
-        reason or "-",
+        "/assistant/message: tier=%s intent=%s conv=%s continued=%s",
+        plan.tier,
+        plan.intent,
+        plan.conversation_id,
+        plan.continued,
     )
     return AssistantMessageResponse(
-        conversation_id=conversation_id,
-        tier=tier,
-        intent=intent,
+        conversation_id=plan.conversation_id,
+        tier=plan.tier,
+        intent=plan.intent,
+        continued=plan.continued,
         reply=AssistantTurn(**turn),
+    )
+
+
+# ── Streaming (SSE) ───────────────────────────────────────────────────────────
+#
+# Same event schema as /agent/explain/stream, so the plugin's existing SSE
+# parser works unchanged: `data: {json}` lines carrying {"chunk": …},
+# {"error": …} and a terminal {"done": true, "full_text": …}. Assistant
+# turns add a {"meta": …} event up front and extra keys on the done event;
+# a parser that ignores unknown keys behaves correctly without changes.
+
+
+def _sse(payload: dict) -> str:
+    return "data: " + json.dumps(payload) + "\n\n"
+
+
+async def _message_stream_events(
+    plan: _TurnPlan,
+) -> AsyncIterator[str]:
+    """Body for POST /assistant/message/stream.
+
+    Only actions that narrate at length stream token-by-token. The rest
+    answer from a table in microseconds, so they emit their reply as one
+    chunk — pretending to type it out would be theatre, not feedback.
+    """
+    from modules.assistant.stream_bridge import aiter_in_thread
+
+    yield _sse(
+        {
+            "meta": {
+                "conversation_id": plan.conversation_id,
+                "intent": plan.intent,
+                "tier": plan.tier,
+                "continued": plan.continued,
+            }
+        }
+    )
+
+    parts: list[str] = []
+    failed = False
+
+    if plan.intent == "explain_finding":
+        from modules.assistant.actions import explain_finding
+
+        prepared = await explain_finding.prepare(
+            {
+                "finding": plan.payload.finding,
+                "context_ref": plan.payload.context_ref,
+                "rule_id": plan.payload.rule_id,
+                "asset_path": plan.payload.asset_path,
+            }
+        )
+        if "error" in prepared:
+            # A resolvable target is a precondition, not a streaming
+            # failure: say so as normal text and close cleanly.
+            parts.append(prepared["error"])
+            yield _sse({"chunk": prepared["error"]})
+        else:
+            finding = prepared["finding"]
+            try:
+                async for chunk in aiter_in_thread(
+                    lambda: explain_finding.stream_text(
+                        finding, plan.payload.message, plan.history
+                    )
+                ):
+                    parts.append(chunk)
+                    yield _sse({"chunk": chunk})
+            except Exception as exc:  # noqa: BLE001
+                failed = True
+                logger.exception("assistant stream failed — degrading")
+                # Degrade to the grounded deterministic text rather than
+                # leaving the panel with a half sentence and an error.
+                fallback = explain_finding.deterministic_reply(finding)
+                parts = [fallback]
+                yield _sse({"chunk": fallback})
+                yield _sse({"error": f"{type(exc).__name__}: {exc}"})
+    else:
+        text = await _dispatch(plan.intent, plan.payload, plan.history)
+        parts.append(text)
+        yield _sse({"chunk": text})
+
+    full_text = "".join(parts).strip()
+    turn = await _record_assistant_turn(plan, full_text)
+
+    yield _sse(
+        {
+            "done": True,
+            "full_text": full_text,
+            "cached": False,
+            "source": "assistant",
+            "degraded": failed,
+            "conversation_id": plan.conversation_id,
+            "intent": plan.intent,
+            "continued": plan.continued,
+            "turn_id": (turn or {}).get("turn_id", ""),
+        }
+    )
+
+
+@router.post("/assistant/message/stream")
+async def assistant_message_stream(
+    payload: AssistantMessageRequest,
+) -> StreamingResponse:
+    """One conversation turn, delivered as it is generated.
+
+    Identical inputs, gating and semantics to POST /assistant/message —
+    _plan_turn is shared — so a client may choose per call. Tier 403s and
+    unknown-conversation 404s are raised BEFORE the stream opens, as real
+    HTTP status codes rather than an error event.
+    """
+    plan = await _plan_turn(payload)
+    await _record_user_turn(plan)
+    return StreamingResponse(
+        _message_stream_events(plan),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
