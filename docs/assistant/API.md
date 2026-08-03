@@ -1,8 +1,13 @@
-# ShintTools Assistant — Client Contract v1.0
+# ShintTools Assistant — Client Contract v1.1
 
 Wire contract for the UE5 and Unity plugins. Frozen at Core **2.14.0**;
 additive changes only from here (new optional fields, new intents), and
 any breaking change bumps this document's version.
+
+**v1.1 (Core 2.15.0)** — all additive, nothing removed or renamed:
+a streaming endpoint (§2.1), a `continued` flag on the response, and
+`rule_id`/`asset_path` echoed on each turn. A v1.0 client keeps working
+unchanged.
 
 Base: the local Core (`http://127.0.0.1:18200` by default). Every route
 ships in **both** editions — unlike `/agent/*`, the assistant is not
@@ -62,15 +67,29 @@ Response:
   "conversation_id": "ac-7f2a91c4bd0e",
   "tier": "studio",
   "intent": "explain_finding",
+  "continued": false,           // true -> intent inherited from the last turn
   "reply": {
     "turn_id": "at-…",
     "role": "assistant",
     "intent": "explain_finding",
     "raw_text": "…",
-    "context_ref": "an-…"
+    "context_ref": "an-…",
+    "rule_id": "LT003",         // the grounding this turn resolved to
+    "asset_path": "/Game/Props/T_Barrel"
   }
 }
 ```
+
+**Follow-ups need no context.** Send the user's words and the
+`conversation_id`; a short anaphoric message ("and why?", "más simple")
+inherits the previous turn's intent and grounding server-side, and the
+response comes back with `continued: true`. Show that in the UI — "following
+up on LT003" — so a two-word question that gets a detailed answer doesn't
+look like a coincidence. Sending `context_ref`/`rule_id` anyway is always
+safe: an explicit value overrides what would have been inherited.
+
+The echoed `rule_id`/`asset_path` let a reopened thread restore its own
+context without the client having to remember what each turn was about.
 
 **Send `intent` when you know it.** A button labelled "Explain" should
 send `explain_finding` rather than making the router infer it from the
@@ -110,6 +129,43 @@ new one by omitting the field.
 | `recall_fact` | the question in `message` | Studio |
 
 ---
+
+## 2.1 `POST /assistant/message/stream`
+
+Identical inputs, gating and semantics to `POST /assistant/message` — pick
+per call. Returns `text/event-stream`, one JSON object per `data:` line,
+**the same schema `/agent/explain/stream` already uses**, so an existing SSE
+parser works unchanged.
+
+```jsonc
+data: {"meta": {"conversation_id": "ac-…", "intent": "explain_finding",
+                "tier": "studio", "continued": true}}
+data: {"chunk": "The texture is "}
+data: {"chunk": "4096 px on its long edge…"}
+data: {"done": true, "full_text": "…", "cached": false,
+       "source": "assistant", "degraded": false,
+       "conversation_id": "ac-…", "intent": "explain_finding",
+       "continued": true, "turn_id": "at-…"}
+```
+
+`meta` arrives first so the panel can label the thread before any text
+appears. A parser that ignores unknown keys handles it correctly without
+changes.
+
+Notes that matter for the UI:
+
+- **403 and 404 are real status codes**, raised before the stream opens —
+  not error events inside a 200 response. Handle them as you would on the
+  blocking endpoint.
+- **Only `explain_finding` streams token-by-token.** Everything else
+  answers from a table in microseconds and arrives as one chunk. Do not
+  animate it.
+- `{"error": …}` may appear when a generation dies mid-way. It is always
+  preceded by a `chunk` carrying the grounded deterministic fallback and
+  followed by `done` with `degraded: true` — so there is always something
+  correct to display.
+- The turn is persisted exactly as on the blocking path, so a follow-up
+  after a streamed answer has its history.
 
 ## 3. `GET /assistant/capabilities?api_key=…`
 

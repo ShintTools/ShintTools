@@ -51,6 +51,50 @@ There is no ReAct loop. The orchestrator is Python with conversation
 state in Mongo; the "agency" is the action catalog, the same way the LOD
 Auditor's is its rule registry.
 
+### The turn loop (M8)
+
+The outer loop — ask, answer, ask again — is a real conversation, not a
+sequence of unrelated requests. Three pieces make it one:
+
+**History reaches the prompt.** `conversation_context.build_history()`
+renders the compaction digest plus a bounded window of recent turns
+(6 turns, 400 chars each, 2400 total) into the prompt. Before M8 turns
+were appended and digests were written, but nothing ever read either back:
+the thread was write-only, and `latest_summary()` did not exist.
+
+**Continuation is resolved in Python, not by the model.** A short
+anaphoric message ("and why?", "más simple") inherits the previous turn's
+intent, and each grounding field — `context_ref`, `rule_id`, `asset_path` —
+is inherited independently from the newest turn that set it. An explicit
+value in the request always wins. `is_continuation()` is deliberately
+conservative: a message that names its own target (a rule id, a path) is
+never a continuation, and neither is anything over 14 words. The worst
+case of a wrong call is re-answering the previous question; it can never
+point an action at a target nobody selected, because inheritance only ever
+copies what the user already had on screen.
+
+**Narration with history bypasses the explanation cache.**
+`narrator.py` exists because the explainer caches by finding hash, which is
+right for "explain this row" and wrong for the second question about the
+same row. Same model, same lock, different prompt, no cache. The explainer
+keeps its cache and its KV-optimised shared prefix for the first-touch
+path.
+
+### Streaming
+
+`POST /assistant/message/stream` delivers a turn as it is generated, using
+the same SSE event schema as `/agent/explain/stream` so the plugin's
+existing parser needs no changes. `_plan_turn` is shared with the blocking
+endpoint, so tier gating, continuation and history cannot drift between
+them; 403 and 404 are raised before the stream opens, as real status codes.
+
+Only `explain_finding` streams token-by-token. The other actions answer
+from a table in microseconds and emit one chunk — a typing animation over
+an instant answer is theatre, not feedback. `stream_bridge.py`
+reimplements the agent route's thread-pump rather than importing it,
+because that module is stripped from the free image and the assistant
+ships in both.
+
 ---
 
 ## 2. Components

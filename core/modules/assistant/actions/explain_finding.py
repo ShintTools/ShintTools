@@ -73,8 +73,12 @@ async def _resolve_from_analysis(
     return matched[0]
 
 
-def _deterministic_reply(finding: dict[str, Any]) -> str:
-    """Grounded fallback when no LLM can narrate: the rule's own words."""
+def deterministic_reply(finding: dict[str, Any]) -> str:
+    """Grounded fallback when no LLM can narrate: the rule's own words.
+
+    Public because the streaming endpoint needs it too — when a generation
+    dies mid-sentence the panel gets this instead of a truncated fragment.
+    """
     parts: list[str] = []
     name = finding.get("rule_name") or finding.get("rule_id") or "This rule"
     message = finding.get("message") or ""
@@ -108,26 +112,90 @@ def _llm_reply(finding: dict[str, Any]) -> str | None:
         return None
 
 
-async def run(payload: dict[str, Any]) -> dict[str, Any]:
+async def prepare(payload: dict[str, Any]) -> dict[str, Any]:
+    """Resolve WHICH finding this turn is about, before any inference.
+
+    Split out of run() so the streaming endpoint can do the lookup (and
+    fail fast with a clean error) before it opens a token stream. Returns
+    {"finding": dict} on success or {"error": str} when the target could
+    not be established.
+    """
     finding = payload.get("finding")
-    if not isinstance(finding, dict) or not finding:
-        analysis_id = str(payload.get("context_ref") or "").strip()
-        if not analysis_id:
-            return {"reply": _NEED_TARGET, "resolved": False}
-        finding = await _resolve_from_analysis(
-            analysis_id,
-            str(payload.get("rule_id") or ""),
-            str(payload.get("asset_path") or payload.get("file") or ""),
+    if isinstance(finding, dict) and finding:
+        return {"finding": finding}
+
+    analysis_id = str(payload.get("context_ref") or "").strip()
+    if not analysis_id:
+        return {"error": _NEED_TARGET}
+
+    finding = await _resolve_from_analysis(
+        analysis_id,
+        str(payload.get("rule_id") or ""),
+        str(payload.get("asset_path") or payload.get("file") or ""),
+    )
+    if finding is None:
+        return {"error": _NOT_FOUND}
+    return {"finding": finding}
+
+
+def _conversational_reply(
+    finding: dict[str, Any], question: str, history: str
+) -> str | None:
+    """Narrate this finding as part of an ongoing thread.
+
+    Bypasses the explainer's cache deliberately: that cache is keyed on the
+    finding alone, so a follow-up about the same row would replay the
+    answer to the FIRST question. Same model, same lock, no cache.
+    """
+    from .. import narrator
+
+    return narrator.narrate(
+        question, narrator.finding_data_block(finding), history
+    )
+
+
+def stream_text(
+    finding: dict[str, Any], question: str, history: str
+) -> Any:
+    """Sync generator of text chunks, for the SSE endpoint.
+
+    Runs inside _aiter_in_thread, which already holds the model lock — see
+    narrator.narrate_stream for why this must not take it again.
+    """
+    from .. import narrator
+
+    if history:
+        return narrator.narrate_stream(
+            question, narrator.finding_data_block(finding), history
         )
-        if finding is None:
-            return {"reply": _NOT_FOUND, "resolved": False}
+    from modules.agent.explainer import explain_issue_stream
+
+    return explain_issue_stream(finding)
+
+
+async def run(payload: dict[str, Any]) -> dict[str, Any]:
+    prepared = await prepare(payload)
+    if "error" in prepared:
+        return {"reply": prepared["error"], "resolved": False}
+    finding = prepared["finding"]
+
+    history = str(payload.get("history") or "")
 
     # Inference is blocking CPU work; keep the event loop responsive the
     # same way /agent/explain does.
-    text = await asyncio.to_thread(_llm_reply, finding)
+    if history:
+        text = await asyncio.to_thread(
+            _conversational_reply,
+            finding,
+            str(payload.get("message") or ""),
+            history,
+        )
+    else:
+        text = await asyncio.to_thread(_llm_reply, finding)
+
     degraded = text is None
     if degraded:
-        text = _deterministic_reply(finding)
+        text = deterministic_reply(finding)
 
     return {
         "reply": text,

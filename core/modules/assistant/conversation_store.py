@@ -130,15 +130,26 @@ async def append_turn(
     *,
     intent: str = "",
     context_ref: str = "",
+    rule_id: str = "",
+    asset_path: str = "",
 ) -> dict[str, Any] | None:
     """Append a turn; returns the turn dict, or None if the conversation
-    doesn't exist (expired or never created)."""
+    doesn't exist (expired or never created).
+
+    ``rule_id``/``asset_path`` are stored alongside ``context_ref`` so a
+    later follow-up can inherit what "this" referred to
+    (conversation_context.last_grounding). Without them the analysis is
+    recoverable but the row within it is not, and "and why does that
+    matter?" would re-answer about the wrong finding.
+    """
     turn = {
         "turn_id": f"at-{uuid.uuid4().hex[:12]}",
         "role": role,
         "intent": intent,
         "raw_text": raw_text,
         "context_ref": context_ref,
+        "rule_id": rule_id,
+        "asset_path": asset_path,
         "created_at": _now(),
     }
 
