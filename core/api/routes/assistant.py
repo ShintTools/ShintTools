@@ -64,6 +64,11 @@ class AssistantMessageRequest(BaseModel):
     # The finding itself, inline — the UI has the row on screen. Same shape
     # /agent/explain receives today; skips the context_ref lookup.
     finding: dict = Field(default_factory=dict)
+    # Impact Simulator inputs: which Predictive report to replay and which
+    # of its items the user ticked.
+    report_id: str = ""
+    selected_item_ids: list[str] = Field(default_factory=list)
+    platform_profile: str = ""
     # Grounding metadata the client already has on screen.
     studio_id: str = ""
     project_id: str = ""
@@ -138,6 +143,9 @@ async def _dispatch(intent: str, payload: AssistantMessageRequest) -> str:
                 "project_id": payload.project_id,
                 "module_context": payload.module_context,
                 "conversation_id": payload.conversation_id,
+                "report_id": payload.report_id,
+                "selected_item_ids": payload.selected_item_ids,
+                "platform_profile": payload.platform_profile,
             }
         )
         return result["reply"]
@@ -295,6 +303,15 @@ class MemoryMuteRequest(BaseModel):
     muted: bool = True
 
 
+class DecisionCheckRequest(BaseModel):
+    api_key: str = ""
+    studio_id: str = ""
+    project_id: str = ""
+    # Either hand over the findings, or a context_ref to load them from.
+    findings: list[dict] = Field(default_factory=list)
+    context_ref: str = ""
+
+
 @router.get("/assistant/memory")
 async def assistant_memory(
     api_key: str = "", studio_id: str = "", project_id: str = ""
@@ -378,6 +395,39 @@ class RuleConfirmRequest(BaseModel):
     api_key: str = ""
     rule_id: str
     accept: bool  # True -> active+confirmed; False -> deprecated
+
+
+@router.post("/assistant/decisions/check")
+async def assistant_decisions_check(payload: DecisionCheckRequest):
+    """Contradictions between a studio's confirmed memory and a scan.
+
+    Called by the client after a scan completes. The trigger is
+    deterministic Python (decision_monitor); the model is not consulted,
+    and only confirmed facts participate — a proposed fact can never
+    produce a proactive nudge.
+    """
+    from modules.assistant import decision_monitor
+
+    await _require_full_memory(payload.api_key)
+
+    findings = payload.findings
+    if not findings and payload.context_ref:
+        try:
+            from api.database import analysis_results
+
+            doc = await analysis_results.find_one(
+                {"analysis_id": payload.context_ref}
+            )
+            findings = [
+                i for i in (doc or {}).get("issues", []) if isinstance(i, dict)
+            ]
+        except Exception:  # noqa: BLE001
+            findings = []
+
+    pairs = await decision_monitor.check_scan(
+        payload.studio_id, payload.project_id, findings
+    )
+    return {"contradictions": pairs}
 
 
 @router.get("/assistant/rules")

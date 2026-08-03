@@ -690,3 +690,179 @@ class TestGoldenSet:
             assert got in ALL_INTENTS
             if pair["intent"] == "general_help":
                 assert got == "general_help", pair["message"]
+
+
+# ── M6: why_rule, simulator, decision monitor ────────────────────────────────
+
+
+class TestWhyRule:
+    @pytest.mark.anyio
+    async def test_cites_the_real_cost_engine(self):
+        from modules.assistant.actions import why_rule
+
+        result = await why_rule.run({"message": "why CP001?"})
+        assert result["rule_id"] == "CP001"
+        # The differentiator: real bands + calibration, not generic advice.
+        assert result["cost"]["dimensions"]
+        assert result["cost"]["calibration_version"]
+        assert "calibration" in result["reply"]
+
+    @pytest.mark.anyio
+    async def test_picks_the_rule_up_from_the_selected_finding(self):
+        from modules.assistant.actions import why_rule
+
+        result = await why_rule.run({"message": "why does this rule exist?",
+                                     "finding": {"rule_id": "CP001"}})
+        assert result["rule_id"] == "CP001"
+
+    @pytest.mark.anyio
+    async def test_uncosted_rule_says_so_instead_of_inventing(self):
+        from modules.assistant.actions import why_rule
+
+        # A real catalog rule with no rule_costs entry.
+        result = await why_rule.run({"rule_id": "LT003"})
+        assert result["rule_name"]
+        assert not result["cost"]
+        assert "no calibrated cost" in result["reply"]
+
+    @pytest.mark.anyio
+    async def test_unknown_rule_is_refused_not_improvised(self):
+        from modules.assistant.actions import why_rule
+
+        result = await why_rule.run({"rule_id": "ZZ999"})
+        assert "don't have ZZ999" in result["reply"]
+
+    @pytest.mark.anyio
+    async def test_no_rule_asks_instead_of_guessing(self):
+        from modules.assistant.actions import why_rule
+
+        result = await why_rule.run({"message": "why?"})
+        assert result["rule_id"] == ""
+        assert "Which rule" in result["reply"]
+
+
+class TestSimulateChange:
+    @pytest.mark.anyio
+    async def test_without_a_report_it_refuses_to_estimate(self):
+        from modules.assistant.actions import simulate_change
+
+        result = await simulate_change.run({"message": "what if I fix these?"})
+        assert result["simulated"] is False
+        assert "Predictive Profiler" in result["reply"]
+
+    @pytest.mark.anyio
+    async def test_without_a_selection_it_asks_for_one(self):
+        from modules.assistant.actions import simulate_change
+
+        result = await simulate_change.run({"report_id": "pr-abc"})
+        assert result["simulated"] is False
+        assert "Pick the issues" in result["reply"]
+
+    @pytest.mark.anyio
+    async def test_expired_report_is_honest(self):
+        from modules.assistant.actions import simulate_change
+
+        result = await simulate_change.run(
+            {"report_id": "pr-gone", "selected_item_ids": ["i1"]}
+        )
+        assert result["simulated"] is False
+
+
+class TestDecisionMonitor:
+    _FACT = {
+        "fact_id": "af-1",
+        "value": "all character meshes use Nanite",
+    }
+
+    def test_flags_a_finding_that_contradicts_a_decision(self):
+        from modules.assistant.decision_monitor import find_contradictions
+
+        findings = [
+            {
+                "rule_id": "LD012",
+                "rule_name": "Nanite candidate",
+                "asset_path": "/Game/Characters/SM_Hero",
+                "message": "High-poly character meshes should enable Nanite.",
+            }
+        ]
+        pairs = find_contradictions([self._FACT], findings)
+        assert len(pairs) == 1
+        assert pairs[0]["fact_id"] == "af-1"
+        assert len(pairs[0]["shared_terms"]) >= 2
+
+    def test_unrelated_finding_is_not_paired(self):
+        from modules.assistant.decision_monitor import find_contradictions
+
+        findings = [
+            {
+                "rule_id": "LT003",
+                "rule_name": "Texture over budget",
+                "asset_path": "/Game/Props/T_Barrel",
+                "message": "4096 texture exceeds the 2048 budget.",
+            }
+        ]
+        assert find_contradictions([self._FACT], findings) == []
+
+    def test_a_vague_fact_never_pairs(self):
+        from modules.assistant.decision_monitor import find_contradictions
+
+        vague = {"fact_id": "af-2", "value": "we use it"}
+        findings = [{"rule_id": "LT003", "message": "texture too big"}]
+        assert find_contradictions([vague], findings) == []
+
+    @pytest.mark.anyio
+    async def test_proposed_facts_never_produce_a_nudge(self):
+        from modules.assistant import decision_monitor
+        from modules.assistant.actions import remember_fact
+
+        await remember_fact.run(
+            {"message": "remember that all character meshes use Nanite",
+             "studio_id": "dm1", "project_id": "dp1"}
+        )
+        findings = [
+            {"rule_id": "LD012", "rule_name": "Nanite candidate",
+             "asset_path": "/Game/Characters/SM_Hero",
+             "message": "High-poly character meshes should enable Nanite."}
+        ]
+        # Unconfirmed -> silent, by contract.
+        assert await decision_monitor.check_scan("dm1", "dp1", findings) == []
+
+    @pytest.mark.anyio
+    async def test_confirmed_fact_produces_a_rendered_nudge(self):
+        from modules.assistant import decision_monitor, memory_store
+        from modules.assistant.actions import remember_fact
+
+        proposed = await remember_fact.run(
+            {"message": "remember that all character meshes use Nanite",
+             "studio_id": "dm2", "project_id": "dp2"}
+        )
+        await memory_store.set_fact_status(proposed["fact_id"], "confirmed")
+
+        findings = [
+            {"rule_id": "LD012", "rule_name": "Nanite candidate",
+             "asset_path": "/Game/Characters/SM_Hero",
+             "message": "High-poly character meshes should enable Nanite."}
+        ]
+        pairs = await decision_monitor.check_scan("dm2", "dp2", findings)
+        assert len(pairs) == 1
+        assert "SM_Hero" in pairs[0]["nudge"]
+        assert "Nanite" in pairs[0]["nudge"]
+
+
+class TestSummarizeModule:
+    @pytest.mark.anyio
+    async def test_without_a_scan_it_asks_for_one(self):
+        from modules.assistant.actions import summarize_module
+
+        result = await summarize_module.run({})
+        assert result["resolved"] is False
+        assert "Run a scan" in result["reply"]
+
+
+class TestActionCoverage:
+    def test_every_intent_has_an_action(self):
+        from modules.assistant.actions import ACTIONS
+
+        # general_help is answered by the route itself; everything else
+        # must have a deterministic action behind it.
+        assert set(ACTIONS) == ALL_INTENTS - {"general_help"}

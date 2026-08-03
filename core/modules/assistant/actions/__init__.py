@@ -14,17 +14,27 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from . import define_rule, explain_finding, recall_fact, remember_fact
+from . import (
+    define_rule,
+    explain_finding,
+    recall_fact,
+    remember_fact,
+    simulate_change,
+    summarize_module,
+    why_rule,
+)
 
 ActionFn = Callable[[dict], Any]
 
-# Intents without a shipped action fall through to the route's honest
-# "not wired up yet" reply — never a fake answer.
+# Every intent on the menu now has a deterministic action behind it.
 ACTIONS: dict[str, ActionFn] = {
     "explain_finding": explain_finding.run,
+    "summarize_module": summarize_module.run,
+    "why_rule": why_rule.run,
+    "simulate_change": simulate_change.run,
+    "define_rule": define_rule.run,
     "remember_fact": remember_fact.run,
     "recall_fact": recall_fact.run,
-    "define_rule": define_rule.run,
 }
 
 __all__ = ["ACTIONS"]
