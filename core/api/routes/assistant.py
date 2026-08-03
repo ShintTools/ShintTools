@@ -348,3 +348,72 @@ async def assistant_memory_purge(
         )
     removed = await memory_store.purge_project(studio_id, project_id)
     return {"removed": removed}
+
+
+# ── Studio rules (M3) ─────────────────────────────────────────────────────────
+#
+# Tier gate follows the capability table: "all" (Studio: templates + LLM)
+# or "llm_evaluated" (Indie: Tier B only). None -> 403.
+
+
+async def _require_rules(api_key: str, *, need_template: bool = False) -> str:
+    tier, _ = await resolve_tier_detailed(api_key)
+    allowed = assistant_capabilities(tier)["studio_rules"]
+    if allowed is None or (need_template and allowed != "all"):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": (
+                    "Deterministic template rules require a Studio plan."
+                    if need_template
+                    else "Persistent studio rules require an Indie plan or higher."
+                ),
+                "current_tier": tier,
+            },
+        )
+    return tier
+
+
+class RuleConfirmRequest(BaseModel):
+    api_key: str = ""
+    rule_id: str
+    accept: bool  # True -> active+confirmed; False -> deprecated
+
+
+@router.get("/assistant/rules")
+async def assistant_rules(
+    api_key: str = "", studio_id: str = "", project_id: str = ""
+):
+    from modules.assistant import rule_store
+
+    await _require_rules(api_key)
+    rules = await rule_store.list_rules(
+        studio_id, project_id, statuses=("draft", "active")
+    )
+    return {"rules": rules}
+
+
+@router.post("/assistant/rules/confirm")
+async def assistant_rules_confirm(payload: RuleConfirmRequest):
+    from modules.assistant import rule_store
+
+    tier = await _require_rules(payload.api_key)
+    if payload.accept:
+        # Activating a template rule needs the full Studio capability.
+        current = await rule_store.set_rule_status(payload.rule_id)
+        if current is None:
+            raise HTTPException(
+                status_code=404, detail={"error": "Rule not found."}
+            )
+        if current.get("tier") == "template":
+            await _require_rules(payload.api_key, need_template=True)
+        rule = await rule_store.set_rule_status(
+            payload.rule_id, status="active", confirmed=True
+        )
+    else:
+        rule = await rule_store.set_rule_status(
+            payload.rule_id, status="deprecated", confirmed=False
+        )
+    if rule is None:
+        raise HTTPException(status_code=404, detail={"error": "Rule not found."})
+    return {"rule": rule, "tier": tier}

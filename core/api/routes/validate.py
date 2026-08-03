@@ -98,6 +98,9 @@ class ValidateProjectRequest(BaseModel):
     project_name: str = ""
     files: list[FileEntry] = Field(default_factory=list)
     engine: str = "unreal"
+    # Scopes which persistent studio rules apply (assistant M3). Optional
+    # and additive — clients that don't send it simply run built-ins only.
+    studio_id: str = ""
 
 
 class ValidateBlueprintsRequest(BaseModel):
@@ -355,6 +358,25 @@ async def validate_project(payload: ValidateProjectRequest):
     # Filter by subscription tier
     tier = await resolve_tier(payload.api_key)
     all_issues = filter_issues_by_tier(all_issues, tier)
+
+    # Persistent studio rules (assistant M3) — best-effort add-on; a
+    # failing studio rule never breaks the built-in scan. Only rules the
+    # user explicitly activated run here, and their findings carry
+    # source="studio_rule" so the panel can badge them.
+    if payload.studio_id:
+        try:
+            from modules.assistant.rule_runner import evaluate_studio_rules
+
+            all_issues.extend(
+                await evaluate_studio_rules(
+                    payload.studio_id,
+                    payload.project_id,
+                    payload.engine,
+                    [(f.path, f.content) for f in payload.files],
+                )
+            )
+        except Exception:
+            logger.exception("studio rules evaluation failed")
 
     files_scanned = len(payload.files)
 

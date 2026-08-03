@@ -407,3 +407,216 @@ class TestMemory:
         # Nothing paraphrased — the user's own words are the value.
         assert classify_fact_type("hemos decidido usar Lumen") == "decision"
         assert classify_fact_type("preferimos BC7 para albedo") == "preference"
+
+
+# ── M3: studio rules ──────────────────────────────────────────────────────────
+
+
+class TestRuleCompiler:
+    def test_forbidden_api_compiles_to_template(self):
+        from modules.assistant.rule_compiler import compile_rule
+
+        compiled = compile_rule("never use TCHAR_TO_ANSI in headers")
+        assert compiled["tier"] == "template"
+        assert compiled["template"]["template_id"] == "forbidden_api"
+        assert compiled["template"]["params"]["api"] == "TCHAR_TO_ANSI"
+        assert ".h" in compiled["template"]["params"]["scope_suffixes"]
+
+    def test_spanish_prohibition_compiles(self):
+        from modules.assistant.rule_compiler import compile_rule
+
+        compiled = compile_rule("prohibido GetAllActorsOfClass en el proyecto")
+        assert compiled["tier"] == "template"
+        assert compiled["template"]["params"]["api"] == "GetAllActorsOfClass"
+
+    def test_ambiguous_prose_falls_to_llm_tier_never_guesses(self):
+        from modules.assistant.rule_compiler import compile_rule
+
+        compiled = compile_rule(
+            "components should be initialized before use where sensible"
+        )
+        assert compiled["tier"] == "llm_evaluated"
+
+    def test_prose_never_is_not_an_api(self):
+        from modules.assistant.rule_compiler import compile_rule
+
+        # "never use more than 4 samplers" — "more" must not become an API.
+        compiled = compile_rule("never use more than 4 samplers per material")
+        assert compiled["tier"] == "llm_evaluated"
+
+
+class TestTemplateEvaluation:
+    def test_forbidden_api_flags_with_line_numbers(self):
+        from modules.assistant.rule_templates import evaluate_template_rule
+
+        rule = {
+            "name": "No TCHAR_TO_ANSI in headers",
+            "template": {
+                "template_id": "forbidden_api",
+                "params": {"api": "TCHAR_TO_ANSI", "scope_suffixes": [".h"]},
+            },
+        }
+        files = [
+            ("Source/Foo.h", "int x;\nauto s = TCHAR_TO_ANSI(*Name);\n"),
+            ("Source/Foo.cpp", "auto s = TCHAR_TO_ANSI(*Name);\n"),  # out of scope
+        ]
+        violations = evaluate_template_rule(rule, files)
+        assert len(violations) == 1
+        assert violations[0]["file"] == "Source/Foo.h"
+        assert violations[0]["line"] == 2
+        assert violations[0]["source"] == "studio_rule"
+
+    def test_file_location_template(self):
+        from modules.assistant.rule_templates import evaluate_template_rule
+
+        rule = {
+            "name": "Tests under Source/Tests",
+            "template": {
+                "template_id": "file_location",
+                "params": {
+                    "file_glob_suffix": "Test.cpp",
+                    "required_dir": "Source/Tests",
+                },
+            },
+        }
+        violations = evaluate_template_rule(
+            rule,
+            [
+                ("Source/Tests/FooTest.cpp", ""),
+                ("Source/Misc/BarTest.cpp", ""),
+            ],
+        )
+        assert [v["file"] for v in violations] == ["Source/Misc/BarTest.cpp"]
+
+    def test_broken_rule_never_breaks_the_scan(self):
+        from modules.assistant.rule_templates import evaluate_template_rule
+
+        assert evaluate_template_rule({"template": {}}, [("a.h", "x")]) == []
+        assert evaluate_template_rule(
+            {"template": {"template_id": "naming_pattern",
+                          "params": {"pattern": "([unclosed"}}},
+            [("a.h", "x")],
+        ) == []
+
+
+class TestRuleLifecycle:
+    @pytest.mark.anyio
+    async def test_define_rule_creates_a_draft_that_does_not_run(self):
+        from modules.assistant import rule_store
+        from modules.assistant.actions import define_rule
+
+        result = await define_rule.run(
+            {
+                "message": "never use TCHAR_TO_ANSI in headers",
+                "studio_id": "rs1",
+                "project_id": "rp1",
+                "engine": "unreal",
+            }
+        )
+        assert result["rule_tier"] == "template"
+        assert result["rule_status"] == "draft"
+        # A draft is invisible to scans until activated + confirmed.
+        assert await rule_store.active_rules("rs1", "rp1", "unreal") == []
+
+    @pytest.mark.anyio
+    async def test_activated_rule_runs_in_the_project_scan(
+        self, async_client, monkeypatch
+    ):
+        from modules.assistant import rule_store
+        from modules.assistant.actions import define_rule
+
+        _patch_tier(monkeypatch, "studio")
+        created = await define_rule.run(
+            {"message": "never use TCHAR_TO_ANSI in headers",
+             "studio_id": "rs2", "project_id": "rp2", "engine": "unreal"}
+        )
+        await rule_store.set_rule_status(
+            created["rule_id"], status="active", confirmed=True
+        )
+
+        monkeypatch.setattr(
+            "api.routes.validate.resolve_tier",
+            AsyncMock(return_value="studio"),
+        )
+        resp = await async_client.post(
+            "/validate/project",
+            json={
+                "studio_id": "rs2",
+                "project_id": "rp2",
+                "engine": "unreal",
+                "files": [
+                    {"name": "Foo.h", "path": "Source/Foo.h", "type": "h",
+                     "content": "auto s = TCHAR_TO_ANSI(*Name);\n"},
+                ],
+            },
+        )
+        assert resp.status_code == 200
+        studio_findings = [
+            i for i in resp.json()["issues"] if i.get("source") == "studio_rule"
+        ]
+        assert len(studio_findings) == 1
+        assert "TCHAR_TO_ANSI" in studio_findings[0]["message"]
+
+    @pytest.mark.anyio
+    async def test_scan_without_studio_id_runs_no_studio_rules(
+        self, async_client, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "api.routes.validate.resolve_tier",
+            AsyncMock(return_value="studio"),
+        )
+        resp = await async_client.post(
+            "/validate/project",
+            json={
+                "project_id": "rp3",
+                "engine": "unreal",
+                "files": [
+                    {"name": "Foo.h", "path": "Source/Foo.h", "type": "h",
+                     "content": "auto s = TCHAR_TO_ANSI(*Name);\n"},
+                ],
+            },
+        )
+        assert resp.status_code == 200
+        assert [
+            i for i in resp.json()["issues"] if i.get("source") == "studio_rule"
+        ] == []
+
+    @pytest.mark.anyio
+    async def test_llm_rule_cache_round_trip(self):
+        from modules.assistant import rule_store
+
+        key = rule_store.eval_cache_key("sr-x", 1, "file content")
+        assert await rule_store.get_cached_eval(key) is None
+        await rule_store.save_cached_eval(key, [{"message": "v"}])
+        assert await rule_store.get_cached_eval(key) == [{"message": "v"}]
+        # A different version is a different key — edits re-evaluate.
+        assert rule_store.eval_cache_key("sr-x", 2, "file content") != key
+
+    @pytest.mark.anyio
+    async def test_rules_endpoints_gated_by_capability(
+        self, async_client, monkeypatch
+    ):
+        _patch_tier(monkeypatch, "free")
+        resp = await async_client.get("/assistant/rules")
+        assert resp.status_code == 403
+
+        _patch_tier(monkeypatch, "indie")
+        resp = await async_client.get("/assistant/rules")
+        assert resp.status_code == 200
+
+    @pytest.mark.anyio
+    async def test_indie_cannot_activate_a_template_rule(
+        self, async_client, monkeypatch
+    ):
+        from modules.assistant.actions import define_rule
+
+        created = await define_rule.run(
+            {"message": "never use GetAllActorsOfClass in the project",
+             "studio_id": "rs4", "project_id": "rp4", "engine": "unreal"}
+        )
+        _patch_tier(monkeypatch, "indie")
+        resp = await async_client.post(
+            "/assistant/rules/confirm",
+            json={"rule_id": created["rule_id"], "accept": True},
+        )
+        assert resp.status_code == 403
