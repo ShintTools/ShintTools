@@ -5,6 +5,12 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  # Manual runs. Added because push-triggered runs stopped being created for
+  # this repo on 2026-08-06 (GitHub receives the PushEvent — it is in the
+  # repo's event feed — but no run appears), which left no way to verify a
+  # lint fix at all. Worth keeping regardless: re-running lint on a branch
+  # without an empty commit is useful on its own.
+  workflow_dispatch: {}
 
 jobs:
   lint:

@@ -5,6 +5,9 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  # See ci-lint.yml: push-triggered runs stopped being created for this repo
+  # on 2026-08-06, so a manual trigger is the only way to run CI on demand.
+  workflow_dispatch: {}
 
 jobs:
   test:
