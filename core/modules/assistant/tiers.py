@@ -64,7 +64,8 @@ ASSISTANT_TIERS["enterprise"] = ASSISTANT_TIERS["studio"]
 
 def assistant_capabilities(tier: str) -> dict[str, Any]:
     """Capability row for *tier*, defaulting unknown tiers to free."""
-    return ASSISTANT_TIERS.get((tier or "free").strip().lower(), ASSISTANT_TIERS["free"])
+    key = (tier or "free").strip().lower()
+    return ASSISTANT_TIERS.get(key, ASSISTANT_TIERS["free"])
 
 
 def allowed_intents_for(tier: str) -> frozenset[str]:

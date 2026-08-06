@@ -18,7 +18,12 @@ jobs:
       - name: Install dependencies
         run: pip install -r core/requirements-ci.txt
       - name: Install lint tools
-        run: pip install flake8 mypy
+        # types-PyYAML is not optional polish: without it mypy reports
+        # `Library stubs not installed for "yaml"` and fails the job.
+        # --ignore-missing-imports does NOT cover this — that flag is for
+        # packages mypy cannot find at all, and PyYAML IS installed (it comes
+        # in via requirements-ci.txt); it simply ships no type information.
+        run: pip install flake8 mypy types-PyYAML
       - name: Run flake8
         run: flake8 core/ --max-line-length=88 --extend-ignore=E203,W503
       - name: Run mypy

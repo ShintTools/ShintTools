@@ -21,6 +21,7 @@ import sys
 import time
 from collections import defaultdict
 from pathlib import Path
+from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "modules"))
@@ -53,7 +54,9 @@ def main() -> int:
 
     from modules.assistant.intent_router import classify_by_keywords
 
-    layers: dict[str, callable] = {"keywords": classify_by_keywords}
+    # Callable[[str], str], not the `callable` builtin — that is a function,
+    # not a type, so the annotation was never checking anything.
+    layers: dict[str, Callable[[str], str]] = {"keywords": classify_by_keywords}
 
     if args.llm:
         from modules.assistant.model_profile import resolve_profile

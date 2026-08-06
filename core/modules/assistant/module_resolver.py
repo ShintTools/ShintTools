@@ -27,7 +27,9 @@ from . import module_registry
 from .module_registry import ModuleInfo
 
 
-def resolve_module(message: str, module_context: str = "") -> tuple[ModuleInfo | None, str]:
+def resolve_module(
+    message: str, module_context: str = ""
+) -> tuple[ModuleInfo | None, str]:
     """Return (module, source) for this turn.
 
     source: "message" | "context" | "" — surfaced in logs and used by the
@@ -46,7 +48,9 @@ def resolve_module(message: str, module_context: str = "") -> tuple[ModuleInfo |
     return None, ""
 
 
-async def latest_analysis(module: ModuleInfo, skip_id: str = "") -> dict[str, Any] | None:
+async def latest_analysis(
+    module: ModuleInfo, skip_id: str = ""
+) -> dict[str, Any] | None:
     """The most recent stored scan for *module*, or None.
 
     This is what makes "how is the Code Validator doing?" answerable without
@@ -104,7 +108,12 @@ async def resolve_analysis(
         doc_module = module_registry.for_report_type(str(doc.get("report_type", "")))
         # The user named a module and it is not this document's — the ambient
         # grounding is about something else entirely, so drop it.
-        if module is not None and module_source == "message" and doc_module is not module:
+        named_another = (
+            module is not None
+            and module_source == "message"
+            and doc_module is not module
+        )
+        if named_another:
             doc = None
         else:
             return doc, (doc_module or module)

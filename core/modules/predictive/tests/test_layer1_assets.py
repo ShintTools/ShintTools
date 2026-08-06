@@ -1,7 +1,11 @@
 # core/modules/predictive/tests/test_layer1_assets.py
 
 from lod_auditor.schema import Finding, Saving
-from predictive.layers.layer1_assets import _attach_findings, analyze_assets, normalize_engine
+from predictive.layers.layer1_assets import (
+    _attach_findings,
+    analyze_assets,
+    normalize_engine,
+)
 
 
 def _texture(path="/Game/T_Test", w=2048, h=2048, fmt="BC7", **kw):

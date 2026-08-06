@@ -56,7 +56,9 @@ class Layer1Result:
         self.assets_analyzed = assets_analyzed
 
 
-def _base_item(asset: dict[str, Any], vram: Prediction, build: Prediction, index: int) -> CostItem:
+def _base_item(
+    asset: dict[str, Any], vram: Prediction, build: Prediction, index: int
+) -> CostItem:
     """One unconditional CostItem per priced asset — name + total cost, no
     diagnosis. Findings (if any) attach a Remediation to this same item."""
     path = str(asset.get("asset_path", ""))
@@ -98,8 +100,12 @@ def _attach_findings(
     fallback item so today's material/build-saving items don't regress."""
     by_path: dict[str, list[Any]] = {}
     for finding in findings:
-        recovery = _recovery_from_finding(finding)
-        if not recovery:
+        # Named apart from the accumulator below: this one is only a filter
+        # ("does this finding recover anything at all?"), and reusing the name
+        # made the two roles indistinguishable at a glance — and tripped
+        # mypy's no-redef once the accumulator gained an annotation.
+        finding_recovery = _recovery_from_finding(finding)
+        if not finding_recovery:
             continue
         by_path.setdefault(finding.asset_path, []).append(finding)
 
@@ -128,7 +134,9 @@ def _attach_findings(
 
         if path in items_by_path:
             item = items_by_path[path]
-            item.severity = worst.severity if worst.severity in _SEVERITY_RANK else "warning"
+            item.severity = (
+                worst.severity if worst.severity in _SEVERITY_RANK else "warning"
+            )
             item.rule_id = biggest.rule_id
             item.remediation = remediation
         else:
@@ -136,7 +144,11 @@ def _attach_findings(
                 CostItem(
                     item_id=f"ci-{index:04d}",
                     layer=1,
-                    severity=worst.severity if worst.severity in _SEVERITY_RANK else "warning",
+                    severity=(
+                        worst.severity
+                        if worst.severity in _SEVERITY_RANK
+                        else "warning"
+                    ),
                     title=path,
                     rule_id=biggest.rule_id,
                     source={"kind": worst.category.lower(), "path": path},

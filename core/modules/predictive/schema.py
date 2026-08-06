@@ -78,7 +78,8 @@ class SceneLight(BaseModel):
     """One light in a scene digest."""
 
     type: str = "Point"  # Point | Spot | Directional | Rect | Area
-    mobility: str = "Static"  # Static | Stationary | Movable (Unity: Baked | Mixed | Realtime)
+    # Static | Stationary | Movable  (Unity: Baked | Mixed | Realtime)
+    mobility: str = "Static"
     casts_shadows: bool = False
     attenuation_radius: float = 0.0  # UE5; Unity sends range
 

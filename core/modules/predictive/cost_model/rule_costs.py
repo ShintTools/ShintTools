@@ -71,7 +71,9 @@ def load_rule_costs() -> RuleCostTable:
     )
 
 
-def _scale_factor(entry: CostEntry, context: dict[str, Any], scene_actor_count: int) -> tuple[float, str]:
+def _scale_factor(
+    entry: CostEntry, context: dict[str, Any], scene_actor_count: int
+) -> tuple[float, str]:
     """Resolve the scaling multiplier + a human suffix for the basis."""
     if entry.scaling == "per_scene_actors" and scene_actor_count > 0:
         factor = scene_actor_count / _ACTOR_BASELINE
@@ -122,6 +124,9 @@ def apply_rule_cost(
         if entry.recovery_pct > 0:
             recovery[dim] = pred.scaled(
                 entry.recovery_pct / 100.0,
-                basis=f"{entry.remediation_action} (~{entry.recovery_pct:g}% of the cost)",
+                basis=(
+                    f"{entry.remediation_action} "
+                    f"(~{entry.recovery_pct:g}% of the cost)"
+                ),
             )
     return impact, recovery, entry
