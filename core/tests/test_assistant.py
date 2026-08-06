@@ -681,6 +681,24 @@ class TestGoldenSet:
         covered = {pair["intent"] for pair in self._pairs()}
         assert covered == set(ALL_INTENTS)
 
+    def test_module_directed_questions_route_and_resolve(self):
+        """Entries carrying a `module` must reach the right module.
+
+        Two claims, both of which failed before: the keyword layer knew no
+        module name at all (so these fell through to general_help), and the
+        resolver did not exist (so the module was never consulted).
+        """
+        from modules.assistant.module_resolver import resolve_module
+
+        directed = [p for p in self._pairs() if p.get("module")]
+        assert directed, "the golden set must cover module-directed questions"
+        for pair in directed:
+            assert classify_by_keywords(pair["message"]) == pair["intent"], pair
+            module, source = resolve_module(pair["message"])
+            assert module is not None, pair
+            assert module.id == pair["module"], pair
+            assert source == "message"
+
     def test_keyword_layer_never_leaves_the_menu_and_help_is_clean(self):
         # The keyword layer's hard guarantees (accuracy belongs to the
         # harness, not CI): always on-menu, and pure greetings never
@@ -851,12 +869,156 @@ class TestDecisionMonitor:
 
 class TestSummarizeModule:
     @pytest.mark.anyio
-    async def test_without_a_scan_it_asks_for_one(self):
+    async def test_with_no_module_and_no_scan_it_asks_which_module(self):
         from modules.assistant.actions import summarize_module
 
         result = await summarize_module.run({})
         assert result["resolved"] is False
-        assert "Run a scan" in result["reply"]
+        # Nothing to work from at all: name the modules rather than issue an
+        # instruction the user did not ask for.
+        assert "Which module" in result["reply"]
+
+    @pytest.mark.anyio
+    async def test_named_module_without_a_scan_describes_the_module(self):
+        """The old reply here was "run a scan first" — a dead end.
+
+        A module's coverage and rule count are real information available
+        with no scan at all, and answering the question beats instructing the
+        user to go do something before they may ask it.
+        """
+        from modules.assistant.actions import summarize_module
+
+        result = await summarize_module.run(
+            {"message": "how is the code validator doing?"}
+        )
+        assert result["module"] == "code_validator"
+        assert "checks" in result["reply"]
+
+
+class TestModuleResolution:
+    """The defect behind "I ask about a rule and it answers with a mesh"."""
+
+    def test_a_named_module_outranks_the_open_panel(self):
+        from modules.assistant.module_resolver import resolve_module
+
+        module, source = resolve_module(
+            "how is the code validator doing?", module_context="lod_audit"
+        )
+        assert module is not None and module.id == "code_validator"
+        assert source == "message"
+
+    def test_the_open_panel_is_used_when_no_module_is_named(self):
+        from modules.assistant.module_resolver import resolve_module
+
+        module, source = resolve_module("summarize this", module_context="lod_audit")
+        assert module is not None and module.id == "lod_audit"
+        assert source == "context"
+
+    def test_longer_aliases_win(self):
+        """"lod auditor" must not be swallowed by the bare "lod" alias."""
+        from modules.assistant.module_resolver import resolve_module
+
+        module, _ = resolve_module("what did the lod auditor find?")
+        assert module is not None and module.id == "lod_audit"
+
+    def test_naming_a_module_is_not_a_continuation(self):
+        """A short "y el code validator?" changes subject, it does not follow on.
+
+        Inheriting the previous turn's grounding here is what made the
+        assistant keep answering about the old module after the user moved on.
+        """
+        from modules.assistant.conversation_context import is_continuation
+
+        assert is_continuation("y por que?") is True
+        assert is_continuation("y el code validator?") is False
+
+    def test_fix_logs_are_not_scan_results(self):
+        """code_validator_fixes records an Auto-Fix run, not findings.
+
+        Matching module report types by prefix would pick it up and report
+        its entries as findings — true-looking and wrong.
+        """
+        from modules.assistant import module_registry
+
+        assert module_registry.for_report_type("code_validator_fixes") is None
+        assert (
+            module_registry.for_report_type("code_validator_project").id
+            == "code_validator"
+        )
+
+
+class TestExplainFindingNeverGuesses:
+    @pytest.mark.anyio
+    async def test_ambiguous_analysis_asks_instead_of_picking_the_first_row(self):
+        """The regression this whole change exists for.
+
+        Unselected, the old code returned issues[0] — the first row of
+        whatever analysis was ambient — and presented it as the answer.
+        """
+        doc = {
+            "analysis_id": "an-x",
+            "report_type": "lod_audit",
+            "issues": [
+                {"rule_id": "LT003", "rule_name": "Texture size", "asset_path": "/A"},
+                {"rule_id": "LT003", "rule_name": "Texture size", "asset_path": "/B"},
+                {"rule_id": "LD004", "rule_name": "LOD count", "asset_path": "/C"},
+            ],
+        }
+
+        finding, error = await _resolve_against(doc, rule_id="", asset_path="")
+        assert finding is None
+        assert "guessing" in error
+        assert "LT003" in error  # the most frequent candidate is named
+
+    @pytest.mark.anyio
+    async def test_a_selector_resolves_normally(self):
+        doc = {
+            "analysis_id": "an-x",
+            "issues": [
+                {"rule_id": "LT003", "asset_path": "/A"},
+                {"rule_id": "LD004", "asset_path": "/C"},
+            ],
+        }
+        finding, error = await _resolve_against(doc, rule_id="LD004", asset_path="")
+        assert error == ""
+        assert finding["rule_id"] == "LD004"
+
+    @pytest.mark.anyio
+    async def test_a_single_finding_needs_no_selector(self):
+        doc = {"analysis_id": "an-x", "issues": [{"rule_id": "LT003"}]}
+        finding, error = await _resolve_against(doc, rule_id="", asset_path="")
+        assert error == ""
+        assert finding["rule_id"] == "LT003"
+
+
+async def _resolve_against(doc, rule_id: str, asset_path: str):
+    """Run _resolve_from_analysis against an in-memory document.
+
+    The action reads Mongo directly; these tests stub that single lookup
+    rather than standing up a database for three list comprehensions.
+    """
+    import sys
+    import types
+
+    from modules.assistant.actions import explain_finding
+
+    class _Coll:
+        async def find_one(self, query):
+            return doc if query.get("analysis_id") == doc["analysis_id"] else None
+
+    fake_db = types.ModuleType("api.database")
+    fake_db.analysis_results = _Coll()  # type: ignore[attr-defined]
+    real = sys.modules.get("api.database")
+    sys.modules["api.database"] = fake_db
+    try:
+        return await explain_finding._resolve_from_analysis(
+            doc["analysis_id"], rule_id, asset_path
+        )
+    finally:
+        if real is not None:
+            sys.modules["api.database"] = real
+        else:
+            sys.modules.pop("api.database", None)
 
 
 class TestActionCoverage:

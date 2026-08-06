@@ -121,12 +121,36 @@ new one by omitting the field.
 |---|---|---|
 | `explain_finding` | `finding` inline, or `context_ref` + `rule_id`/`asset_path` | Free |
 | `general_help` | — | Free |
-| `summarize_module` | `context_ref` | Indie |
+| `summarize_module` | a module named in `message`, or `module_context`, or `context_ref` | Indie |
 | `why_rule` | `rule_id`, or a `finding`, or the id in the text | Indie |
 | `simulate_change` | `report_id` + `selected_item_ids` | Studio |
 | `define_rule` | the rule in `message` | Studio (Indie: Tier B only) |
 | `remember_fact` | the fact in `message` | Studio |
 | `recall_fact` | the question in `message` | Studio |
+
+#### How a turn picks the analysis it answers about
+
+Since Core 2.17.0 this is explicit, because getting it wrong is silent: the
+assistant used to answer confidently about the wrong thing.
+
+1. **A module named in `message` wins.** "How is the Code Validator doing?"
+   is answered about the Code Validator even when `module_context` /
+   `context_ref` point at a LOD audit. Asking about one module while looking
+   at another's results is the normal case.
+2. **Otherwise `module_context`** — the panel the user has open.
+3. A `context_ref` is honoured unless step 1 named a *different* module, in
+   which case it is dropped: it grounds a question nobody asked. With no
+   usable `context_ref`, the module's most recent stored scan is used, so a
+   module can be asked about with none of its panels open.
+4. With a module but no scan at all, the reply describes what that module
+   covers and how many rules it ships. It never answers "run a scan first".
+
+`explain_finding` additionally **refuses to guess**. Given a `context_ref`
+and no `rule_id`/`asset_path`, it does not fall back to the first row of the
+analysis; unless the scan holds exactly one finding, it replies naming the
+most frequent candidates and asks which one. Clients that have the row on
+screen should keep sending it inline (or as `rule_id` + `asset_path`) — that
+path is unchanged and never asks.
 
 ---
 
