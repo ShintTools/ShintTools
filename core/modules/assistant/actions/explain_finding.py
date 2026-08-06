@@ -38,18 +38,36 @@ _NOT_FOUND = (
 
 async def _resolve_from_analysis(
     analysis_id: str, rule_id: str, asset_path: str
-) -> dict[str, Any] | None:
-    """Look the finding up in analysis_results; None when unresolvable."""
+) -> tuple[dict[str, Any] | None, str]:
+    """Look the finding up in analysis_results.
+
+    Returns (finding, error). Exactly one is meaningful: a finding when the
+    selector identifies one, otherwise a sentence explaining what is missing.
+
+    This used to return ``matched[0]`` whenever anything matched — and with no
+    selector at all, EVERY issue matches, so it returned the first row of the
+    analysis. A question that named no target got a confident answer about
+    whichever finding happened to sort first: ask "why does this rule exist?"
+    with a LOD audit in the panel and you were told about a mesh. Nothing in
+    the reply admitted a choice had been made.
+
+    Picking blind is the one thing this action must not do. Unselected, it now
+    asks which one — losing a turn to a question is strictly better than
+    answering the wrong one convincingly.
+    """
     try:
         from api.database import analysis_results
 
         doc = await analysis_results.find_one({"analysis_id": analysis_id})
     except Exception:  # noqa: BLE001 — Mongo best-effort, as everywhere
-        return None
+        return None, _NOT_FOUND
     if not doc:
-        return None
+        return None, _NOT_FOUND
 
-    issues = doc.get("issues") or doc.get("results") or []
+    issues = [
+        i for i in (doc.get("issues") or doc.get("results") or [])
+        if isinstance(i, dict)
+    ]
     rule_id = (rule_id or "").strip().upper()
     asset_path = (asset_path or "").strip()
 
@@ -64,13 +82,48 @@ async def _resolve_from_analysis(
                 return False
         return True
 
-    matched = [i for i in issues if isinstance(i, dict) and _matches(i)]
+    matched = [i for i in issues if _matches(i)]
     if not matched:
-        return None
-    # Deterministic pick: first match in report order — the same order the
-    # panel shows. Disambiguation beyond (rule_id, asset_path) is the UI's
-    # job; it can always send the finding inline.
-    return matched[0]
+        return None, _NOT_FOUND
+
+    # A selector narrowed it down: first in report order is the same order the
+    # panel shows, and finer disambiguation is the UI's job — it can always
+    # send the finding inline.
+    if rule_id or asset_path:
+        return matched[0], ""
+
+    # No selector. One finding in the whole scan is unambiguous anyway;
+    # anything more and we ask rather than guess.
+    if len(matched) == 1:
+        return matched[0], ""
+    return None, _ambiguous_reply(matched)
+
+
+def _ambiguous_reply(matched: list[dict[str, Any]]) -> str:
+    """Name the likeliest candidates instead of picking one of them.
+
+    Ranked by frequency: the rule firing most often is the one a vague "why is
+    this flagged?" is most likely to be about, and it also tells the user
+    something true about the scan on its way past.
+    """
+    from collections import Counter
+
+    counts = Counter(
+        (
+            str(i.get("rule_id") or "?"),
+            str(i.get("rule_name") or ""),
+        )
+        for i in matched
+    )
+    named = "; ".join(
+        f"{rid}{f' ({name})' if name else ''} x{n}"
+        for (rid, name), n in counts.most_common(3)
+    )
+    return (
+        f"That scan has {len(matched)} findings, so I'd be guessing which one "
+        f"you mean. The most frequent are: {named}. Name a rule id, or click "
+        f"Explain on the row you're looking at and I'll pick it up from there."
+    )
 
 
 def deterministic_reply(finding: dict[str, Any]) -> str:
@@ -124,17 +177,28 @@ async def prepare(payload: dict[str, Any]) -> dict[str, Any]:
     if isinstance(finding, dict) and finding:
         return {"finding": finding}
 
-    analysis_id = str(payload.get("context_ref") or "").strip()
-    if not analysis_id:
+    # Resolve WHICH analysis first. A context_ref belonging to a different
+    # module than the one the message names is not grounding for this
+    # question — see module_resolver.resolve_analysis.
+    from ..module_resolver import resolve_analysis, resolve_module
+
+    module, source = resolve_module(
+        str(payload.get("message") or ""),
+        str(payload.get("module_context") or ""),
+    )
+    doc, _ = await resolve_analysis(
+        module, str(payload.get("context_ref") or "").strip(), source
+    )
+    if doc is None:
         return {"error": _NEED_TARGET}
 
-    finding = await _resolve_from_analysis(
-        analysis_id,
+    finding, error = await _resolve_from_analysis(
+        str(doc.get("analysis_id") or ""),
         str(payload.get("rule_id") or ""),
         str(payload.get("asset_path") or payload.get("file") or ""),
     )
     if finding is None:
-        return {"error": _NOT_FOUND}
+        return {"error": error or _NOT_FOUND}
     return {"finding": finding}
 
 

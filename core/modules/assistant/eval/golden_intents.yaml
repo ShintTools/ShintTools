@@ -84,3 +84,21 @@ pairs:
   - {message: "how do I use this assistant?", intent: general_help}
   - {message: "thanks!", intent: general_help}
   - {message: "gracias, muy útil", intent: general_help}
+
+  # ── module-directed questions ───────────────────────────────────
+  # Added after the report that asking about a module answered about
+  # whatever panel was open. These carry an expected `module` as well as an
+  # intent: the router has to reach summarize_module, AND the resolver has
+  # to pick the module the user named rather than the ambient one. None of
+  # these phrasings contained a single keyword the old table knew, so they
+  # all fell through to general_help.
+  - {message: "how is the code validator doing?", intent: summarize_module, module: code_validator}
+  - {message: "cómo está el validador de código?", intent: summarize_module, module: code_validator}
+  - {message: "what did the code validator find?", intent: summarize_module, module: code_validator}
+  - {message: "qué encontró el lod auditor?", intent: summarize_module, module: lod_audit}
+  - {message: "how are my LODs?", intent: summarize_module, module: lod_audit}
+  - {message: "estado del auditor de lod", intent: summarize_module, module: lod_audit}
+  - {message: "how is the asset naming bot doing?", intent: summarize_module, module: asset_naming}
+  - {message: "cómo va la nomenclatura de assets?", intent: summarize_module, module: asset_naming}
+  - {message: "qué dice el naming bot?", intent: summarize_module, module: asset_naming}
+  - {message: "what does the predictive profiler say?", intent: summarize_module, module: predictive}

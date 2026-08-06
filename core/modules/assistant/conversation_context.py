@@ -80,6 +80,17 @@ def is_continuation(message: str) -> bool:
         return False
     if _NAMES_TARGET.search(text):
         return False
+    # Naming a MODULE is naming a target too, and the regex above cannot see
+    # it — module names are ordinary words. "y el code validator?" is four
+    # words opening with "y", so it read as a follow-up and inherited the
+    # previous turn's grounding: the user changed subject and the assistant
+    # kept answering about the old one. That is the "it doesn't follow the
+    # conversation" complaint, and it is a grounding bug, not a memory one.
+    from .module_registry import ALIASES
+
+    lowered_full = text.lower()
+    if any(alias in lowered_full for alias, _ in ALIASES):
+        return False
     if len(text.split()) > MAX_CONTINUATION_WORDS:
         return False
 
