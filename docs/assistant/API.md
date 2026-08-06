@@ -270,7 +270,7 @@ the normal case. Render `nudge` as-is.
 ## 7. Scan responses now carry `analysis_id`
 
 Additive on `/validate/code`, `/validate/project`, `/validate/blueprints`,
-the Unity graph scan and `/assets/scan`:
+the Unity graph scan, `/assets/scan` and `/assets/lod/audit`:
 
 ```jsonc
 { "summary": { … }, "issues": [ … ], "analysis_id": "an-…" }
@@ -280,9 +280,32 @@ Store it with the results view; pass it as `context_ref`. It is generated
 even when the database is unreachable — the assistant will then say it
 cannot resolve that analysis, which is the honest outcome.
 
+### Batched scans must chain the id
+
+Clients that split a large project across several requests (the UE5 and
+Unity LOD collectors batch at 150 assets) **must** echo the first batch's
+`analysis_id` back in the request body of every later batch:
+
+```jsonc
+{ "api_key": "…", "assets": [ … ], "analysis_id": "an-…" }   // batches 2..N
+```
+
+The Core then appends to that same analysis instead of minting a new one.
+Omit the field on the first batch.
+
+Without this each batch becomes its own analysis and the assistant can only
+resolve the **last** one — while appearing to answer for the whole project.
+Currently honoured by `/assets/lod/audit`; the other scan routes are
+single-request and need nothing.
+
 ---
 
 ## 8. Notes for the Unity client
+
+> A full implementation brief — build order, Unity-specific threading and
+> window-lifetime notes, and the traps found while shipping the UE5 client —
+> lives in [`UNITY_CLIENT.md`](UNITY_CLIENT.md). This section stays as the
+> contract-level summary.
 
 The contract is engine-neutral; `engine: "unity"` scopes studio rules and
 selects engine-specific wording. Two implementation notes:

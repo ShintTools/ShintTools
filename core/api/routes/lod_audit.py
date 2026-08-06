@@ -10,9 +10,11 @@ import asyncio
 import logging
 import os
 import time
+import uuid
+from datetime import datetime, timezone
 from typing import Any
 
-from api.database import resolve_tier_detailed
+from api.database import analysis_results, resolve_tier_detailed
 from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -136,6 +138,13 @@ class LodAuditRequest(BaseModel):
     """Request to audit assets for LOD violations."""
 
     api_key: str = ""
+    # Assistant contract §7. Clients that split a large project into chained
+    # batches echo back the id the FIRST batch returned; every later batch then
+    # appends to that same analysis instead of creating its own. Without this
+    # a 900-asset audit produced six separate analyses and the assistant could
+    # only ever resolve the last ~150 assets — silently, which is worse than
+    # not resolving at all. Empty = start a new analysis.
+    analysis_id: str = ""
     profile: str = "default"  # "default" | "mobile" — selects threshold YAML
     # Engine drives engine-aware fix guidance (Unreal vs Unity wording) and,
     # when explain=True, which agent prompt template is used. Accepts any of
@@ -405,6 +414,64 @@ def _explain_ranked(
                 pass
 
 
+async def _persist_audit(
+    summary: dict[str, Any],
+    results: list[dict[str, Any]],
+    engine: str,
+    existing_id: str = "",
+) -> str:
+    """Store an audit so the assistant can resolve it as a ``context_ref``.
+
+    Mirrors ``validate._persist_result``: best-effort, never blocks the
+    response, and the id is returned even when the write fails — it is then
+    simply unresolvable, which the assistant reports honestly instead of
+    answering about the wrong scan.
+
+    The LOD audit was the one scan surface that produced no ``analysis_id``,
+    which left the assistant's own flagship example ("Viewing: LOD Audit —
+    40 findings") ungrounded: the panel had a context to show but nothing to
+    send. Additive per contract §7.
+
+    ``existing_id`` makes a chained multi-batch audit resolve as ONE analysis.
+    Large projects are scanned in batches of 150 by the clients, so without it
+    each batch became its own analysis and only the final one was reachable —
+    the assistant would then answer about the last 150 assets while appearing
+    to speak for the whole project.
+    """
+    if existing_id:
+        try:
+            await analysis_results.update_one(
+                {"analysis_id": existing_id},
+                {
+                    "$push": {"issues": {"$each": results}},
+                    "$inc": {
+                        f"summary.{k}": v
+                        for k, v in summary.items()
+                        if isinstance(v, (int, float)) and not isinstance(v, bool)
+                    },
+                },
+            )
+        except Exception:  # noqa: BLE001 — best-effort, mirrors validate.py
+            pass
+        return existing_id
+
+    analysis_id = f"an-{uuid.uuid4().hex[:12]}"
+    try:
+        await analysis_results.insert_one(
+            {
+                "analysis_id": analysis_id,
+                "report_type": "lod_audit",
+                "engine": engine,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "summary": summary,
+                "issues": results,
+            }
+        )
+    except Exception:  # noqa: BLE001 — best-effort, mirrors validate.py
+        pass
+    return analysis_id
+
+
 # Studio gate + reason messages moved to api/tier_guard.py when the
 # Predictive Profiler needed the identical gate. Thin wrapper kept so the
 # call sites stay unchanged; passing the module-global resolver preserves the
@@ -512,22 +579,27 @@ async def lod_audit(payload: LodAuditRequest):
 
     logger.info("/assets/lod/audit: completed with %d findings", len(results))
 
+    summary = {
+        "assets_audited": audit_response.summary.assets_audited,
+        "issues_found": audit_response.summary.issues_found,
+        "auto_fixable": audit_response.summary.auto_fixable,
+        "estimated_vram_saved_mb": round(
+            audit_response.summary.estimated_vram_saved_mb, 2
+        ),
+        "estimated_shader_instructions_saved": (
+            audit_response.summary.estimated_shader_instructions_saved
+        ),
+    }
+
     return {
         "error": "",
         "time": round(time.perf_counter() - t0, 4),
         "profile": payload.profile,
-        "summary": {
-            "assets_audited": audit_response.summary.assets_audited,
-            "issues_found": audit_response.summary.issues_found,
-            "auto_fixable": audit_response.summary.auto_fixable,
-            "estimated_vram_saved_mb": round(
-                audit_response.summary.estimated_vram_saved_mb, 2
-            ),
-            "estimated_shader_instructions_saved": (
-                audit_response.summary.estimated_shader_instructions_saved
-            ),
-        },
+        "summary": summary,
         "results": results,
+        "analysis_id": await _persist_audit(
+            summary, results, engine, payload.analysis_id
+        ),
     }
 
 
