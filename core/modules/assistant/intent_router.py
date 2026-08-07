@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from .tiers import ALL_INTENTS
 
@@ -123,13 +124,45 @@ def _classify_by_llm(message: str) -> str | None:
     return intent if intent in ALL_INTENTS else None
 
 
+_RULE_ID_RE = re.compile(r"\b[A-Z]{2,4}\d{3}\b")
+
+
+def _names_a_module_only(message: str) -> bool:
+    """True when the message is about a MODULE rather than one finding.
+
+    Naming a module and no rule id is a question about that module's results:
+    "how is the code validator doing?", "share the code validator results".
+    """
+    from .module_registry import ALIASES
+
+    if _RULE_ID_RE.search(message or ""):
+        return False   # names a specific rule — that is a finding question
+    lowered = (message or "").lower()
+    return any(alias in lowered for alias, _ in ALIASES)
+
+
 def classify(message: str) -> tuple[str, str]:
     """Classify *message*; returns (intent, source).
 
-    source: "llm" | "keywords" — surfaced in logs so the M4 golden-set
-    harness can measure each layer separately.
+    source: "llm" | "keywords" | "llm+module" — surfaced in logs so the M4
+    golden-set harness can measure each layer separately.
     """
     intent = _classify_by_llm(message)
     if intent is not None:
+        # Deterministic correction over the model's answer.
+        #
+        # Module awareness was added to the keyword layer, but the keyword
+        # layer only runs when the LLM cannot — so with a model loaded it
+        # never ran, and "share the results view of code validator" came back
+        # as explain_finding. The action then asked which of 360 findings the
+        # user meant, to a question that had named no finding at all.
+        #
+        # The model is not wrong to hesitate here; the phrasing does mention
+        # findings. But "a module and no rule id" is decidable in Python, and
+        # anything decidable in Python does not get delegated to a 1.5B — the
+        # same principle that keeps argument extraction out of the model.
+        if intent == "explain_finding" and _names_a_module_only(message):
+            logger.info("router: explain_finding -> summarize_module (module named)")
+            return "summarize_module", "llm+module"
         return intent, "llm"
     return classify_by_keywords(message), "keywords"

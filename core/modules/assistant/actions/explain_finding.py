@@ -186,6 +186,7 @@ async def prepare(payload: dict[str, Any]) -> dict[str, Any]:
         str(payload.get("message") or ""),
         str(payload.get("module_context") or ""),
     )
+
     doc, _ = await resolve_analysis(
         module, str(payload.get("context_ref") or "").strip(), source
     )
@@ -237,7 +238,41 @@ def stream_text(
     return explain_issue_stream(finding)
 
 
+def _is_module_level_question(payload: dict[str, Any]) -> bool:
+    """The message names a module and no particular finding.
+
+    Then it is a question ABOUT THE MODULE, whatever the router called it.
+    "Show me the code validator results" gets classified explain_finding often
+    enough — it does read like a request about findings — and answering it by
+    asking which of 360 findings was meant is technically honest and
+    practically useless. The user named the module; answer about the module.
+
+    Deliberately narrow: only when the module came from the MESSAGE (not the
+    ambient panel, which is always set) and no selector is present. An Explain
+    click always carries a selector, so it never lands here.
+    """
+    from ..module_resolver import resolve_module
+
+    if str(payload.get("rule_id") or "").strip():
+        return False
+    if str(payload.get("asset_path") or payload.get("file") or "").strip():
+        return False
+    if isinstance(payload.get("finding"), dict) and payload["finding"]:
+        return False
+
+    module, source = resolve_module(
+        str(payload.get("message") or ""),
+        str(payload.get("module_context") or ""),
+    )
+    return module is not None and source == "message"
+
+
 async def run(payload: dict[str, Any]) -> dict[str, Any]:
+    if _is_module_level_question(payload):
+        from . import summarize_module
+
+        return await summarize_module.run(payload)
+
     prepared = await prepare(payload)
     if "error" in prepared:
         return {"reply": prepared["error"], "resolved": False}

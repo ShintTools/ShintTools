@@ -921,6 +921,37 @@ class TestModuleResolution:
         module, _ = resolve_module("what did the lod auditor find?")
         assert module is not None and module.id == "lod_audit"
 
+    def test_module_question_overrides_an_llm_explain_finding(self, monkeypatch):
+        """The model's answer is corrected when Python can decide better.
+
+        Reported from a real session: "share the results view of code
+        validator" was classified explain_finding by the loaded model, and the
+        action then asked which of 360 findings was meant — to a question that
+        named no finding. Module awareness lived only in the keyword layer,
+        which never runs while a model is available.
+        """
+        from modules.assistant import intent_router
+
+        monkeypatch.setattr(
+            intent_router, "_classify_by_llm", lambda _m: "explain_finding"
+        )
+
+        intent, source = intent_router.classify(
+            "share the results view of code validator"
+        )
+        assert intent == "summarize_module"
+        assert source == "llm+module"
+
+        # Naming a rule IS a finding question — the override must not fire.
+        intent, source = intent_router.classify("why LT003 on the lod auditor?")
+        assert intent == "explain_finding"
+        assert source == "llm"
+
+        # No module named — nothing to correct with.
+        intent, source = intent_router.classify("why is this flagged?")
+        assert intent == "explain_finding"
+        assert source == "llm"
+
     def test_naming_a_module_is_not_a_continuation(self):
         """A short "y el code validator?" changes subject, it does not follow on.
 
@@ -969,6 +1000,38 @@ class TestExplainFindingNeverGuesses:
         assert finding is None
         assert "guessing" in error
         assert "LT003" in error  # the most frequent candidate is named
+
+    @pytest.mark.anyio
+    async def test_naming_a_module_with_no_finding_answers_about_the_module(self):
+        """"Show me the code validator results" is not a finding question.
+
+        The router calls it explain_finding often enough, and asking which of
+        360 findings was meant is honest but useless — the user named the
+        module.
+        """
+        from modules.assistant.actions import explain_finding
+
+        result = await explain_finding.run(
+            {"message": "share the results view of code validator"}
+        )
+        assert result.get("module") == "code_validator"
+        assert "which one" not in result["reply"].lower()
+
+    def test_an_explain_click_still_goes_to_the_finding(self):
+        """A selector must never be redirected to the module summary."""
+        from modules.assistant.actions.explain_finding import (
+            _is_module_level_question,
+        )
+
+        assert _is_module_level_question(
+            {"message": "how is the code validator?"}
+        ) is True
+        assert _is_module_level_question(
+            {"message": "how is the code validator?", "rule_id": "CS001"}
+        ) is False
+        assert _is_module_level_question(
+            {"message": "why is this flagged?", "module_context": "code_validator"}
+        ) is False
 
     @pytest.mark.anyio
     async def test_a_selector_resolves_normally(self):
