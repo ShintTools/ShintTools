@@ -15,6 +15,7 @@ _ALL = [
     uv.check_lw008,
     uv.check_lw009,
     uv.check_lw010,
+    uv.check_lw011,
 ]
 
 
@@ -143,3 +144,31 @@ def test_lw010_material_and_lightmap_legs():
         )
     )
     assert lm and lm.recommended.get("generate_lightmap_uvs") is True
+
+
+def test_lw011_fires_on_unity_without_static_lighting_signal():
+    """LW011 is LW009's Unity complement: uses_static_lighting never arrives
+    on a Unity payload, so lightmap_uv_index pointing at a real channel is the
+    signal instead — one notch lower confidence (info, not warning)."""
+    f = uv.check_lw011(
+        _mesh([{"channel": 1, "outside_unit_ratio": 0.2}], lightmap_uv_index=1),
+        engine="unity",
+    )
+    assert f and f.rule_id == "LW011" and f.severity == "info"
+    assert f.auto_fixable is False
+
+
+def test_lw011_abstains_off_unity_or_without_a_lightmap_channel():
+    ch = [{"channel": 1, "outside_unit_ratio": 0.2}]
+    assert uv.check_lw011(_mesh(ch, lightmap_uv_index=1)) is None  # unreal default
+    assert (
+        uv.check_lw011(_mesh(ch, lightmap_uv_index=1), engine="unreal") is None
+    )
+    assert uv.check_lw011(_mesh(ch), engine="unity") is None  # no lightmap channel
+
+
+def test_lw011_abstains_within_bounds():
+    ch = [{"channel": 1, "outside_unit_ratio": 0.0}]
+    assert (
+        uv.check_lw011(_mesh(ch, lightmap_uv_index=1), engine="unity") is None
+    )

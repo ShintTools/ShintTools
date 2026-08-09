@@ -11,6 +11,7 @@ _ALL = [
     n.check_ln004,
     n.check_ln005,
     n.check_ln006,
+    n.check_ln007,
 ]
 
 
@@ -70,3 +71,24 @@ def test_ln006_recompute_discards():
         _mesh({"recompute_normals": True, "has_normals": True, "zero_normal_count": 0})
     )
     assert f and f.recommended["recompute_normals"] is False
+
+
+def test_ln007_high_mirrored_ratio_is_engine_neutral():
+    """Unlike LG016/LW011, LN007 has no engine gate — mirrored_tangent_ratio
+    is real on both UE5 and Unity payloads and no other rule reads it."""
+    unreal = n.check_ln007(_mesh({"mirrored_tangent_ratio": 0.9}), engine="unreal")
+    unity = n.check_ln007(_mesh({"mirrored_tangent_ratio": 0.9}), engine="unity")
+    assert unreal and unreal.rule_id == "LN007" and unreal.severity == "info"
+    assert unity and unity.rule_id == "LN007"
+
+
+def test_ln007_abstains_below_threshold_or_without_tangents():
+    # Routine partial mirroring (a symmetric character) stays quiet.
+    assert n.check_ln007(_mesh({"mirrored_tangent_ratio": 0.4})) is None
+    # No tangents at all is LN003's territory, not LN007's.
+    assert (
+        n.check_ln007(
+            _mesh({"mirrored_tangent_ratio": 0.9, "has_tangents": False})
+        )
+        is None
+    )

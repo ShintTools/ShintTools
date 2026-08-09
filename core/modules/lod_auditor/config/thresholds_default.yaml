@@ -143,6 +143,9 @@ LW007_HIGH_FACTOR: 2.0
 LW007_LOW_FACTOR: 0.4
 LW008_MAX_CV: 0.6
 LW009_INFO_RATIO: 0.05
+# LW011 — Unity-only lightmap-channel leg (no uses_static_lighting signal);
+# any excursion outside 0-1 is worth an info-level heads-up.
+LW011_MAX_OUTSIDE_RATIO: 0.0
 
 # ── Normals & tangents (LN) ───────────────────────────────────────────────────
 
@@ -150,6 +153,11 @@ LN002_ERROR_RATIO: 0.01
 LN004_MAX_RATIO: 0.5
 LN004_MIN_VERTS: 3000
 LN005_MIN_TRIS: 1000
+# LN007 — provisional: mirrored UVs are routine on symmetric characters
+# (~50% is normal), so this is set high to only catch meshes that are mostly
+# mirrored (usually an unintended whole-mesh mirror on import). Uncalibrated
+# against a real project — see rollout notes.
+LN007_MAX_MIRRORED_RATIO: 0.6
 
 # ── LOD chain completion (LD004-LD013) ────────────────────────────────────────
 

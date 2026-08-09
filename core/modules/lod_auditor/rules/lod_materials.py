@@ -745,3 +745,134 @@ def check_lm018(asset: dict, engine: str = "unreal") -> Finding | None:
         auto_fixable=True,
         guidance=guidance_for("LM018", engine),
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Shading-model classification (LM019 – LM020) — Unity only.
+#
+# The Unity material scan sends exactly four real fields today: blend_mode,
+# sampler_count, two_sided and shading_model (the assigned shader's name).
+# LM001-LM014 above read fields the client never sends for a Unity payload
+# (instruction_count, graph_node_count, layer_count, ...) — they only fire on
+# UE5. LM004/LM015-LM018 already mine the four real fields; these two mine the
+# one still mostly unused: shading_model.
+#
+# NOTE on `two_sided`: the Unity collector populates this field from
+# Material.doubleSidedGI, not the render-face/culling mode — confirmed against
+# AssetOptimizerMaterialsScannerData.cs. LM020 reads it as what it actually is.
+# ══════════════════════════════════════════════════════════════════════════════
+
+_URP_SHADER_PREFIXES = ("Universal Render Pipeline/", "Shader Graphs/URP")
+_HDRP_SHADER_PREFIXES = ("HDRP/",)
+_BUILTIN_SHADER_PREFIXES = (
+    "Standard",
+    "Legacy Shaders/",
+    "Mobile/",
+    "Nature/",
+    "Particles/",
+    "Skybox/",
+    "UI/",
+    "Sprites/",
+    "FX/",
+    "Autodesk Interactive",
+)
+
+# Folder-name markers that declare which pipeline a project has adopted.
+# Deliberately narrow — only an unambiguous folder segment counts, so a
+# studio's own naming conventions are never second-guessed.
+_URP_PATH_MARKERS = ("/URP/", "_URP/")
+_HDRP_PATH_MARKERS = ("/HDRP/", "_HDRP/")
+
+# Shader families that never sample scene GI, so paying for Double Sided GI on
+# them buys nothing.
+_NO_GI_SHADER_PREFIXES = (
+    "Unlit/",
+    "Universal Render Pipeline/Unlit",
+    "HDRP/Unlit",
+    "UI/",
+    "Skybox/",
+    "Sprites/",
+    "Particles/",
+    "FX/",
+)
+
+
+def _shader_family(shading_model: str) -> str | None:
+    s = shading_model or ""
+    if s.startswith(_URP_SHADER_PREFIXES):
+        return "urp"
+    if s.startswith(_HDRP_SHADER_PREFIXES):
+        return "hdrp"
+    if s.startswith(_BUILTIN_SHADER_PREFIXES):
+        return "builtin"
+    return None
+
+
+# ── LM019 ─────────────────────────────────────────────────────────────────────
+
+
+def check_lm019(asset: dict, engine: str = "unreal") -> Finding | None:
+    """LM019: Shader family contradicts the pipeline the asset's folder declares."""
+    if not _is_unity(engine):
+        return None
+    path = str(asset.get("asset_path", "") or "")
+    family = _shader_family(str(asset.get("shading_model", "") or ""))
+    if family is None:
+        return None
+    declared: str | None = None
+    if any(marker in path for marker in _URP_PATH_MARKERS):
+        declared = "urp"
+    elif any(marker in path for marker in _HDRP_PATH_MARKERS):
+        declared = "hdrp"
+    if declared is None or declared == family:
+        return None
+    return Finding(
+        asset_path=asset["asset_path"],
+        rule_id="LM019",
+        category="Material",
+        severity="warning",
+        message=(
+            f"Material lives under a folder that declares the {declared.upper()} "
+            f"pipeline but is assigned a '{asset.get('shading_model')}' shader "
+            f"({family} family) — usually a pipeline migration left half-done."
+        ),
+        current={
+            "shading_model": asset.get("shading_model"),
+            "folder_pipeline": declared,
+        },
+        recommended={"hint": f"reassign a {declared.upper()} shader"},
+        estimated_saving=Saving(),
+        auto_fixable=False,
+        guidance=guidance_for("LM019", engine),
+    )
+
+
+# ── LM020 ─────────────────────────────────────────────────────────────────────
+
+
+def check_lm020(asset: dict, engine: str = "unreal") -> Finding | None:
+    """LM020: Double Sided GI is on for a shader family that never contributes to GI."""
+    if not _is_unity(engine):
+        return None
+    if asset.get("two_sided") is not True:
+        return None
+    shading_model = str(asset.get("shading_model", "") or "")
+    if not shading_model.startswith(_NO_GI_SHADER_PREFIXES):
+        return None
+    return Finding(
+        asset_path=asset["asset_path"],
+        rule_id="LM020",
+        category="Material",
+        severity="info",
+        message=(
+            f"Double Sided Global Illumination is on for a '{shading_model}' "
+            "material — unlit/UI/particle shaders never sample or contribute to "
+            "baked GI, so the lightmapper's extra pass over both faces buys "
+            "nothing."
+        ),
+        current={"double_sided_gi": True, "shading_model": shading_model},
+        recommended={"double_sided_gi": False},
+        estimated_saving=Saving(),
+        auto_fixable=True,
+        guidance=guidance_for("LM020", engine),
+    )

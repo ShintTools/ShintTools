@@ -20,6 +20,7 @@ _ALL = [
     g.check_lg013,
     g.check_lg014,
     g.check_lg015,
+    g.check_lg016,
 ]
 
 
@@ -148,3 +149,24 @@ def test_lg015_needs_placement():
         g.check_lg015(_mesh(has_negative_scale_instances=True, used_in_levels=2))
         is not None
     )
+
+
+def test_lg016_fires_on_unity_without_used_in_levels():
+    """LG016 is LG015's Unity complement: no used_in_levels count exists on a
+    Unity payload, so the flag alone (which only a scene scan can produce)
+    is enough."""
+    f = g.check_lg016(_mesh(has_negative_scale_instances=True), engine="unity")
+    assert f and f.rule_id == "LG016" and f.severity == "info"
+    assert f.auto_fixable is False
+
+
+def test_lg016_abstains_off_unity():
+    assert g.check_lg016(_mesh(has_negative_scale_instances=True)) is None
+    assert (
+        g.check_lg016(_mesh(has_negative_scale_instances=True), engine="unreal")
+        is None
+    )
+
+
+def test_lg016_abstains_without_the_flag():
+    assert g.check_lg016(_mesh(), engine="unity") is None

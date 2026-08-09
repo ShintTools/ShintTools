@@ -1,6 +1,6 @@
 # core/modules/lod_auditor/rules/lod_shaders.py
 #
-# Shader rules: LS001 – LS012  (TDD Part 2 §19)
+# Shader rules: LS001 – LS015  (TDD Part 2 §19)
 #
 #   check_lsXXX(asset, engine="unreal", thresholds=None) -> Finding | None
 #
@@ -8,6 +8,12 @@
 # — a neutral shape both UE5 and Unity fill from their own compiled-shader APIs.
 # Rules abstain when shader_stats is None, so materials-only payloads keep working.
 # Findings attach to the material asset (category "Material") — no new asset_type.
+#
+# LS013-LS015 break that pattern on purpose: Unity has no shader-stats scanner
+# at all (no ShaderUtil/Frame Debugger collector shipped), so shader_stats is
+# always None for a Unity payload and LS001-LS012 never fire there. The only
+# real shader signal Unity sends is `shading_model` (the assigned shader's
+# name/path) on the material asset itself — these three classify it by name.
 
 from lod_auditor.config import load_profile
 from lod_auditor.guidance import guidance_for
@@ -428,4 +434,138 @@ def check_ls012(
         estimated_saving=Saving(),
         auto_fixable=False,
         guidance=guidance_for("LS012", engine),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Shader-name classification (LS013 – LS015) — Unity only.
+#
+# No shader_stats scanner exists on the Unity side, so these classify the
+# `shading_model` string on the material asset instead of reading measured
+# stats. All three abstain on any other engine.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def _is_unity(engine: str) -> bool:
+    return engine.strip().lower() == "unity"
+
+
+_LEGACY_SHADER_PREFIXES = (
+    "Legacy Shaders/",
+    "VertexLit",
+    "Diffuse Fast",
+    "Bumped Diffuse",
+    "Bumped Specular",
+    "Parallax Diffuse",
+    "Decal",
+    "Self-Illumin/",
+    "Reflective/",
+    "Transparent/Cutout/VertexLit",
+    "Transparent/VertexLit",
+)
+
+_HEAVY_DESKTOP_SHADER_PREFIXES = (
+    "Standard",
+    "HDRP/Lit",
+    "HDRP/LayeredLit",
+    "Autodesk Interactive",
+    "Nature/Terrain/Standard",
+)
+
+
+# ── LS013 ─────────────────────────────────────────────────────────────────────
+
+
+def check_ls013(
+    asset: dict, engine: str = "unreal", thresholds: dict | None = None
+) -> Finding | None:
+    """LS013: Deprecated Unity built-in shader still assigned to a material."""
+    if not _is_unity(engine):
+        return None
+    shading_model = str(asset.get("shading_model", "") or "")
+    if not shading_model.startswith(_LEGACY_SHADER_PREFIXES):
+        return None
+    return Finding(
+        asset_path=asset["asset_path"],
+        rule_id="LS013",
+        category="Material",
+        severity="warning",
+        message=(
+            f"'{shading_model}' is a deprecated Unity built-in shader — it "
+            "predates PBR, has no SRP Batcher / URP / HDRP path, and is a "
+            "removal candidate in newer Unity LTS builds."
+        ),
+        current={"shading_model": shading_model},
+        recommended={
+            "hint": "reassign Standard (Built-in) or the project's URP/HDRP Lit shader"
+        },
+        estimated_saving=Saving(),
+        auto_fixable=False,
+        guidance=guidance_for("LS013", engine),
+    )
+
+
+# ── LS014 ─────────────────────────────────────────────────────────────────────
+
+
+def check_ls014(
+    asset: dict, engine: str = "unreal", thresholds: dict | None = None
+) -> Finding | None:
+    """LS014: Desktop-grade shader assigned while auditing under the mobile profile."""
+    T = thresholds if thresholds is not None else THRESHOLDS
+    if not _is_unity(engine) or T.get("profile") != "mobile":
+        return None
+    shading_model = str(asset.get("shading_model", "") or "")
+    if not shading_model.startswith(_HEAVY_DESKTOP_SHADER_PREFIXES):
+        return None
+    return Finding(
+        asset_path=asset["asset_path"],
+        rule_id="LS014",
+        category="Material",
+        severity="warning",
+        message=(
+            f"'{shading_model}' is a full desktop PBR shader on a mobile-profile "
+            "audit — its per-pixel PBR terms and probe blending cost far more "
+            "than a Mobile/ or URP Lit (mobile quality preset) equivalent."
+        ),
+        current={"shading_model": shading_model},
+        recommended={
+            "hint": "switch to a Mobile/ shader or URP Lit with the mobile preset"
+        },
+        estimated_saving=Saving(),
+        auto_fixable=False,
+        guidance=guidance_for("LS014", engine),
+    )
+
+
+# ── LS015 ─────────────────────────────────────────────────────────────────────
+
+
+def check_ls015(
+    asset: dict, engine: str = "unreal", thresholds: dict | None = None
+) -> Finding | None:
+    """LS015: Mobile/ shader assigned while auditing under a non-mobile profile."""
+    T = thresholds if thresholds is not None else THRESHOLDS
+    if not _is_unity(engine) or T.get("profile") == "mobile":
+        return None
+    shading_model = str(asset.get("shading_model", "") or "")
+    if not shading_model.startswith("Mobile/"):
+        return None
+    return Finding(
+        asset_path=asset["asset_path"],
+        rule_id="LS015",
+        category="Material",
+        severity="info",
+        message=(
+            f"'{shading_model}' is a Mobile/ shader on a non-mobile-profile "
+            "audit — its cut corners (no real specular, baked-only reflections) "
+            "buy nothing on this target and leave visual quality on the table."
+        ),
+        current={"shading_model": shading_model},
+        recommended={
+            "hint": "switch to Standard or the project's URP/HDRP Lit shader"
+        },
+        estimated_saving=Saving(),
+        auto_fixable=False,
+        guidance=guidance_for("LS015", engine),
     )

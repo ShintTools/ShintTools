@@ -85,6 +85,7 @@ LOD_RULE_NAMES: dict[str, str] = {
     "LG013": "Pivot outside bounds",
     "LG014": "Import scale not 1.0",
     "LG015": "Negative-scale instances",
+    "LG016": "Negative-scale instances (Unity)",
     # ── UV / texel density (LW) ──────────────────────────
     "LW001": "UV overlap (texture channel)",
     "LW002": "Lightmap UV overlap",
@@ -96,6 +97,7 @@ LOD_RULE_NAMES: dict[str, str] = {
     "LW008": "Texel density inconsistent",
     "LW009": "UV outside 0-1 range",
     "LW010": "Missing UV channel",
+    "LW011": "Lightmap UV outside 0-1 (Unity)",
     # ── Normals & tangents (LN) ──────────────────────────
     "LN001": "Missing normals",
     "LN002": "Invalid (zero/NaN) normals",
@@ -103,6 +105,7 @@ LOD_RULE_NAMES: dict[str, str] = {
     "LN004": "Hard-edge overuse",
     "LN005": "Smoothing group problems",
     "LN006": "Recompute discards normals",
+    "LN007": "High mirrored-tangent ratio",
     # ── LOD chain completion (LD) ────────────────────────
     "LD004": "Too few LODs for size",
     "LD005": "Excessive LODs",
@@ -131,6 +134,8 @@ LOD_RULE_NAMES: dict[str, str] = {
     "LM016": "Not SRP Batcher compatible",
     "LM017": "Render queue mismatch",
     "LM018": "Needless double-sided GI",
+    "LM019": "Shader/pipeline folder mismatch",
+    "LM020": "Double-sided GI on non-GI shader",
     # ── Texture completion (LT) ──────────────────────────
     "LT009": "Missing mipmaps",
     "LT010": "Wrong texture group",
@@ -160,6 +165,10 @@ LOD_RULE_NAMES: dict[str, str] = {
     "LS010": "Unused shader parameters",
     "LS011": "Expensive shader math",
     "LS012": "Dependent texture reads",
+    "LS013": "Deprecated legacy shader",
+    "LS014": "Desktop shader on mobile profile",
+    "LS015": "Mobile shader on desktop profile",
+    "LX007": "Mixed render-pipeline shaders",
 }
 
 # "LT003: ..." → strip the leading id so the explanation reads cleanly.

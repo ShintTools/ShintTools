@@ -17,6 +17,8 @@ from lod_auditor.rules.lod_materials import (
     check_lm016,
     check_lm017,
     check_lm018,
+    check_lm019,
+    check_lm020,
 )
 
 
@@ -133,14 +135,107 @@ class TestLM018DoubleSidedGi:
         ) is None
 
 
+class TestLM019ShaderPipelineFolderMismatch:
+    def test_fires_when_urp_folder_carries_a_builtin_shader(self):
+        finding = check_lm019(
+            _mat(
+                asset_path="Assets/Materials/URP/M_Rock.mat",
+                shading_model="Standard",
+            ),
+            engine="unity",
+        )
+        assert finding is not None
+        assert finding.current["folder_pipeline"] == "urp"
+        # No material property can retarget the shader — advisory only.
+        assert finding.auto_fixable is False
+
+    def test_fires_when_hdrp_folder_carries_a_urp_shader(self):
+        finding = check_lm019(
+            _mat(
+                asset_path="Assets/Materials/HDRP/M_Glass.mat",
+                shading_model="Universal Render Pipeline/Lit",
+            ),
+            engine="unity",
+        )
+        assert finding is not None
+        assert finding.current["folder_pipeline"] == "hdrp"
+
+    def test_silent_when_the_folder_and_shader_agree(self):
+        assert check_lm019(
+            _mat(
+                asset_path="Assets/Materials/URP/M_Rock.mat",
+                shading_model="Universal Render Pipeline/Lit",
+            ),
+            engine="unity",
+        ) is None
+
+    def test_silent_without_an_unambiguous_folder_marker(self):
+        # No pipeline folder convention to contradict — no false positive.
+        assert check_lm019(
+            _mat(asset_path="Assets/Materials/M_Rock.mat", shading_model="Standard"),
+            engine="unity",
+        ) is None
+
+    def test_abstains_on_unreal(self):
+        assert check_lm019(
+            _mat(
+                asset_path="Assets/Materials/URP/M_Rock.mat",
+                shading_model="Standard",
+            ),
+            engine="unreal",
+        ) is None
+
+
+class TestLM020DoubleSidedGiOnNonGiShader:
+    def test_fires_on_an_unlit_shader(self):
+        finding = check_lm020(
+            _mat(two_sided=True, shading_model="Unlit/Color"), engine="unity"
+        )
+        assert finding is not None
+        assert finding.recommended == {"double_sided_gi": False}
+        assert finding.auto_fixable is True
+
+    def test_fires_on_a_ui_shader(self):
+        assert check_lm020(
+            _mat(two_sided=True, shading_model="UI/Default"), engine="unity"
+        ) is not None
+
+    def test_silent_on_a_lit_shader(self):
+        # A Lit shader genuinely benefits from double-sided GI — LM018's
+        # territory, not LM020's.
+        assert check_lm020(
+            _mat(two_sided=True, shading_model="Universal Render Pipeline/Lit"),
+            engine="unity",
+        ) is None
+
+    def test_silent_when_the_flag_is_off(self):
+        assert check_lm020(
+            _mat(two_sided=False, shading_model="Unlit/Color"), engine="unity"
+        ) is None
+
+    def test_abstains_on_unreal(self):
+        assert check_lm020(
+            _mat(two_sided=True, shading_model="Unlit/Color"), engine="unreal"
+        ) is None
+
+
 class TestEngineSeparation:
-    UNITY_RULES = (check_lm015, check_lm016, check_lm017, check_lm018)
+    UNITY_RULES = (
+        check_lm015,
+        check_lm016,
+        check_lm017,
+        check_lm018,
+        check_lm019,
+        check_lm020,
+    )
 
     def test_unity_rules_abstain_on_unreal(self):
         asset = _mat(
+            asset_path="Assets/Materials/URP/M_Test.mat",
             gpu_instancing=False, used_by_primitives=64, render_pipeline="builtin",
             srp_batcher_compatible=False, render_queue=2000,
             blend_mode="Transparent", double_sided_gi=True,
+            shading_model="Standard",
         )
         for rule in self.UNITY_RULES:
             assert rule(asset, engine="unreal") is None, rule.__name__

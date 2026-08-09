@@ -1,6 +1,6 @@
 # core/modules/lod_auditor/rules/lod_normals.py
 #
-# Normal & tangent rules: LN001 – LN006  (TDD Part 2 §16)
+# Normal & tangent rules: LN001 – LN007  (TDD Part 2 §16)
 #
 #   check_lnXXX(asset, engine="unreal", thresholds=None) -> Finding | None
 #
@@ -227,4 +227,52 @@ def check_ln006(
         estimated_saving=Saving(),
         auto_fixable=True,
         guidance=guidance_for("LN006", engine),
+    )
+
+
+# ── LN007 ─────────────────────────────────────────────────────────────────────
+#
+# ``mirrored_tangent_ratio`` ships in NormalStats and Unity's mesh scanner
+# sends it today, but no rule read it until now. Engine-neutral: the risk
+# (tangent.w-blind shaders showing a lighting seam along a mirrored UV shell)
+# applies equally to any engine that reports the stat.
+
+
+def check_ln007(
+    asset: dict, engine: str = "unreal", thresholds: dict | None = None
+) -> Finding | None:
+    """LN007: High mirrored-tangent ratio risks a lighting seam at the mirror line."""
+    T = thresholds if thresholds is not None else THRESHOLDS
+    ns = _ns(asset)
+    if ns is None:
+        return None
+    if not ns.get("has_tangents", True):
+        return None  # LN003 owns "no tangents at all"
+    ratio = float(ns.get("mirrored_tangent_ratio", 0.0))
+    if ratio <= T["LN007_MAX_MIRRORED_RATIO"]:
+        return None
+    return Finding(
+        asset_path=asset["asset_path"],
+        rule_id="LN007",
+        category="Mesh",
+        severity="info",
+        message=(
+            f"{ratio * 100:.0f}% of tangents are mirrored (UV-mirrored shells) — "
+            "a shader that ignores the tangent.w sign shows a lighting seam along "
+            "the mirror line. Symmetric characters mirror by design; this only "
+            "flags meshes where most of the surface is mirrored."
+        ),
+        current={"mirrored_tangent_ratio": round(ratio, 2)},
+        recommended=_conf(
+            {
+                "hint": (
+                    "confirm the shader reads tangent.w, or avoid mirroring "
+                    "shells that carry directional surface detail"
+                )
+            },
+            "medium",
+        ),
+        estimated_saving=Saving(),
+        auto_fixable=False,
+        guidance=guidance_for("LN007", engine),
     )

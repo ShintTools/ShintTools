@@ -238,6 +238,13 @@ LOD_GUIDANCE: dict[str, dict[str, str]] = {
         ),
         _DEFAULT: "Avoid negative instance scale; author a mirrored variant.",
     },
+    "LG016": {
+        "unity": (
+            "Author a mirrored mesh variant — negative scale breaks GPU "
+            "Instancing / SRP Batcher against the positive-scale copies."
+        ),
+        _DEFAULT: "Avoid negative instance scale; author a mirrored variant.",
+    },
     # ══ Part 2 — UV (LW) ═════════════════════════════════════════════════════
     "LW002": {
         "unreal": (
@@ -286,6 +293,13 @@ LOD_GUIDANCE: dict[str, dict[str, str]] = {
         ),
         _DEFAULT: "Provide the UV channel the consumer samples.",
     },
+    "LW011": {
+        "unity": (
+            "If this mesh is Static/contributes to GI, re-pack the UV2 shells "
+            "in the DCC (or regenerate Lightmap UVs) so none fall outside 0-1."
+        ),
+        _DEFAULT: "Re-pack the lightmap UV shells so none fall outside 0-1.",
+    },
     # ══ Part 2 — normals (LN) ════════════════════════════════════════════════
     "LN001": {
         "unreal": (
@@ -308,6 +322,21 @@ LOD_GUIDANCE: dict[str, dict[str, str]] = {
             "normal maps read correctly."
         ),
         _DEFAULT: "Recompute tangents with MikkTSpace for correct normal maps.",
+    },
+    "LN007": {
+        "unreal": (
+            "Confirm the material reads Vertex Tangent Space / bitangent sign "
+            "correctly, or avoid mirroring shells with directional detail."
+        ),
+        "unity": (
+            "Confirm the shader multiplies the normal-map bitangent by "
+            "tangent.w (URP/HDRP Lit does), or avoid mirroring shells with "
+            "directional surface detail."
+        ),
+        _DEFAULT: (
+            "Confirm the shader honours the tangent-basis sign, or avoid "
+            "mirroring UV shells that carry directional surface detail."
+        ),
     },
     # ══ Part 2 — LOD chain (LD) ══════════════════════════════════════════════
     "LD007": {
@@ -455,6 +484,22 @@ LOD_GUIDANCE: dict[str, dict[str, str]] = {
         ),
         _DEFAULT: "Disable double-sided GI on single-sided materials.",
     },
+    "LM019": {
+        "unity": (
+            "Reassign a shader from the pipeline the material's own folder "
+            "declares (a Universal Render Pipeline/* or HDRP/* shader), or move "
+            "the asset out of that folder if the Built-in shader is intentional."
+        ),
+        _DEFAULT: "Align the shader with the render pipeline the asset targets.",
+    },
+    "LM020": {
+        "unity": (
+            "Untick Double Sided Global Illumination — Unlit/UI/Sprite/Particle "
+            "shaders never sample scene GI, so the extra lightmapper pass over "
+            "both faces produces no visual change."
+        ),
+        _DEFAULT: "Disable double-sided GI on shaders that never contribute to GI.",
+    },
     # ══ Part 2 — rendering (LR) ══════════════════════════════════════════════
     "LR001": {
         "unreal": (
@@ -507,6 +552,28 @@ LOD_GUIDANCE: dict[str, dict[str, str]] = {
         ),
         "unity": "Delete the unused Shader Graph properties — never read.",
         _DEFAULT: "Delete shader parameters that are declared but never read.",
+    },
+    "LS013": {
+        "unity": (
+            "Reassign Standard (Built-in) or the project's URP/HDRP Lit shader "
+            "— the legacy shader has no SRP Batcher path and Unity may drop it "
+            "from future LTS builds."
+        ),
+        _DEFAULT: "Replace the deprecated shader with a supported PBR shader.",
+    },
+    "LS014": {
+        "unity": (
+            "Switch to a Mobile/ shader, or URP Lit with the Mobile quality "
+            "preset, to drop the full desktop PBR cost."
+        ),
+        _DEFAULT: "Use a lighter shader variant on mobile targets.",
+    },
+    "LS015": {
+        "unity": (
+            "Switch to Standard or the project's URP/HDRP Lit shader to recover "
+            "the specular/reflection quality the Mobile/ shader cuts."
+        ),
+        _DEFAULT: "Use the full-quality shader when not targeting mobile.",
     },
     # ══ Part 2 — texture (LT) ════════════════════════════════════════════════
     "LT009": {

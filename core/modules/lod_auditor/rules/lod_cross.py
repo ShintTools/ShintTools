@@ -1,6 +1,6 @@
 # core/modules/lod_auditor/rules/lod_cross.py
 #
-# Cross-asset detection rules: LX001 – LX003
+# Cross-asset detection rules: LX001 – LX007
 #
 # Unlike LT/LM/LD rules which inspect a single asset, these scan the full
 # audit batch to find waste that's only visible when looking at relationships
@@ -444,3 +444,87 @@ def check_lt015_streaming_pool(
             guidance=None,
         )
     ]
+
+
+# ── LX007 (Unity — mixed render-pipeline shader families) ────────────────────
+#
+# Only Unity carries a real, per-asset pipeline signal today: `shading_model`
+# (the assigned shader's name/path). A single-asset rule can classify one
+# material; only a batch-level view can tell a studio "your project is mostly
+# URP but N materials are still on the Built-in/legacy family" — the signature
+# of a pipeline migration left half-done. No thresholds; classification is by
+# family, not a tunable number.
+
+_URP_SHADER_PREFIXES = ("Universal Render Pipeline/", "Shader Graphs/URP")
+_HDRP_SHADER_PREFIXES = ("HDRP/",)
+_BUILTIN_SHADER_PREFIXES = (
+    "Standard",
+    "Legacy Shaders/",
+    "Mobile/",
+    "Nature/",
+    "Particles/",
+    "Skybox/",
+    "UI/",
+    "Sprites/",
+    "FX/",
+    "Autodesk Interactive",
+)
+_LX007_MATERIAL_TYPES = _MATERIAL_INSTANCE_TYPES | {"Material"}
+
+
+def _lx007_shader_family(shading_model: str) -> str | None:
+    s = shading_model or ""
+    if s.startswith(_URP_SHADER_PREFIXES):
+        return "urp"
+    if s.startswith(_HDRP_SHADER_PREFIXES):
+        return "hdrp"
+    if s.startswith(_BUILTIN_SHADER_PREFIXES):
+        return "builtin"
+    return None
+
+
+def check_lx007_mixed_pipeline(
+    assets: list[dict], engine: str = "unreal"
+) -> list[Finding]:
+    """LX007: Materials in the batch use more than one render-pipeline shader family."""
+    if engine.strip().lower() != "unity":
+        return []
+
+    by_family: dict[str, list[str]] = defaultdict(list)
+    for asset in assets:
+        if asset.get("asset_type") not in _LX007_MATERIAL_TYPES:
+            continue
+        family = _lx007_shader_family(str(asset.get("shading_model", "") or ""))
+        if family:
+            by_family[family].append(asset["asset_path"])
+
+    if len(by_family) < 2:
+        return []
+
+    dominant = max(by_family, key=lambda fam: len(by_family[fam]))
+    findings: list[Finding] = []
+    for family, paths in by_family.items():
+        if family == dominant:
+            continue
+        for path in paths:
+            findings.append(
+                Finding(
+                    asset_path=path,
+                    rule_id="LX007",
+                    category="Material",
+                    severity="info",
+                    message=(
+                        f"Uses a {family.upper()}-family shader while most of the "
+                        f"batch ({len(by_family[dominant])} material(s)) is on "
+                        f"{dominant.upper()} — mixed pipelines double shader "
+                        "variant compilation and usually mean a migration was "
+                        "left half-done."
+                    ),
+                    current={"shader_family": family, "dominant_family": dominant},
+                    recommended={},
+                    estimated_saving=Saving(),
+                    auto_fixable=False,
+                    guidance=None,
+                )
+            )
+    return findings

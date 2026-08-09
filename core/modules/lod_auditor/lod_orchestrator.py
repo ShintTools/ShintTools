@@ -27,6 +27,7 @@ from lod_auditor.rules.lod_cross import (
     check_lx004_unused_material_instance,
     check_lx005_duplicate_textures,
     check_lx006_same_source_multisize,
+    check_lx007_mixed_pipeline,
 )
 from lod_auditor.rules.lod_lighting import check_ll001, check_ll002
 from lod_auditor.rules.lod_materials import (
@@ -48,6 +49,8 @@ from lod_auditor.rules.lod_materials import (
     check_lm016,
     check_lm017,
     check_lm018,
+    check_lm019,
+    check_lm020,
 )
 from lod_auditor.rules.lod_meshes import (
     check_ld001,
@@ -147,6 +150,8 @@ MATERIAL_RULES: list[RuleFn] = [
     check_lm016,
     check_lm017,
     check_lm018,
+    check_lm019,
+    check_lm020,
 ]
 MESH_RULES: list[RuleFn] = [
     check_ld001,
@@ -180,6 +185,7 @@ GEOMETRY_RULES: list[RuleFn] = [
     _geo.check_lg013,
     _geo.check_lg014,
     _geo.check_lg015,
+    _geo.check_lg016,
 ]
 UV_RULES: list[RuleFn] = [
     _uv.check_lw001,
@@ -192,6 +198,7 @@ UV_RULES: list[RuleFn] = [
     _uv.check_lw008,
     _uv.check_lw009,
     _uv.check_lw010,
+    _uv.check_lw011,
 ]
 NORMAL_RULES: list[RuleFn] = [
     _nrm.check_ln001,
@@ -200,6 +207,7 @@ NORMAL_RULES: list[RuleFn] = [
     _nrm.check_ln004,
     _nrm.check_ln005,
     _nrm.check_ln006,
+    _nrm.check_ln007,
 ]
 # Part-2 material families (rendering cost / shader) — dispatched with MATERIAL_RULES.
 RENDERING_RULES: list[RuleFn] = [
@@ -225,6 +233,9 @@ SHADER_RULES: list[RuleFn] = [
     _shd.check_ls010,
     _shd.check_ls011,
     _shd.check_ls012,
+    _shd.check_ls013,
+    _shd.check_ls014,
+    _shd.check_ls015,
 ]
 ANIM_RULES: list[RuleFn] = [check_la001, check_la002, check_la003]
 PARTICLE_RULES: list[RuleFn] = [check_lv001, check_lv002, check_lv003]
@@ -250,6 +261,7 @@ CROSS_RULES: list[RuleFn] = [
     check_lx004_unused_material_instance,
     check_lx005_duplicate_textures,
     check_lx006_same_source_multisize,
+    check_lx007_mixed_pipeline,
     check_lt015_streaming_pool,
 ]
 

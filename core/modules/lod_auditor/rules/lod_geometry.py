@@ -1,6 +1,6 @@
 # core/modules/lod_auditor/rules/lod_geometry.py
 #
-# Mesh geometry rules: LG001 – LG015  (TDD Part 2 §14)
+# Mesh geometry rules: LG001 – LG016  (TDD Part 2 §14)
 #
 # Each rule is a pure function:
 #   check_lgXXX(asset: dict, engine="unreal", thresholds=None) -> Finding | None
@@ -555,4 +555,44 @@ def check_lg015(
         estimated_saving=Saving(),
         auto_fixable=False,
         guidance=guidance_for("LG015", engine),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LG016 — Unity-only complement to LG015.
+#
+# LG015 gates on ``used_in_levels`` to prove the mirrored mesh is actually
+# placed somewhere. Unity's mesh scanner never sends that count (it has no
+# "instance count across levels" concept), so LG015 stays permanently silent
+# on a Unity payload even when the mirrored-instance flag is real. But that
+# flag can only be computed by scanning scene instances in the first place —
+# a Unity client has no other way to know has_negative_scale_instances is
+# True — so on this engine the flag alone already proves placement.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def check_lg016(asset: dict, engine: str = "unreal") -> Finding | None:
+    """LG016: Unity mesh placed with negative (mirrored) scale instances."""
+    if engine.strip().lower() != "unity":
+        return None
+    if not asset.get("has_negative_scale_instances"):
+        return None
+    return Finding(
+        asset_path=asset["asset_path"],
+        rule_id="LG016",
+        category="Mesh",
+        severity="info",
+        message=(
+            "Mesh is placed with negative (mirrored) scale — flips triangle "
+            "winding and disables GPU Instancing / SRP Batcher against the "
+            "positive-scale copies."
+        ),
+        current={"has_negative_scale_instances": True},
+        recommended=_conf(
+            {"hint": "author a mirrored mesh variant instead of negative scale"},
+            "medium",
+        ),
+        estimated_saving=Saving(),
+        auto_fixable=False,
+        guidance=guidance_for("LG016", engine),
     )

@@ -1,6 +1,6 @@
 # core/modules/lod_auditor/rules/lod_uv.py
 #
-# UV / texel-density rules: LW001 – LW010  (TDD Part 2 §15)
+# UV / texel-density rules: LW001 – LW011  (TDD Part 2 §15)
 #
 #   check_lwXXX(asset, engine="unreal", thresholds=None) -> Finding | None
 #
@@ -429,3 +429,51 @@ def check_lw010(
             guidance=guidance_for("LW010", engine),
         )
     return None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LW011 — Unity-only complement to LW009's lightmap leg.
+#
+# LW009's lightmap leg additionally requires ``uses_static_lighting`` before it
+# trusts an outside-0-1 excursion as a real bake defect. Unity's mesh scanner
+# never sends that flag, so the leg is permanently silent there even though
+# ``outside_unit_ratio`` is real. lightmap_uv_index itself is the next best
+# signal: the client only has a reason to report a lightmap channel index at
+# all when the mesh carries a second UV set meant for baking, so treat that as
+# enough to warrant a lower-confidence, info-level heads-up rather than staying
+# silent on real data.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def check_lw011(
+    asset: dict, engine: str = "unreal", thresholds: dict | None = None
+) -> Finding | None:
+    """LW011: Unity lightmap UV channel has area outside 0-1 (no static-lit signal)."""
+    T = thresholds if thresholds is not None else THRESHOLDS
+    if engine.strip().lower() != "unity":
+        return None
+    idx = int(asset.get("lightmap_uv_index", -1))
+    if idx < 0:
+        return None
+    ch = _channel(asset, idx)
+    if ch is None:
+        return None
+    ratio = float(ch.get("outside_unit_ratio", 0.0))
+    if ratio <= T["LW011_MAX_OUTSIDE_RATIO"]:
+        return None
+    return Finding(
+        asset_path=asset["asset_path"],
+        rule_id="LW011",
+        category="Mesh",
+        severity="info",
+        message=(
+            f"Lightmap UV channel {idx} has {ratio * 100:.0f}% of UV area outside "
+            "0-1 — if this mesh contributes to baked lighting, the Progressive "
+            "Lightmapper samples garbage there."
+        ),
+        current={"channel": idx, "outside_unit_ratio": round(ratio, 3)},
+        recommended=_conf({"outside_unit_ratio": 0}, "medium"),
+        estimated_saving=Saving(),
+        auto_fixable=False,
+        guidance=guidance_for("LW011", engine),
+    )
