@@ -194,6 +194,47 @@ class TestIntentRouter:
         assert intent == "explain_finding"
         assert source == "keywords"
 
+    def test_explicit_marker_beats_the_model(self, monkeypatch):
+        """A named operation is not a topic the classifier gets to weigh in on.
+
+        The regression: with a model loaded the keyword table never runs, so
+        "nueva regla: …" reached the 1.5B, which answered summarize_module
+        (the sentence does mention naming) — and the assistant replied with
+        the previous naming scan instead of storing the rule. The user saw an
+        answer they had already been given.
+        """
+        monkeypatch.setattr(
+            "modules.assistant.intent_router._classify_by_llm",
+            lambda _message: "summarize_module",
+        )
+        intent, source = classify(
+            "nueva regla: convención de nombres, los widgets empiezan por SShint"
+        )
+        assert intent == "define_rule"
+        assert source == "explicit"
+
+    def test_explicit_marker_survives_the_module_correction(self, monkeypatch):
+        # Module aliases include bare "naming" and "lod", which land inside a
+        # rule's own subject. The explain_finding -> summarize_module
+        # correction must not fire on a message that named an operation.
+        monkeypatch.setattr(
+            "modules.assistant.intent_router._classify_by_llm",
+            lambda _message: "explain_finding",
+        )
+        intent, _ = classify("new rule: lod meshes must call Super::BeginPlay")
+        assert intent == "define_rule"
+
+    def test_module_questions_still_reach_the_model(self, monkeypatch):
+        # The new layer must be narrow: an ordinary module question carries no
+        # marker and stays on the classification path it always used.
+        monkeypatch.setattr(
+            "modules.assistant.intent_router._classify_by_llm",
+            lambda _message: "summarize_module",
+        )
+        intent, source = classify("how is the code validator doing?")
+        assert intent == "summarize_module"
+        assert source == "llm"
+
     @pytest.mark.anyio
     async def test_free_text_message_is_routed(self, async_client, monkeypatch):
         _patch_tier(monkeypatch, "studio")
@@ -444,6 +485,59 @@ class TestRuleCompiler:
         compiled = compile_rule("never use more than 4 samplers per material")
         assert compiled["tier"] == "llm_evaluated"
 
+    def test_naming_prefix_compiles_to_its_own_template(self):
+        # naming_pattern shipped with rule_templates from the start but
+        # nothing here produced it, so the commonest studio rule of all — a
+        # naming convention — could never reach its deterministic template.
+        from modules.assistant.rule_compiler import compile_rule
+
+        compiled = compile_rule("all widgets start with SShint")
+        assert compiled["tier"] == "template"
+        assert compiled["template"]["template_id"] == "naming_pattern"
+        assert compiled["template"]["params"]["pattern"] == r"SShint.*"
+
+    def test_spanish_naming_prefix_scopes_to_the_named_extension(self):
+        from modules.assistant.rule_compiler import compile_rule
+
+        compiled = compile_rule("las texturas .uasset empiezan por T_")
+        params = compiled["template"]["params"]
+        assert params["pattern"] == r"T_.*"
+        assert params["file_glob_suffix"] == ".uasset"
+
+    def test_naming_suffix_anchors_at_the_end(self):
+        from modules.assistant.rule_compiler import compile_rule
+
+        compiled = compile_rule("los materiales terminan con _Inst")
+        assert compiled["template"]["params"]["pattern"] == r".*_Inst"
+
+    def test_required_call_compiles_to_required_text(self):
+        from modules.assistant.rule_compiler import compile_rule
+
+        compiled = compile_rule(
+            "every Actor must call Super::BeginPlay in .cpp"
+        )
+        assert compiled["template"]["template_id"] == "required_text"
+        assert compiled["template"]["params"]["required"] == "Super::BeginPlay"
+        assert compiled["template"]["params"]["scope_suffixes"] == [".cpp"]
+
+    def test_a_budget_is_not_a_required_token(self):
+        from modules.assistant.rule_compiler import compile_rule
+
+        # "must have more than 3 LODs" is a budget; "more" must not be stored
+        # as the token every file has to contain.
+        compiled = compile_rule("meshes must have more than 3 LODs")
+        assert compiled["tier"] == "llm_evaluated"
+
+    def test_compiled_patterns_are_escaped_so_a_rule_cannot_break_a_scan(self):
+        import re
+
+        from modules.assistant.rule_compiler import compile_rule
+
+        compiled = compile_rule("all files start with A_")
+        # Whatever we build must be a valid regex — rule_templates swallows
+        # re.error, so an unescaped pattern would silently match nothing.
+        re.compile(compiled["template"]["params"]["pattern"])
+
 
 class TestTemplateEvaluation:
     def test_forbidden_api_flags_with_line_numbers(self):
@@ -517,6 +611,31 @@ class TestRuleLifecycle:
         assert result["rule_status"] == "draft"
         # A draft is invisible to scans until activated + confirmed.
         assert await rule_store.active_rules("rs1", "rp1", "unreal") == []
+
+    @pytest.mark.anyio
+    async def test_two_different_rules_get_two_different_replies(self):
+        """The reply must show WHICH rule was understood.
+
+        The Tier B branch used to be a constant string, so every rule that
+        missed a template produced a byte-identical answer: defining a second
+        rule was indistinguishable from the assistant repeating itself.
+        Nothing caught it because these tests only ever asserted on tier and
+        status, never on the text the user actually reads.
+        """
+        from modules.assistant.actions import define_rule
+
+        first = await define_rule.run(
+            {"message": "cinematics should be reviewed for pacing",
+             "studio_id": "rs3", "project_id": "rp3", "engine": "unreal"}
+        )
+        second = await define_rule.run(
+            {"message": "audio cues need a designer sign-off",
+             "studio_id": "rs3", "project_id": "rp3", "engine": "unreal"}
+        )
+        assert first["rule_tier"] == second["rule_tier"] == "llm_evaluated"
+        assert first["reply"] != second["reply"]
+        assert "cinematics" in first["reply"]
+        assert "audio cues" in second["reply"]
 
     @pytest.mark.anyio
     async def test_activated_rule_runs_in_the_project_scan(
@@ -962,6 +1081,19 @@ class TestModuleResolution:
 
         assert is_continuation("y por que?") is True
         assert is_continuation("y el code validator?") is False
+
+    def test_naming_an_operation_is_not_a_continuation(self):
+        """"y recuerda que…" states something new; it does not follow on.
+
+        Continuation runs BEFORE classification and inherits the previous
+        turn's intent wholesale, so a rule phrased as a follow-up was
+        answered as whatever the last turn was — the same "it repeated its
+        previous answer" symptom, reached by a different route.
+        """
+        from modules.assistant.conversation_context import is_continuation
+
+        assert is_continuation("y recuerda que usamos PascalCase") is False
+        assert is_continuation("y nueva regla: prefijo T_") is False
 
     def test_fix_logs_are_not_scan_results(self):
         """code_validator_fixes records an Auto-Fix run, not findings.

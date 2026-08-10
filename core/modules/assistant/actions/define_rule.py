@@ -21,7 +21,15 @@ _EMPTY = (
 )
 
 
-def _describe(compiled: dict[str, Any]) -> str:
+def _describe(compiled: dict[str, Any], statement: str, engine: str) -> str:
+    """Say back how the rule was understood — never a fixed sentence.
+
+    The Tier B branch used to be a constant: every rule that missed a
+    template produced a byte-identical reply, so defining a second rule
+    looked exactly like the assistant repeating its answer to the first one.
+    Quoting the statement is what makes "it understood THIS rule" visible,
+    the same way remember_fact quotes the fact it stored.
+    """
     if compiled["tier"] == "template":
         template = compiled["template"]
         label = TEMPLATES[template["template_id"]]["label"]
@@ -33,10 +41,14 @@ def _describe(compiled: dict[str, Any]) -> str:
             f"I understood it as a deterministic '{label}' rule "
             f"({rendered}). It will run on every scan at zero cost."
         )
+
+    scope = "Unreal and Unity" if engine == "both" else engine.capitalize()
+    quoted = statement if len(statement) <= 160 else statement[:159].rstrip() + "…"
     return (
-        "I couldn't map it to a deterministic template, so it will be "
-        "evaluated by the local model against relevant files (cached — an "
-        "unchanged file is never re-checked)."
+        f'I stored it as written — "{quoted}" — scoped to {scope}. It '
+        "didn't match a deterministic template, so the local model evaluates "
+        "it against relevant files (cached — an unchanged file is never "
+        "re-checked)."
     )
 
 
@@ -65,7 +77,7 @@ async def run(payload: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "reply": (
-            f"Draft rule created. {_describe(compiled)} "
+            f"Draft rule created. {_describe(compiled, message, engine)} "
             "Confirm it in the Rules panel and it starts enforcing on the "
             "next scan."
         ),

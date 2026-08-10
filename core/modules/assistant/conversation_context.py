@@ -80,6 +80,15 @@ def is_continuation(message: str) -> bool:
         return False
     if _NAMES_TARGET.search(text):
         return False
+    # Naming an OPERATION outright is not a follow-up either, however short
+    # the message. "y recuerda que usamos PascalCase" opens with "y" and fits
+    # in the word budget, so it inherited the previous turn's intent and the
+    # assistant answered the previous question again instead of storing the
+    # rule. The user named what they wanted done; there is nothing to inherit.
+    from .intent_router import classify_explicit
+
+    if classify_explicit(text) is not None:
+        return False
     # Naming a MODULE is naming a target too, and the regex above cannot see
     # it — module names are ordinary words. "y el code validator?" is four
     # words opening with "y", so it read as a follow-up and inherited the

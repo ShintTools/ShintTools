@@ -57,6 +57,12 @@ pairs:
   - {message: "I want to forbid raw new in gameplay code", intent: define_rule}
   - {message: "convention: all SWidget classes start with SShint", intent: define_rule}
   - {message: "prohibir el uso de FindObject fuera de BeginPlay", intent: define_rule}
+  # Rules whose own subject is a module's vocabulary ("naming", "lod",
+  # "validador"). These used to be reclassified as a request for that
+  # module's scan results, so defining one replayed the previous scan.
+  - {message: "nueva regla: convención de nombres, los widgets empiezan por SShint", intent: define_rule}
+  - {message: "new rule: lod meshes must call Super::BeginPlay", intent: define_rule}
+  - {message: "nueva regla de naming: las texturas empiezan por T_", intent: define_rule}
 
   # ── remember_fact ───────────────────────────────────────────────
   - {message: "remember that we use Nanite on all characters", intent: remember_fact}

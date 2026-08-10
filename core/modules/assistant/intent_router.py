@@ -2,15 +2,17 @@
 #
 # Closed-menu intent classification — the assistant's only "decision" step.
 #
-# Three layers, in order of preference:
+# Four layers, in order of preference:
 #
 #   1. The UI declared the intent (an Explain button knows what it is).
 #      The router is never consulted; this file isn't even imported.
-#   2. LLM classification, grammar-constrained (GBNF). The model cannot
+#   2. Explicit performative markers ("new rule:", "recuerda que"). The user
+#      named the OPERATION, not the topic — there is nothing left to infer.
+#   3. LLM classification, grammar-constrained (GBNF). The model cannot
 #      emit anything outside the intent enum — the failure mode that killed
 #      the old tool-calling agent ("ask for JSON and hope") is structurally
 #      impossible, because off-menu tokens are never candidates.
-#   3. Deterministic keyword routing. The only layer on the free image
+#   4. Deterministic keyword routing. The only layer on the free image
 #      (no modules/agent there) and the fallback when the model isn't
 #      loaded. Deliberately conservative: unmatched -> general_help.
 #
@@ -124,6 +126,39 @@ def _classify_by_llm(message: str) -> str | None:
     return intent if intent in ALL_INTENTS else None
 
 
+# ── Layer 0: the user named the operation ────────────────────────────────────
+#
+# Performatives, not topic vocabulary: "new rule:" IS the request to create a
+# rule, the way "Explain" on a row IS explain_finding. Nothing about the rest
+# of the sentence can change that, so nothing about it gets a vote.
+#
+# This layer exists because the keyword table below — the only place that ever
+# knew these phrases — runs ONLY when the LLM cannot serve. With a model
+# loaded it never ran, so "nueva regla: convención de nombres para los
+# widgets" went to the 1.5B, came back summarize_module (the sentence does
+# mention naming), and the assistant answered with the previous naming scan.
+# From the user's side the assistant had ignored the rule and replayed an old
+# answer — which is exactly what it had done.
+#
+# Kept deliberately short. Every entry must be a phrase whose ONLY reading is
+# "perform this operation"; topic words like "lod" or "naming" are precisely
+# what must not be in here.
+_EXPLICIT_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("define_rule", ("new rule", "nueva regla", "add a rule",
+                     "crea una regla", "define una regla", "convention:")),
+    ("remember_fact", ("remember that", "recuerda que", "apunta que")),
+)
+
+
+def classify_explicit(message: str) -> str | None:
+    """The intent the user named outright, or None to keep classifying."""
+    lowered = (message or "").lower()
+    for intent, markers in _EXPLICIT_MARKERS:
+        if any(m in lowered for m in markers):
+            return intent
+    return None
+
+
 _RULE_ID_RE = re.compile(r"\b[A-Z]{2,4}\d{3}\b")
 
 
@@ -132,9 +167,17 @@ def _names_a_module_only(message: str) -> bool:
 
     Naming a module and no rule id is a question about that module's results:
     "how is the code validator doing?", "share the code validator results".
+
+    A message that names an operation outright is never "about a module",
+    however many module words it happens to contain — a rule is usually
+    ABOUT naming or LODs, so the aliases fire on the rule's own subject.
+    Layer 0 already returned by the time this runs; the guard states the
+    precedence so a future reordering cannot quietly resurrect the bug.
     """
     from .module_registry import ALIASES
 
+    if classify_explicit(message) is not None:
+        return False
     if _RULE_ID_RE.search(message or ""):
         return False   # names a specific rule — that is a finding question
     lowered = (message or "").lower()
@@ -144,9 +187,14 @@ def _names_a_module_only(message: str) -> bool:
 def classify(message: str) -> tuple[str, str]:
     """Classify *message*; returns (intent, source).
 
-    source: "llm" | "keywords" | "llm+module" — surfaced in logs so the M4
-    golden-set harness can measure each layer separately.
+    source: "explicit" | "llm" | "keywords" | "llm+module" — surfaced in logs
+    so the M4 golden-set harness can measure each layer separately.
     """
+    explicit = classify_explicit(message)
+    if explicit is not None:
+        logger.info("router: intent=%s source=explicit", explicit)
+        return explicit, "explicit"
+
     intent = _classify_by_llm(message)
     if intent is not None:
         # Deterministic correction over the model's answer.
