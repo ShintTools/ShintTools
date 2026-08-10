@@ -148,10 +148,38 @@ def _classify_by_llm(message: str) -> str | None:
 # Kept deliberately short. Every entry must be a phrase whose ONLY reading is
 # "perform this operation"; topic words like "lod" or "naming" are precisely
 # what must not be in here.
+#
+# Ordering mirrors _KEYWORD_ROUTES for the same reason it does there:
+# recall_fact before remember_fact, because the question forms ("qué
+# decidimos") contain the statement needle ("decidimos") and must win.
 _EXPLICIT_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("define_rule", ("new rule", "nueva regla", "add a rule",
                      "crea una regla", "define una regla", "convention:")),
-    ("remember_fact", ("remember that", "recuerda que", "apunta que")),
+    ("recall_fact", ("what did we decide", "que decidimos", "qué decidimos",
+                     "do you remember", "te acuerdas", "recuerdas")),
+    ("remember_fact", ("remember that", "recuerda que", "apunta que",
+                       "we decided", "hemos decidido", "decidimos")),
+)
+
+_RULE_ID_RE = re.compile(r"\b[A-Z]{2,4}\d{3}\b")
+
+# "Put this on record" — a statement the user wants kept, phrased as a
+# request to confirm it.
+#
+# Split from _EXPLICIT_MARKERS because these are performatives ONLY when the
+# sentence names no finding: "confirm that we use Nanite" is a studio
+# decision being stated, while "confirm that LT003 is right" asks about a
+# finding. A rule id in the message is exactly what separates the two, so
+# these markers stand down when one is present and let the model decide.
+#
+# Without them, "Confirm that we use nanite" reached the 1.5B, came back
+# explain_finding, and the user — who was stating a fact for the assistant
+# to remember — was asked which finding they meant, with no scan on screen.
+_RECORD_MARKERS: tuple[str, ...] = (
+    "confirm that", "confirm we", "please confirm", "confirm this fact",
+    "for the record", "make a note that", "note that we",
+    "confirma que", "confírmame que", "confirmame que", "confirmo que",
+    "que conste que", "para que conste", "ten en cuenta que",
 )
 
 
@@ -161,10 +189,10 @@ def classify_explicit(message: str) -> str | None:
     for intent, markers in _EXPLICIT_MARKERS:
         if any(m in lowered for m in markers):
             return intent
+    if not _RULE_ID_RE.search(message or ""):
+        if any(m in lowered for m in _RECORD_MARKERS):
+            return "remember_fact"
     return None
-
-
-_RULE_ID_RE = re.compile(r"\b[A-Z]{2,4}\d{3}\b")
 
 
 def _names_a_module_only(message: str) -> bool:

@@ -20,6 +20,7 @@ from modules.assistant.intent_router import (
     INTENT_GRAMMAR,
     classify,
     classify_by_keywords,
+    classify_explicit,
 )
 from modules.assistant.tiers import (
     ALL_INTENTS,
@@ -469,6 +470,111 @@ class TestMemory:
         # Nothing paraphrased — the user's own words are the value.
         assert classify_fact_type("hemos decidido usar Lumen") == "decision"
         assert classify_fact_type("preferimos BC7 para albedo") == "preference"
+
+
+# ── Stating a fact for the record ─────────────────────────────────────────────
+#
+# Reported: "Confirm that we use nanite" answered "I need to know which
+# finding you mean", with no scan on screen at all.
+#
+# The user was stating a studio fact. Layer 0 knew only "remember that /
+# recuerda que / apunta que", so the message went to the 1.5B, which chose
+# explain_finding — a plausible reading of the words, and an intent that
+# could not be served, because nothing in the request named a finding.
+#
+# The model is not the thing to fix here. A sentence that names the
+# operation is decidable in Python, and this is the layer that decides it.
+
+
+class TestStatingAFactForTheRecord:
+    def test_confirm_that_is_a_statement_not_a_finding_question(self):
+        for message in (
+            "Confirm that we use nanite",
+            "confirma que usamos Nanite en todos los personajes",
+            "confirmo que usamos Lumen",
+            "please confirm we ship at 60 fps",
+            "for the record, all UI textures are BC7",
+            "ten en cuenta que Switch va sin Lumen",
+        ):
+            assert classify_explicit(message) == "remember_fact", message
+
+    def test_a_rule_id_makes_confirm_a_question_again(self):
+        """"confirm that LT003 is right" asks about a finding.
+
+        The record markers are performatives only while the sentence names
+        no finding — otherwise "confirm that X" would store a question as a
+        studio decision. The rule id is the whole difference, so with one
+        present layer 0 stands down and lets the later layers weigh it.
+        """
+        assert classify_explicit("confirm that LT003 is right") is None
+        assert classify_explicit("confirma que CB004 es un error") is None
+
+    def test_layer_zero_covers_what_the_keyword_table_covers(self):
+        """The two layers must agree on performatives.
+
+        The keyword table only runs when the LLM cannot serve, so a phrase
+        it treats as decisive while layer 0 does not is a phrase that is
+        routed deterministically on the free image and handed to a 1.5B on
+        the paid one — the exact asymmetry that sent "hemos decidido…" to
+        the model.
+        """
+        for message in (
+            "we decided to ship without Lumen",
+            "hemos decidido usar Nanite",
+            "decidimos bajar las sombras",
+        ):
+            assert classify_explicit(message) == "remember_fact", message
+
+    def test_recall_still_wins_over_remember(self):
+        # "qué decidimos" contains "decidimos"; asking must not store.
+        for message in (
+            "¿qué decidimos sobre los lightmaps?",
+            "what did we decide about Nanite?",
+            "¿te acuerdas de la convención de nombres?",
+        ):
+            assert classify_explicit(message) == "recall_fact", message
+
+    def test_the_stored_fact_drops_the_request_wording(self):
+        """What gets stored is the fact, not the sentence asking for it.
+
+        A fact is quoted back verbatim on confirmation and compared against
+        later scans, so "Confirm that we use nanite" stored whole would read
+        back as an instruction and carry "confirm that" into every match.
+        """
+        from modules.assistant.fact_extractor import extract_statement
+
+        assert extract_statement(
+            "Confirm that we use nanite"
+        ) == "we use nanite"
+        assert extract_statement(
+            "confirma que usamos Nanite en personajes"
+        ) == "usamos Nanite en personajes"
+        assert extract_statement(
+            "for the record, all UI textures are BC7"
+        ) == "all UI textures are BC7"
+
+    def test_a_preamble_must_end_on_a_word_boundary(self):
+        """Prefix matching ate the first word of the fact.
+
+        "confirm" is a prefix of "confirmo", and "remember" of
+        "remembering" — plain startswith left "o que usamos Lumen" and
+        "ing the old naming…" as the stored value.
+        """
+        from modules.assistant.fact_extractor import extract_statement
+
+        assert extract_statement("confirmo que usamos Lumen") == "usamos Lumen"
+        assert extract_statement(
+            "remembering the old naming was worse"
+        ) == "remembering the old naming was worse"
+
+    def test_ordinary_questions_are_left_to_the_router(self):
+        for message in (
+            "how bad is the code validator?",
+            "buenos días",
+            "explica este warning",
+            "",
+        ):
+            assert classify_explicit(message) is None, message
 
 
 # ── Confirming a proposal in the conversation ─────────────────────────────────
