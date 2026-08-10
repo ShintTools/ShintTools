@@ -6,6 +6,11 @@
 # fact is pending their confirmation, and the payload carries the fact_id
 # so the UI can render the confirm/reject card in the thread. Muted
 # projects (NDA silent mode) refuse politely instead of remembering.
+#
+# The reply used to point at "the card in this thread" — a card that could
+# not exist, because the route dropped everything but "reply" and the
+# fact_id never left the Core. It now names the route that always works:
+# answering "yes" in the next turn (actions/confirm_pending).
 
 from __future__ import annotations
 
@@ -48,9 +53,11 @@ async def run(payload: dict[str, Any]) -> dict[str, Any]:
     )
     return {
         "reply": (
-            f'Noted: "{statement}". I\'ll only use this once you confirm '
-            "it — check the card in this thread or the Memory panel."
+            f'Noted: "{statement}". I won\'t use it until you confirm — '
+            'reply "yes" and I\'ll store it, or manage it from the Memory '
+            "panel."
         ),
         "fact_id": fact["fact_id"],
         "fact_status": "proposed",
+        "proposed_subject": statement,
     }

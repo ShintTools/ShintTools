@@ -23,6 +23,8 @@ from modules.assistant.intent_router import (
 )
 from modules.assistant.tiers import (
     ALL_INTENTS,
+    NON_ROUTABLE_INTENTS,
+    ROUTABLE_INTENTS,
     allowed_intents_for,
     assistant_capabilities,
 )
@@ -161,13 +163,32 @@ class TestMessageEndpoint:
 
 
 class TestIntentRouter:
-    def test_grammar_covers_the_whole_menu_and_nothing_else(self):
-        # The grammar is rebuilt from ALL_INTENTS at import — it must name
-        # every intent exactly once and contain no other terminal.
-        for intent in ALL_INTENTS:
+    def test_grammar_covers_the_routable_menu_and_nothing_else(self):
+        # The grammar is rebuilt from ROUTABLE_INTENTS at import — it must
+        # name every routable intent exactly once and contain no other
+        # terminal.
+        for intent in ROUTABLE_INTENTS:
             assert f'"{intent}"' in INTENT_GRAMMAR
         terminals = INTENT_GRAMMAR.split("::=")[1].count('"') // 2
-        assert terminals == len(ALL_INTENTS)
+        assert terminals == len(ROUTABLE_INTENTS)
+
+    def test_the_model_can_never_emit_confirm_pending(self):
+        """A committing intent must not be reachable by classification.
+
+        confirm_pending flips a proposed fact to confirmed / a draft rule to
+        active. It is only correct when the previous turn actually left a
+        proposal open — a fact about the thread, established in Python
+        before the router runs. Give the model the token and it will
+        eventually emit it on a message that was not an affirmation, and
+        that turn would commit a stored decision nobody agreed to.
+        """
+        assert "confirm_pending" in ALL_INTENTS  # it IS a capability
+        assert "confirm_pending" in NON_ROUTABLE_INTENTS
+        assert "confirm_pending" not in ROUTABLE_INTENTS
+        assert "confirm_pending" not in INTENT_GRAMMAR
+        # …and the keyword layer must not reach it either.
+        for message in ("sí", "yes", "confirmo", "confirm it", "ok"):
+            assert classify_by_keywords(message) != "confirm_pending"
 
     def test_keyword_layer_routes_both_languages(self):
         cases = {
@@ -448,6 +469,230 @@ class TestMemory:
         # Nothing paraphrased — the user's own words are the value.
         assert classify_fact_type("hemos decidido usar Lumen") == "decision"
         assert classify_fact_type("preferimos BC7 para albedo") == "preference"
+
+
+# ── Confirming a proposal in the conversation ─────────────────────────────────
+#
+# The reported bug: "when I confirm a fact so the memory persists, it answers
+# with an already-processed summary of the last scans."
+#
+# Cause: no intent meant "yes". A bare "sí" was not a continuation (the opener
+# list had "ok" and "vale" but never "sí"), so it reached the classifier, whose
+# grammar forces one of the routable intents — and whichever came back
+# inherited the previous turn's context_ref and answered about the analysis.
+
+
+class TestAffirmationLexicon:
+    def test_bare_yes_and_no_in_both_languages(self):
+        from modules.assistant.pending import read_affirmation
+
+        for yes in ("sí", "si", "Sí.", "vale", "confirmo", "confírmalo",
+                    "yes", "  YES  ", "confirm it", "go ahead", "hazlo"):
+            assert read_affirmation(yes) == "accept", yes
+        for no in ("no", "No.", "nope", "cancela", "olvídalo", "déjalo",
+                   "discard", "never mind"):
+            assert read_affirmation(no) == "reject", no
+
+    def test_an_answer_carrying_new_content_is_not_a_bare_yes(self):
+        """"sí, pero solo para Unity" is not the proposal that was made.
+
+        Confirming it would store something the user did not agree to. It
+        must fall through to normal routing and be answered on its merits.
+        """
+        from modules.assistant.pending import read_affirmation
+
+        assert read_affirmation("sí, pero solo para Unity") is None
+        assert read_affirmation("yes but only for the mobile profile") is None
+        assert read_affirmation("no me convence el resumen del scan") is None
+        assert read_affirmation("") is None
+
+    def test_substrings_never_fire(self):
+        """"si arreglo esto" opens with "si" and is a simulate_change."""
+        from modules.assistant.pending import read_affirmation
+
+        assert read_affirmation("si arreglo esto que pasa") is None
+        assert read_affirmation("no LOD chain on this mesh") is None
+
+
+class TestPendingConfirmation:
+    @staticmethod
+    def _conv(turns):
+        return {"turns": turns}
+
+    def test_only_the_newest_assistant_turn_arms_the_question(self):
+        """A proposal from ten turns ago is not what "sí" means now."""
+        from modules.assistant.pending import pending_proposal
+
+        stale = self._conv([
+            {"role": "assistant", "proposed_fact_id": "f-old"},
+            {"role": "user", "raw_text": "otra cosa"},
+            {"role": "assistant", "raw_text": "un resumen", "intent": "x"},
+        ])
+        assert pending_proposal(stale) is None
+
+        fresh = self._conv([
+            {"role": "assistant", "proposed_fact_id": "f-old"},
+            {"role": "user", "raw_text": "recuerda que X"},
+            {"role": "assistant", "proposed_fact_id": "f-new",
+             "proposed_subject": "X"},
+        ])
+        assert pending_proposal(fresh) == {
+            "kind": "fact", "id": "f-new", "subject": "X",
+        }
+
+    @pytest.mark.anyio
+    async def test_yes_confirms_the_fact_and_quotes_it(
+        self, async_client, monkeypatch
+    ):
+        from modules.assistant import memory_store
+
+        _patch_tier(monkeypatch, "studio")
+        first = await async_client.post(
+            "/assistant/message",
+            json={
+                "message": "recuerda que usamos Nanite en todos los personajes",
+                "studio_id": "sc1", "project_id": "pc1",
+            },
+        )
+        body = first.json()
+        conv_id = body["conversation_id"]
+        assert body["intent"] == "remember_fact"
+        # The id must now leave the Core — without it no client can offer a
+        # confirm button, which is what made the promised card impossible.
+        assert body["pending_fact_id"]
+        assert await memory_store.confirmed_facts("sc1", "pc1") == []
+
+        second = await async_client.post(
+            "/assistant/message",
+            json={"message": "sí", "conversation_id": conv_id,
+                  "studio_id": "sc1", "project_id": "pc1"},
+        )
+        data = second.json()
+        assert data["intent"] == "confirm_pending"
+        # The reply must show WHAT was stored, not a fixed acknowledgement.
+        assert "Nanite" in data["reply"]["raw_text"]
+        assert len(await memory_store.confirmed_facts("sc1", "pc1")) == 1
+        # …and the question is disarmed, so a later "sí" cannot re-commit it.
+        assert not data["pending_fact_id"]
+
+    @pytest.mark.anyio
+    async def test_no_retracts_and_the_fact_stays_forgotten(
+        self, async_client, monkeypatch
+    ):
+        from modules.assistant import memory_store
+
+        _patch_tier(monkeypatch, "studio")
+        first = await async_client.post(
+            "/assistant/message",
+            json={"message": "recuerda que los props usan texturas de 1k",
+                  "studio_id": "sc2", "project_id": "pc2"},
+        )
+        conv_id = first.json()["conversation_id"]
+
+        second = await async_client.post(
+            "/assistant/message",
+            json={"message": "no", "conversation_id": conv_id,
+                  "studio_id": "sc2", "project_id": "pc2"},
+        )
+        assert second.json()["intent"] == "confirm_pending"
+        assert await memory_store.confirmed_facts("sc2", "pc2") == []
+
+    @pytest.mark.anyio
+    async def test_yes_activates_a_draft_rule(self, async_client, monkeypatch):
+        from modules.assistant import rule_store
+
+        _patch_tier(monkeypatch, "studio")
+        first = await async_client.post(
+            "/assistant/message",
+            json={"message": "nueva regla: prohibido TCHAR_TO_ANSI en headers",
+                  "studio_id": "sc3", "project_id": "pc3"},
+        )
+        body = first.json()
+        assert body["intent"] == "define_rule"
+        assert body["pending_rule_id"]
+        assert await rule_store.active_rules("sc3", "pc3") == []
+
+        second = await async_client.post(
+            "/assistant/message",
+            json={"message": "confírmalo", "conversation_id":
+                  body["conversation_id"],
+                  "studio_id": "sc3", "project_id": "pc3"},
+        )
+        assert second.json()["intent"] == "confirm_pending"
+        assert len(await rule_store.active_rules("sc3", "pc3")) == 1
+
+    @pytest.mark.anyio
+    async def test_confirming_never_answers_about_the_last_scan(
+        self, async_client, monkeypatch
+    ):
+        """The reported bug, end to end, on the production path.
+
+        A scan is in view (context_ref set — the panel always sends it) and
+        the model is loaded, which is what makes the bug visible: without a
+        model "sí" fell to the keyword table and got the help text, but in
+        production it reached the 1.5B, came back summarize_module, and
+        inherited the context_ref to answer about the analysis.
+
+        The classifier is pinned to summarize_module here to reproduce that
+        exactly. The shortcut must win before it is ever consulted — if this
+        test ever sees summarize_module again, the ordering in _plan_turn
+        has regressed.
+        """
+        _patch_tier(monkeypatch, "studio")
+        monkeypatch.setattr(
+            "modules.assistant.intent_router._classify_by_llm",
+            lambda _message: "summarize_module",
+        )
+        first = await async_client.post(
+            "/assistant/message",
+            json={"message": "recuerda que Lumen va desactivado en Switch",
+                  "context_ref": "an-42", "module_context": "code_validator",
+                  "studio_id": "sc4", "project_id": "pc4"},
+        )
+        conv_id = first.json()["conversation_id"]
+
+        second = await async_client.post(
+            "/assistant/message",
+            json={"message": "sí", "conversation_id": conv_id,
+                  "context_ref": "an-42", "module_context": "code_validator",
+                  "studio_id": "sc4", "project_id": "pc4"},
+        )
+        data = second.json()
+        assert data["intent"] == "confirm_pending"
+        assert data["intent"] != "summarize_module"
+        reply = data["reply"]["raw_text"].lower()
+        assert "lumen" in reply
+        for scan_word in ("finding", "hallazgo", "scan has", "severity"):
+            assert scan_word not in reply
+
+    @pytest.mark.anyio
+    async def test_yes_with_nothing_pending_routes_normally(
+        self, async_client, monkeypatch
+    ):
+        _patch_tier(monkeypatch, "studio")
+        resp = await async_client.post(
+            "/assistant/message", json={"message": "sí"}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["intent"] != "confirm_pending"
+
+    @pytest.mark.anyio
+    async def test_the_proposal_survives_reopening_the_thread(
+        self, async_client, monkeypatch
+    ):
+        """The pending id lives on the turn, not in process state."""
+        _patch_tier(monkeypatch, "studio")
+        first = await async_client.post(
+            "/assistant/message",
+            json={"message": "recuerda que el equipo usa PascalCase",
+                  "studio_id": "sc5", "project_id": "pc5"},
+        )
+        conv_id = first.json()["conversation_id"]
+
+        history = await async_client.get(f"/assistant/conversations/{conv_id}")
+        turns = history.json()["turns"]
+        assert turns[-1]["proposed_fact_id"]
+        assert turns[-1]["proposed_subject"] == "el equipo usa PascalCase"
 
 
 # ── M3: studio rules ──────────────────────────────────────────────────────────
@@ -796,9 +1041,13 @@ class TestGoldenSet:
         for pair in pairs:
             assert pair["intent"] in ALL_INTENTS, pair
 
-    def test_every_intent_has_golden_coverage(self):
+    def test_every_routable_intent_has_golden_coverage(self):
+        # ROUTABLE_INTENTS, not ALL_INTENTS: the golden set measures the
+        # ROUTER, and confirm_pending is deliberately unreachable from it —
+        # a golden pair for it would assert exactly the behaviour that must
+        # never happen. Its own coverage is TestPendingConfirmation.
         covered = {pair["intent"] for pair in self._pairs()}
-        assert covered == set(ALL_INTENTS)
+        assert covered == set(ROUTABLE_INTENTS)
 
     def test_module_directed_questions_route_and_resolve(self):
         """Entries carrying a `module` must reach the right module.

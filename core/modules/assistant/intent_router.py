@@ -25,14 +25,19 @@ from __future__ import annotations
 import logging
 import re
 
-from .tiers import ALL_INTENTS
+from .tiers import ROUTABLE_INTENTS
 
 logger = logging.getLogger("shinttools.assistant.router")
 
-# GBNF over the exact intent enum. Rebuilt from ALL_INTENTS at import time
-# so the grammar cannot drift from the capability table.
+# GBNF over the exact intent enum. Rebuilt from ROUTABLE_INTENTS at import
+# time so the grammar cannot drift from the capability table.
+#
+# ROUTABLE_INTENTS, not ALL_INTENTS: confirm_pending is reachable only once
+# Python has established that the previous turn left a proposal open. A
+# token the model can emit is a token the model will eventually emit on the
+# wrong message, and that one would commit a stored decision.
 INTENT_GRAMMAR: str = "root ::= " + " | ".join(
-    f'"{intent}"' for intent in sorted(ALL_INTENTS)
+    f'"{intent}"' for intent in sorted(ROUTABLE_INTENTS)
 )
 
 _ROUTER_PROMPT = """You are an intent classifier for a game-development \
@@ -123,7 +128,7 @@ def _classify_by_llm(message: str) -> str | None:
         return None
 
     intent = raw.strip()
-    return intent if intent in ALL_INTENTS else None
+    return intent if intent in ROUTABLE_INTENTS else None
 
 
 # ── Layer 0: the user named the operation ────────────────────────────────────

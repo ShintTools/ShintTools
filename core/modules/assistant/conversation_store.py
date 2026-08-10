@@ -132,6 +132,9 @@ async def append_turn(
     context_ref: str = "",
     rule_id: str = "",
     asset_path: str = "",
+    proposed_fact_id: str = "",
+    proposed_rule_id: str = "",
+    proposed_subject: str = "",
 ) -> dict[str, Any] | None:
     """Append a turn; returns the turn dict, or None if the conversation
     doesn't exist (expired or never created).
@@ -141,6 +144,13 @@ async def append_turn(
     (conversation_context.last_grounding). Without them the analysis is
     recoverable but the row within it is not, and "and why does that
     matter?" would re-answer about the wrong finding.
+
+    ``proposed_*`` record what an assistant turn left awaiting a yes or no,
+    so the next turn can resolve "sí" against it (pending.pending_proposal).
+    Deliberately NOT reusing ``rule_id``: that field is the selector the
+    request came in with — which finding the user is looking at — and a
+    draft rule's id is a different thing entirely. Overloading it would make
+    a rule proposal look like a finding selector to every follow-up.
     """
     turn = {
         "turn_id": f"at-{uuid.uuid4().hex[:12]}",
@@ -150,6 +160,9 @@ async def append_turn(
         "context_ref": context_ref,
         "rule_id": rule_id,
         "asset_path": asset_path,
+        "proposed_fact_id": proposed_fact_id,
+        "proposed_rule_id": proposed_rule_id,
+        "proposed_subject": proposed_subject,
         "created_at": _now(),
     }
 

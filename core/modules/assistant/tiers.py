@@ -12,9 +12,9 @@ from __future__ import annotations
 
 from typing import Any
 
-# The closed intent menu. This is the whole universe of things the router
-# may classify a message into — adding an intent means adding an action
-# module under actions/ AND a row here, never teaching the model new verbs.
+# The closed intent menu — the whole universe of things the assistant can
+# do. Adding an intent means adding an action module under actions/ AND a
+# row here, never teaching the model new verbs.
 ALL_INTENTS: frozenset[str] = frozenset(
     {
         "explain_finding",
@@ -25,8 +25,20 @@ ALL_INTENTS: frozenset[str] = frozenset(
         "remember_fact",
         "recall_fact",
         "general_help",
+        "confirm_pending",
     }
 )
+
+# What the ROUTER may classify free text into — a strict subset. The two
+# were the same set until confirm_pending arrived, and it must not be in
+# here: "yes" only means "confirm" when the previous turn actually proposed
+# something, which is a fact about the thread that Python establishes before
+# the router is ever consulted (see api/routes/assistant._plan_turn). Give
+# the model the token and it can answer "there's nothing pending" to an
+# ordinary question, or worse, commit a proposal on a message that was not
+# an affirmation at all.
+NON_ROUTABLE_INTENTS: frozenset[str] = frozenset({"confirm_pending"})
+ROUTABLE_INTENTS: frozenset[str] = ALL_INTENTS - NON_ROUTABLE_INTENTS
 
 _FREE_INTENTS = frozenset({"explain_finding", "general_help"})
 _INDIE_INTENTS = _FREE_INTENTS | frozenset({"why_rule", "summarize_module"})

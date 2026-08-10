@@ -102,6 +102,15 @@ class AssistantMessageResponse(BaseModel):
     # the user wonder why a two-word question was understood.
     continued: bool = False
     reply: AssistantTurn = Field(default_factory=AssistantTurn)
+    # What this turn left awaiting a yes or no, if anything. Empty on every
+    # other turn. The reply text asks for confirmation, so a client needs
+    # the id to offer it as a button — without these the only confirmation
+    # route was the Memory/Rules panel, and the assistant's own suggestion
+    # to confirm "here" was unactionable.
+    pending_fact_id: str = ""
+    pending_rule_id: str = ""
+    # The stored text, so a card can show WHAT is being confirmed.
+    pending_subject: str = ""
 
 
 # ── Deterministic M0 dispatch ─────────────────────────────────────────────────
@@ -150,9 +159,13 @@ def _resolve_intent(
 
 
 async def _dispatch(
-    intent: str, payload: AssistantMessageRequest, history: str = ""
-) -> str:
-    """Run the deterministic action for *intent* and return the reply text.
+    intent: str,
+    payload: AssistantMessageRequest,
+    history: str = "",
+    pending: dict | None = None,
+    answer: str = "",
+) -> dict:
+    """Run the deterministic action for *intent*; returns its whole result.
 
     Intents without a shipped action acknowledge honestly instead of
     pretending — actions land one per milestone under
@@ -161,12 +174,19 @@ async def _dispatch(
     ``history`` is the rendered thread so far. Actions that narrate use it
     so a follow-up reads as a continuation; actions that answer from a
     table ignore it.
+
+    Returns the action's dict rather than just its "reply". The proposing
+    actions put the id of what they created in there (fact_id, rule_id) and
+    it used to be dropped on this line — so the fact the reply told the user
+    to confirm was unreachable: the response model had nowhere to carry it
+    and the turn recorded nothing about it. Both the confirm card in the
+    client and "sí" in the next turn need that id to exist outside the Core.
     """
     from modules.assistant.actions import ACTIONS
 
     action = ACTIONS.get(intent)
     if action is not None:
-        result = await action(
+        return await action(
             {
                 "message": payload.message,
                 "history": history,
@@ -182,13 +202,14 @@ async def _dispatch(
                 "report_id": payload.report_id,
                 "selected_item_ids": payload.selected_item_ids,
                 "platform_profile": payload.platform_profile,
+                "pending": pending or {},
+                "answer": answer,
             }
         )
-        return result["reply"]
 
     if intent == "general_help":
-        return _HELP_TEXT
-    return _NOT_READY_TEXT
+        return {"reply": _HELP_TEXT}
+    return {"reply": _NOT_READY_TEXT}
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -210,6 +231,9 @@ class _TurnPlan:
     conversation_id: str
     history: str
     payload: AssistantMessageRequest
+    # Set only when this turn answers a proposal the previous one left open.
+    pending: dict | None = None
+    answer: str = ""
 
 
 async def _plan_turn(payload: AssistantMessageRequest) -> _TurnPlan:
@@ -230,10 +254,33 @@ async def _plan_turn(payload: AssistantMessageRequest) -> _TurnPlan:
                 detail={"error": "Conversation not found or expired."},
             )
 
+    # A yes-or-no answering the proposal the previous turn left open is
+    # resolved here, BEFORE the router — the previous turn asked a closed
+    # question and this message answers it, so there is nothing to classify.
+    #
+    # This is the fix for "I confirm a fact and get a summary of my last
+    # scan": "sí" is not a continuation (its opener list never had it), so
+    # it reached classify(), where the GBNF grammar forces one of the
+    # routable intents — and whichever came back inherited the previous
+    # turn's context_ref and answered about the analysis instead.
+    from modules.assistant import pending as pending_mod
+
+    proposal = pending_mod.pending_proposal(existing)
+    answer = pending_mod.read_affirmation(payload.message) if proposal else None
+
     prior = conversation_context.last_grounding(existing)
-    intent, continued = _resolve_intent(
-        payload.intent, payload.message, prior["intent"]
-    )
+    if proposal and answer:
+        intent, continued = "confirm_pending", True
+        logger.info(
+            "router: intent=confirm_pending source=pending kind=%s answer=%s",
+            proposal.get("kind"),
+            answer,
+        )
+    else:
+        proposal, answer = None, None
+        intent, continued = _resolve_intent(
+            payload.intent, payload.message, prior["intent"]
+        )
 
     if intent not in allowed_intents_for(tier):
         # Per-action gate: the endpoint always answers, the capability
@@ -281,6 +328,8 @@ async def _plan_turn(payload: AssistantMessageRequest) -> _TurnPlan:
         conversation_id=conversation_id,
         history=history,
         payload=payload,
+        pending=proposal,
+        answer=answer or "",
     )
 
 
@@ -296,9 +345,41 @@ async def _record_user_turn(plan: _TurnPlan) -> None:
     )
 
 
+def _proposal_of(result: dict) -> tuple[str, str, str]:
+    """(fact_id, rule_id, subject) this action left awaiting a yes or no.
+
+    A proposal is armed ONLY when the action declares the pending status
+    itself — "proposed" for a fact, "draft" for a rule. Reading the bare id
+    would re-arm the question every time it appears: confirm_pending echoes
+    the id it just committed, and explain_finding returns a `rule_id` that
+    is a finding's rule (CS001), nothing to confirm at all.
+    """
+    fact_id = (
+        str(result.get("fact_id") or "")
+        if result.get("fact_status") == "proposed"
+        else ""
+    )
+    rule_id = (
+        str(result.get("rule_id") or "")
+        if result.get("rule_status") == "draft"
+        else ""
+    )
+    subject = str(result.get("proposed_subject") or "")
+    return fact_id, rule_id, subject
+
+
 async def _record_assistant_turn(
-    plan: _TurnPlan, reply_text: str
+    plan: _TurnPlan, reply_text: str, result: dict | None = None
 ) -> dict | None:
+    """Record the assistant's turn, carrying any proposal it just made.
+
+    ``result`` is the action's full dict. When it created something awaiting
+    confirmation, its id lands on the turn — that is what lets the NEXT turn
+    resolve a bare "sí" against it, and what makes the pending state survive
+    reopening the thread.
+    """
+    fact_id, rule_id, subject = _proposal_of(result or {})
+
     turn = await append_turn(
         plan.conversation_id,
         "assistant",
@@ -307,6 +388,9 @@ async def _record_assistant_turn(
         context_ref=plan.payload.context_ref,
         rule_id=plan.payload.rule_id,
         asset_path=plan.payload.asset_path,
+        proposed_fact_id=fact_id,
+        proposed_rule_id=rule_id,
+        proposed_subject=subject,
     )
     # Fold old turns into a summary once the thread grows long. Best-effort;
     # no-op below the threshold or when the tier's memory doesn't persist.
@@ -331,9 +415,12 @@ async def assistant_message(
     plan = await _plan_turn(payload)
     await _record_user_turn(plan)
 
-    reply_text = await _dispatch(plan.intent, plan.payload, plan.history)
+    result = await _dispatch(
+        plan.intent, plan.payload, plan.history, plan.pending, plan.answer
+    )
+    reply_text = str(result.get("reply") or "")
 
-    turn = await _record_assistant_turn(plan, reply_text)
+    turn = await _record_assistant_turn(plan, reply_text, result)
     if turn is None:  # conversation evaporated between the two writes
         raise HTTPException(
             status_code=404,
@@ -347,12 +434,16 @@ async def assistant_message(
         plan.conversation_id,
         plan.continued,
     )
+    fact_id, rule_id, subject = _proposal_of(result)
     return AssistantMessageResponse(
         conversation_id=plan.conversation_id,
         tier=plan.tier,
         intent=plan.intent,
         continued=plan.continued,
         reply=AssistantTurn(**turn),
+        pending_fact_id=fact_id,
+        pending_rule_id=rule_id,
+        pending_subject=subject,
     )
 
 
@@ -429,14 +520,22 @@ async def _message_stream_events(
                 parts = [fallback]
                 yield _sse({"chunk": fallback})
                 yield _sse({"error": f"{type(exc).__name__}: {exc}"})
-    else:
-        text = await _dispatch(plan.intent, plan.payload, plan.history)
+
+    # Every other intent answers from a table in microseconds — one chunk,
+    # and its full result kept so the done event can carry any proposal.
+    result: dict = {}
+    if plan.intent != "explain_finding":
+        result = await _dispatch(
+            plan.intent, plan.payload, plan.history, plan.pending, plan.answer
+        )
+        text = str(result.get("reply") or "")
         parts.append(text)
         yield _sse({"chunk": text})
 
     full_text = "".join(parts).strip()
-    turn = await _record_assistant_turn(plan, full_text)
+    turn = await _record_assistant_turn(plan, full_text, result)
 
+    fact_id, rule_id, subject = _proposal_of(result)
     yield _sse(
         {
             "done": True,
@@ -448,6 +547,9 @@ async def _message_stream_events(
             "intent": plan.intent,
             "continued": plan.continued,
             "turn_id": (turn or {}).get("turn_id", ""),
+            "pending_fact_id": fact_id,
+            "pending_rule_id": rule_id,
+            "pending_subject": subject,
         }
     )
 

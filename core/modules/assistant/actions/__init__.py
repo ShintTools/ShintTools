@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from . import (
+    confirm_pending,
     define_rule,
     explain_finding,
     recall_fact,
@@ -35,6 +36,7 @@ ACTIONS: dict[str, ActionFn] = {
     "define_rule": define_rule.run,
     "remember_fact": remember_fact.run,
     "recall_fact": recall_fact.run,
+    "confirm_pending": confirm_pending.run,
 }
 
 __all__ = ["ACTIONS"]

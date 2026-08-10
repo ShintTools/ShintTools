@@ -78,10 +78,11 @@ async def run(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "reply": (
             f"Draft rule created. {_describe(compiled, message, engine)} "
-            "Confirm it in the Rules panel and it starts enforcing on the "
-            "next scan."
+            'Reply "yes" to activate it, or confirm it in the Rules panel — '
+            "it starts enforcing on the next scan."
         ),
         "rule_id": rule["rule_id"],
         "rule_tier": compiled["tier"],
         "rule_status": "draft",
+        "proposed_subject": message[:80],
     }
