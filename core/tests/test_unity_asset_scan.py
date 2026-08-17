@@ -138,6 +138,21 @@ class TestLayer1BuiltinRules:
         assert isinstance(body["time"], float)
 
     @pytest.mark.anyio
+    async def test_response_includes_analysis_id(self, async_client):
+        """analysis_id is the assistant's context_ref — must be present so
+        a Unity "explain this finding" follow-up can resolve server-side.
+        Before this, /assets/unity/scan never persisted or returned one."""
+        payload = _scan_payload(
+            [
+                {"path": "Assets/Textures/HeroDiffuse.png", "type": "Texture2D"},
+            ]
+        )
+        resp = await async_client.post("/assets/unity/scan", json=payload)
+        body = resp.json()
+        assert body["analysis_id"]
+        assert body["analysis_id"].startswith("an-")
+
+    @pytest.mark.anyio
     async def test_gameobject_obj_flagged_as_mesh(self, async_client):
         # A .obj file sent as asset_type="GameObject" must be treated as Mesh
         # and flagged with SM_ prefix, not O_.

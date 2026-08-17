@@ -265,6 +265,38 @@ async def fix_assets(payload: AssetFixRequest):
 # ── Endpoint — Unity Asset Tool ───────────────────────────────────────────────
 
 
+async def _persist_unity_scan(findings: list[dict]) -> str:
+    """Persist a Unity asset scan and return its analysis_id.
+
+    Mirrors _persist_result in validate.py and the inline block in
+    /assets/scan just above — analysis_id doubles as the assistant's
+    context_ref, so it is generated and returned even when the insert
+    fails (then simply unresolvable, which the assistant reports
+    honestly). Before this, /assets/unity/scan never persisted a result
+    at all, so "explain this finding" could never resolve a Unity finding
+    server-side — the client had nothing to hand back as context_ref.
+
+    Findings here key the asset path as "path" (the Unity Asset Tool
+    contract), but explain_finding's lookup reads "asset_path"/"file" —
+    mirrored onto each entry so the same resolution logic works
+    regardless of which engine produced the analysis.
+    """
+    analysis_id = f"an-{uuid.uuid4().hex[:12]}"
+    try:
+        doc = {
+            "analysis_id": analysis_id,
+            "report_type": "asset_naming_unity",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "issues": [
+                {**f, "asset_path": f.get("path", "")} for f in findings
+            ],
+        }
+        await analysis_results.insert_one(doc)
+    except Exception:
+        pass
+    return analysis_id
+
+
 @router.post("/assets/unity/scan")
 async def unity_asset_scan(payload: UnityAssetScanRequest):
     """Scan Unity assets with the new Asset Tool contract (PDF spec).
@@ -287,6 +319,10 @@ async def unity_asset_scan(payload: UnityAssetScanRequest):
         genericRule — index in payload.genericRules (-1 = not a generic rule)
         namingRule  — index in payload.namingRules  (-1 = not a naming rule)
         fix         — corrected asset name (stem only, empty if unavailable)
+
+    Also returns analysis_id (top level) — the assistant's context_ref for
+    "explain this finding" follow-ups, same contract as /assets/scan and
+    every Code Validator endpoint.
     """
     from modules.naming import run_all_naming_rules
 
@@ -330,10 +366,12 @@ async def unity_asset_scan(payload: UnityAssetScanRequest):
 
     # Layers 2 and 3 are indie+ features.
     if tier == "free":
+        analysis_id = await _persist_unity_scan(all_findings)
         return {
             "error": "",
             "time": round(time.perf_counter() - t0, 4),
             "files": all_findings,
+            "analysis_id": analysis_id,
         }
 
     # ── Layer 2: user naming rules — deterministic prefix/suffix ─────────
@@ -397,8 +435,10 @@ async def unity_asset_scan(payload: UnityAssetScanRequest):
             )
     logger.info("/assets/unity/scan: layer3=%d findings", layer3_count)
 
+    analysis_id = await _persist_unity_scan(all_findings)
     return {
         "error": "",
         "time": round(time.perf_counter() - t0, 4),
         "files": all_findings,
+        "analysis_id": analysis_id,
     }
