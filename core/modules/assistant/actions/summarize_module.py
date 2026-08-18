@@ -29,7 +29,14 @@ from collections import Counter
 from typing import Any
 
 from ..module_registry import ModuleInfo, rule_count
-from ..module_resolver import latest_analysis, resolve_analysis, resolve_module
+from ..module_resolver import (
+    analysis_age_hours,
+    describe_age,
+    is_stale,
+    latest_analysis,
+    resolve_analysis,
+    resolve_module,
+)
 
 _NEED_MODULE = (
     "Which module? I can summarise the Code Validator, the Asset Naming Bot "
@@ -68,14 +75,27 @@ def _fingerprints(issues: list[dict[str, Any]]) -> set[tuple[str, str]]:
     }
 
 
-def _no_scan_reply(module: ModuleInfo) -> dict[str, Any]:
-    """What we know about a module with nothing stored.
+async def _no_scan_reply(module: ModuleInfo) -> dict[str, Any]:
+    """What we know about a module with nothing recent stored.
 
     The old reply was "run a scan first", which is a dead end: the user asked
     a question and got an instruction. The module's own coverage and rule
     count are real information and are available without any scan at all.
+
+    "Nothing recent" and "nothing at all" are different situations and get
+    different first sentences. A scan that exists but was dropped for age must
+    say so — telling someone no scan is stored when one is, and they can see it
+    in the panel, reads as the assistant being broken rather than careful.
     """
-    lines = [f"No {module.display} scan is stored yet."]
+    stale = await latest_analysis(module)
+    age = describe_age(analysis_age_hours(stale)) if stale else ""
+    if stale is not None and age:
+        lines = [
+            f"The most recent {module.display} scan is {age} old, so I won't "
+            f"quote its numbers as current."
+        ]
+    else:
+        lines = [f"No {module.display} scan is stored yet."]
     lines.append(f"It checks {module.covers}.")
     count = rule_count(module)
     if count:
@@ -121,15 +141,25 @@ async def run(payload: dict[str, Any]) -> dict[str, Any]:
     )
 
     if doc is None:
-        return _no_scan_reply(module) if module else {
-            "reply": _NEED_MODULE, "resolved": False,
-        }
+        if module is None:
+            return {"reply": _NEED_MODULE, "resolved": False}
+        return await _no_scan_reply(module)
 
     label = module.display if module else "That scan"
+
+    # Age goes in the FIRST sentence, not a footnote. These numbers get read
+    # aloud and pasted into chat; a reader who skims the total and stops has to
+    # have seen how old it is by then, or the qualification may as well not be
+    # there.
+    age_note = (
+        f" (from a scan {describe_age(analysis_age_hours(doc))} old)"
+        if is_stale(doc) else ""
+    )
+
     issues = _issues(doc)
     if not issues:
         return {
-            "reply": f"{label} came back clean — nothing was flagged.",
+            "reply": f"{label} came back clean{age_note} — nothing was flagged.",
             "resolved": True,
             "module": module.id if module else "",
             "total": 0,
@@ -144,7 +174,7 @@ async def run(payload: dict[str, Any]) -> dict[str, Any]:
     studio_hits = sum(1 for i in issues if i.get("source") == "studio_rule")
 
     lines = [
-        f"{label}: {len(issues)} findings — "
+        f"{label}{age_note}: {len(issues)} findings — "
         + ", ".join(f"{n} {sev}" for sev, n in severities.most_common())
         + "."
     ]

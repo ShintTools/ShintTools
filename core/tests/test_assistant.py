@@ -1369,6 +1369,119 @@ class TestSummarizeModule:
         assert "checks" in result["reply"]
 
 
+class TestSubjectWordsAreNotModuleNames:
+    """The defect behind "every prompt returns the same findings count".
+
+    Bare "naming" and "lod" were module aliases. They are also the SUBJECT of
+    most questions about naming and LODs, so a genuine question resolved the
+    module, got rewritten explain_finding -> summarize_module, and came back
+    with the last scan's totals. Three unrelated questions, one identical
+    answer — reproduced against a live Core at 2909 findings each.
+    """
+
+    def test_a_question_about_a_convention_is_not_a_module_request(self):
+        from modules.assistant.module_resolver import resolve_module
+
+        module, _ = resolve_module(
+            "what naming convention should I use for textures?"
+        )
+        # "naming convention" IS still an alias — the practice, named outright.
+        assert module is not None and module.id == "asset_naming"
+
+    def test_bare_subject_words_no_longer_resolve_a_module(self):
+        from modules.assistant.module_resolver import resolve_module
+
+        for message in (
+            "why does the naming rule NMU001 exist?",
+            "does this mesh need a lod?",
+        ):
+            module, source = resolve_module(message)
+            assert module is None, message
+            assert source == ""
+
+    def test_the_module_is_still_reachable_by_its_actual_name(self):
+        from modules.assistant.module_resolver import resolve_module
+
+        for message, expected in (
+            ("how is the asset naming bot doing?", "asset_naming"),
+            ("qué dice el naming bot?", "asset_naming"),
+            ("what did the lod auditor find?", "lod_audit"),
+            ("how are my lods?", "lod_audit"),
+        ):
+            module, _ = resolve_module(message)
+            assert module is not None and module.id == expected, message
+
+
+class TestStaleAnalysisIsNotQuotedAsCurrent:
+    """A scan nobody chose, with no age bound, answering today's question.
+
+    resolve_analysis falls back to "newest scan for this module" when the
+    client sends no context_ref — which is every turn on a client that never
+    publishes one. There was no time limit at all, so a week-old scan answered
+    in the present tense.
+    """
+
+    @staticmethod
+    def _doc(hours_old: float) -> dict:
+        from datetime import datetime, timedelta, timezone
+
+        stamp = datetime.now(timezone.utc) - timedelta(hours=hours_old)
+        return {
+            "analysis_id": "an-test",
+            "report_type": "asset_naming",
+            "timestamp": stamp.isoformat(),
+            "issues": [{"rule_id": "NM001", "severity": "warning"}],
+        }
+
+    def test_age_is_measured_and_described(self):
+        from modules.assistant import module_resolver as mr
+
+        assert mr.analysis_age_hours(self._doc(0)) == pytest.approx(0, abs=0.1)
+        assert mr.describe_age(mr.analysis_age_hours(self._doc(120))) == "5 days"
+        assert mr.describe_age(None) == ""
+
+    def test_a_fresh_scan_carries_no_age_qualifier(self):
+        from modules.assistant import module_resolver as mr
+
+        assert mr.is_stale(self._doc(1)) is False
+
+    def test_a_day_old_scan_is_flagged_stale(self):
+        from modules.assistant import module_resolver as mr
+
+        assert mr.is_stale(self._doc(30)) is True
+
+    def test_an_undatable_document_is_treated_as_ageless_not_ancient(self):
+        """Refusing to answer over a missing field would be the worse bug."""
+        from modules.assistant import module_resolver as mr
+
+        assert mr.analysis_age_hours({"analysis_id": "x"}) is None
+        assert mr.is_stale({"analysis_id": "x"}) is False
+
+    @pytest.mark.anyio
+    async def test_the_summary_states_the_age_when_it_is_not_fresh(self):
+        from modules.assistant.actions import summarize_module
+
+        stale = self._doc(24 * 5)
+
+        async def _fake_resolve(module, context_ref, source):
+            from modules.assistant import module_registry
+
+            return stale, module_registry.get("asset_naming")
+
+        import modules.assistant.actions.summarize_module as sm
+
+        original = sm.resolve_analysis
+        sm.resolve_analysis = _fake_resolve
+        try:
+            result = await summarize_module.run(
+                {"message": "how is the asset naming bot doing?"}
+            )
+        finally:
+            sm.resolve_analysis = original
+
+        assert "5 days old" in result["reply"], result["reply"]
+
+
 class TestModuleResolution:
     """The defect behind "I ask about a rule and it answers with a mesh"."""
 

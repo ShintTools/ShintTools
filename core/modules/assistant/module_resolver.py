@@ -21,10 +21,72 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from . import module_registry
 from .module_registry import ModuleInfo
+
+# How old a stored scan may be before it stops being "what the project looks
+# like" and becomes "what it looked like once".
+#
+# latest_analysis had no time bound at all, and resolve_analysis falls back to
+# it whenever the client sends no context_ref — which is every turn on a client
+# that never publishes one. The result was a week-old scan answering today's
+# question with no indication of its age: three different questions about
+# naming all came back "2909 findings", from a scan five days stale, phrased in
+# the present tense.
+#
+# Two thresholds rather than one, because "slightly old" and "useless" deserve
+# different answers. Under FRESH, say nothing — a scan from this morning is
+# simply current. Between FRESH and IGNORE, still answer from it (the numbers
+# are the best available and usually still roughly true) but say how old it is,
+# so nobody quotes them as current. Past IGNORE, refuse to ground on it at all
+# and say why: at that range the answer is not stale, it is wrong.
+_FRESH_HOURS = 24.0
+_IGNORE_AFTER_HOURS = 24.0 * 7
+
+
+def analysis_age_hours(doc: dict[str, Any] | None) -> float | None:
+    """Age of a stored analysis in hours, or None when undatable.
+
+    Documents are written with datetime.now(timezone.utc).isoformat(), so the
+    parse is total in practice; a document that predates that convention (or
+    was written by hand) returns None and is treated as ageless rather than as
+    infinitely old — refusing to answer because of a missing field would be a
+    worse failure than the one this guards against.
+    """
+    if not doc:
+        return None
+    raw = str(doc.get("timestamp") or "").strip()
+    if not raw:
+        return None
+    try:
+        stamp = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - stamp).total_seconds() / 3600.0
+
+
+def describe_age(hours: float | None) -> str:
+    """"6 days" / "3 hours" / "" — for putting an age in a sentence."""
+    if hours is None:
+        return ""
+    if hours < 1:
+        return "under an hour"
+    if hours < 48:
+        n = int(round(hours))
+        return f"{n} hour{'s' if n != 1 else ''}"
+    n = int(hours // 24)
+    return f"{n} day{'s' if n != 1 else ''}"
+
+
+def is_stale(doc: dict[str, Any] | None) -> bool:
+    """True when *doc* is old enough that its age should be stated."""
+    age = analysis_age_hours(doc)
+    return age is not None and age >= _FRESH_HOURS
 
 
 def resolve_module(
@@ -49,7 +111,7 @@ def resolve_module(
 
 
 async def latest_analysis(
-    module: ModuleInfo, skip_id: str = ""
+    module: ModuleInfo, skip_id: str = "", max_age_hours: float | None = None
 ) -> dict[str, Any] | None:
     """The most recent stored scan for *module*, or None.
 
@@ -59,6 +121,12 @@ async def latest_analysis(
 
     `skip_id` excludes an analysis by id, which is how the caller asks for the
     one BEFORE the current scan to compare against.
+
+    `max_age_hours` discards a scan older than that. Left None by default
+    because the trend comparison in summarize_module genuinely wants the
+    previous scan however old it is — "since last time" is a claim about the
+    last time, not about the last day. Only the ambient-grounding path bounds
+    it (see resolve_analysis).
     """
     if not module.report_types:
         return None
@@ -78,7 +146,15 @@ async def latest_analysis(
         docs = await cursor.to_list(length=1)
     except Exception:  # noqa: BLE001 — Mongo is best-effort everywhere here
         return None
-    return docs[0] if docs else None
+    if not docs:
+        return None
+
+    doc = docs[0]
+    if max_age_hours is not None:
+        age = analysis_age_hours(doc)
+        if age is not None and age > max_age_hours:
+            return None
+    return doc
 
 
 async def resolve_analysis(
@@ -94,6 +170,12 @@ async def resolve_analysis(
     module. Naming one is an explicit change of subject and must beat the
     ambient panel; not naming one means "the thing I'm looking at", which is
     what the context_ref is.
+
+    An explicit context_ref is honoured at any age — the client is pointing at
+    a specific analysis and is entitled to an answer about it. The unbounded
+    fallback below is the one that needed a limit: nobody chose that scan, it
+    is simply the newest one in the database, and past a week that is not
+    "what the user is looking at" by any reading.
     """
     doc = None
     if context_ref:
@@ -120,4 +202,7 @@ async def resolve_analysis(
 
     if module is None:
         return None, None
-    return await latest_analysis(module), module
+    return (
+        await latest_analysis(module, max_age_hours=_IGNORE_AFTER_HOURS),
+        module,
+    )

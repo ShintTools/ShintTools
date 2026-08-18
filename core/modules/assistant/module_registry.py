@@ -84,10 +84,16 @@ MODULES: tuple[ModuleInfo, ...] = (
             "convention"
         ),
         report_types=("asset_naming",),
+        # No bare "naming": it is a word that belongs to the SUBJECT of most
+        # naming questions, not a request for the module's scan totals. With it
+        # in the list, "what naming convention should I use for textures?" and
+        # "why does the naming rule NMU001 exist?" both resolved the module,
+        # got rewritten to summarize_module, and came back with an identical
+        # findings count — the same answer to every question that used the
+        # word. Every phrase below names the module or the practice outright.
         aliases=(
             "asset naming", "naming bot", "nomenclatura", "naming convention",
             "convencion de nombres", "convención de nombres", "asset_naming",
-            "naming",
         ),
     ),
     # [LOD-STRIP-BEGIN]
@@ -99,9 +105,13 @@ MODULES: tuple[ModuleInfo, ...] = (
             "budgets, screen sizes, VRAM cost and Nanite readiness"
         ),
         report_types=("lod_audit",),
+        # No bare "lod", for the reason given on asset_naming above: "does this
+        # mesh need a lod?" is a question, not a request for scan totals.
+        # "lods" (plural) stays — it reads as the project's LOD setup as a
+        # whole, which is what the module reports on.
         aliases=(
             "lod auditor", "lod audit", "auditor de lod", "auditoria de lod",
-            "auditoría de lod", "lod_audit", "lods", "lod",
+            "auditoría de lod", "lod_audit", "lods",
         ),
         catalog=("lod_auditor.rule_metadata", "LOD_RULE_NAMES"),
     ),
