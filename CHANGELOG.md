@@ -5,7 +5,7 @@ follows [Keep a Changelog](https://keepachangelog.com/); versions match
 `core/api/version.py::CORE_VERSION`, bumped in lockstep with the `v*.*.*`
 tag that publishes the image.
 
-## [Unreleased]
+## [2.17.8] — 2026-08-19
 
 ### Fixed
 
