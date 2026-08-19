@@ -4,6 +4,7 @@
 # and 501 milestone markers on the not-yet-shipped engines. The prediction
 # engine itself is unit-tested in core/modules/predictive/tests/.
 
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
@@ -169,6 +170,68 @@ class TestAnalyze:
         titles = [i["title"] for i in resp.json()["top_issues"]]
         assert titles.index("/Game/T_Huge_Clean") < titles.index(
             "Source/Enemy.cpp:10"
+        )
+
+    @pytest.mark.anyio
+    async def test_analyze_does_not_block_the_event_loop(
+        self, async_client, monkeypatch
+    ):
+        """A large analyze is synchronous CPU work — it must run in a worker
+        thread (asyncio.to_thread), not inline in the async handler, or every
+        other in-flight request (starting with /health) stalls behind it.
+
+        Regression for the measured bug: a 20k-asset one-shot analyze on a
+        live Core spiked /health latency from ~3 ms to 1.6+ s because the
+        route awaited analyze_oneshot() directly on the event loop.
+        """
+        import time
+
+        from predictive.predictive_orchestrator import (
+            analyze_oneshot as _real_analyze_oneshot,
+        )
+
+        _patch_tier(monkeypatch, "studio")
+
+        window: dict[str, float] = {}
+
+        def _slow_analyze_oneshot(request):
+            window["start"] = time.perf_counter()
+            time.sleep(0.3)  # simulates a large project's CPU-bound cost
+            window["end"] = time.perf_counter()
+            return _real_analyze_oneshot(request)
+
+        monkeypatch.setattr(
+            "predictive.predictive_orchestrator.analyze_oneshot",
+            _slow_analyze_oneshot,
+        )
+
+        tick_times: list[float] = []
+
+        async def _tick_counter():
+            for _ in range(20):
+                await asyncio.sleep(0.02)
+                tick_times.append(time.perf_counter())
+
+        analyze_task = asyncio.ensure_future(
+            async_client.post("/predict/analyze", json=_ONESHOT)
+        )
+        tick_task = asyncio.ensure_future(_tick_counter())
+        resp = await analyze_task
+        await tick_task
+
+        assert resp.status_code == 200
+        assert "start" in window and "end" in window
+        # If analyze ran inline on the event loop, no tick could land while
+        # the 0.3 s blocking sleep was in flight — they would all queue up
+        # and fire back-to-back only after it released the loop. Offloaded
+        # to a worker thread (the fix), several ticks land strictly inside
+        # that window because the loop stays free to run them.
+        ticks_during_block = [
+            t for t in tick_times if window["start"] < t < window["end"]
+        ]
+        assert len(ticks_during_block) >= 5, (
+            f"only {len(ticks_during_block)} ticks ran while analyze was "
+            "blocking — the event loop looks stalled"
         )
 
     @pytest.mark.anyio

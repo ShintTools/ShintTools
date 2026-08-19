@@ -12,6 +12,7 @@
 # milestone that delivers them, so clients can integration-test the gate and
 # the contract shape before the engine lands.
 
+import asyncio
 import logging
 import sys
 from pathlib import Path
@@ -114,6 +115,14 @@ async def predict_analyze(payload: AnalyzeRequest):
     One-shot mode: inline sections — small projects, curl demos, tests.
     Either way the finished report is cached so /predict/simulate can
     replay selections against it (M4).
+
+    Analysis itself runs in a worker thread: a large project (tens of
+    thousands of assets/issues) is pure synchronous CPU work — inline in
+    this async handler it stalls the event loop for seconds, so /health
+    and every other in-flight request queue up behind it (measured: p95
+    /health latency during a 20k-asset analyze jumped from ~3 ms to over
+    1.6 s). Same pattern as the LLM enrichment in lod_audit.py and
+    explain_finding.py.
     """
     await enforce_studio(payload.api_key, "/predict/analyze", _FEATURE)
     from predictive import session_store
@@ -127,9 +136,9 @@ async def predict_analyze(payload: AnalyzeRequest):
                 detail={"error": "unknown or expired session",
                         "session_id": payload.session_id},
             )
-        report = analyze_session(session)
+        report = await asyncio.to_thread(analyze_session, session)
     else:
-        report = analyze_oneshot(payload)
+        report = await asyncio.to_thread(analyze_oneshot, payload)
 
     await session_store.save_report(report.report_id, report.model_dump())
     return report
