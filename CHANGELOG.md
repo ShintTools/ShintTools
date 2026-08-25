@@ -5,6 +5,21 @@ follows [Keep a Changelog](https://keepachangelog.com/); versions match
 `core/api/version.py::CORE_VERSION`, bumped in lockstep with the `v*.*.*`
 tag that publishes the image.
 
+## [2.18.0] — 2026-08-25
+
+### Security
+
+- **Origin check extended to `POST /assets/unity/scan`**, closing the last
+  endpoint left over from the 2.17.9 audit. It has the same shape as
+  `/assets/scan`: `api_key` is optional (the Unity plugin scans on Free with
+  none) and it persists an `analysis_id` server-side, so a forged
+  cross-origin request could write scan results into the Core. Now behind
+  the same `enforce_same_origin` gate. `POST /validate/unity/scan` was
+  checked and deliberately left alone — it is pure analysis with no state
+  mutation, and CORS already stops a browser from reading its response.
+  Regression tests: `TestCrossOriginGate` in
+  `core/tests/test_unity_asset_scan.py`.
+
 ## [2.17.9] — 2026-08-25
 
 ### Security
