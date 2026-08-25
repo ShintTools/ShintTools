@@ -1,7 +1,10 @@
 # core/modules/predictive/tests/test_platform_profiles.py
 
+import pytest
+
 from predictive.cost_model.platform_profiles import (
     DEFAULT_PROFILE,
+    UnknownPlatformProfileError,
     available_platform_profiles,
     load_platform_profile,
 )
@@ -29,8 +32,18 @@ def test_default_profile_is_calibrated_baseline():
     assert p.hw_scale_factor == 1.0
 
 
-def test_unknown_profile_falls_back_to_default():
-    assert load_platform_profile("does_not_exist").profile == DEFAULT_PROFILE
+def test_unknown_profile_is_rejected():
+    # Was: silently fell back to the default profile. That let a client
+    # probe for arbitrary `.yaml` files on disk (path traversal via `name`)
+    # and, if one happened to match the PlatformProfile schema, get its
+    # contents echoed back through the API response. Now rejected outright.
+    with pytest.raises(UnknownPlatformProfileError):
+        load_platform_profile("does_not_exist")
+
+
+def test_path_traversal_profile_name_is_rejected():
+    with pytest.raises(UnknownPlatformProfileError):
+        load_platform_profile("../../../../etc/passwd")
 
 
 def test_uncalibrated_profiles_declare_it():

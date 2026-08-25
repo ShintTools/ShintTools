@@ -126,6 +126,7 @@ async def predict_analyze(payload: AnalyzeRequest):
     """
     await enforce_studio(payload.api_key, "/predict/analyze", _FEATURE)
     from predictive import session_store
+    from predictive.cost_model.platform_profiles import UnknownPlatformProfileError
     from predictive.predictive_orchestrator import analyze_oneshot, analyze_session
 
     if payload.session_id:
@@ -136,9 +137,27 @@ async def predict_analyze(payload: AnalyzeRequest):
                 detail={"error": "unknown or expired session",
                         "session_id": payload.session_id},
             )
-        report = await asyncio.to_thread(analyze_session, session)
+        analyze_fn, analyze_arg = analyze_session, session
     else:
-        report = await asyncio.to_thread(analyze_oneshot, payload)
+        analyze_fn, analyze_arg = analyze_oneshot, payload
+
+    # ``platform_profile`` is client-controlled (directly on AnalyzeRequest,
+    # or persisted earlier via /predict/session/start) — validated against
+    # the shipped allow-list inside load_platform_profile(). Reject
+    # explicitly instead of the old silent fall-back to the default profile
+    # (a path-traversal / arbitrary-file-read primitive — the loaded YAML's
+    # full contents used to be echoed back in the response's
+    # `platform_profile` field).
+    try:
+        report = await asyncio.to_thread(analyze_fn, analyze_arg)
+    except UnknownPlatformProfileError:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": f"Unknown platform profile: {payload.platform_profile!r}",
+                "valid_profiles": [p.profile for p in available_platform_profiles()],
+            },
+        )
 
     await session_store.save_report(report.report_id, report.model_dump())
     return report
@@ -157,6 +176,7 @@ async def predict_simulate(payload: SimulateRequest):
     """
     await enforce_studio(payload.api_key, "/predict/simulate", _FEATURE)
     from predictive import session_store
+    from predictive.cost_model.platform_profiles import UnknownPlatformProfileError
     from predictive.layers.layer5_simulator import simulate
 
     report = None
@@ -171,9 +191,20 @@ async def predict_simulate(payload: SimulateRequest):
                     "report_id": payload.report_id,
                 },
             )
-    return simulate(
-        report,
-        payload.selected_item_ids,
-        payload.cost_items,
-        payload.platform_profile,
-    )
+    # See /predict/analyze — platform_profile is client-controlled and
+    # validated against the shipped allow-list inside load_platform_profile().
+    try:
+        return simulate(
+            report,
+            payload.selected_item_ids,
+            payload.cost_items,
+            payload.platform_profile,
+        )
+    except UnknownPlatformProfileError:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": f"Unknown platform profile: {payload.platform_profile!r}",
+                "valid_profiles": [p.profile for p in available_platform_profiles()],
+            },
+        )

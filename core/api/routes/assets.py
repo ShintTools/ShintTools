@@ -16,7 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from api.database import analysis_results, resolve_tier
-from fastapi import APIRouter
+from api.middleware import enforce_same_origin
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger("shinttools.assets")
@@ -187,13 +188,20 @@ def _apply_naming_rule(
 
 
 @router.post("/assets/scan")
-async def scan_assets(payload: AssetScanRequest):
+async def scan_assets(payload: AssetScanRequest, request: Request):
     """Scan asset paths for naming violations (UE5 plugin, legacy contract).
 
     Includes engine auto-detection fallback: if all assets look like Unity
     (paths start with Assets/ or have Unity extensions) but engine was not
     set, it is corrected to 'unity' automatically with a server-side warning.
+
+    api_key is optional (Free tier scans with none) so this stays reachable
+    without a full auth requirement — but that means it must not be
+    reachable by a forged cross-origin browser request either (CSRF,
+    security audit 2026-08-25); enforce_same_origin closes that gap without
+    touching the tier semantics.
     """
+    enforce_same_origin(request)
     from modules.naming import run_all_naming_rules
 
     tier = await resolve_tier(payload.api_key)
@@ -250,8 +258,15 @@ async def scan_assets(payload: AssetScanRequest):
 
 
 @router.post("/assets/fix")
-async def fix_assets(payload: AssetFixRequest):
-    """Apply asset renaming corrections (UE5 plugin, legacy contract)."""
+async def fix_assets(payload: AssetFixRequest, request: Request):
+    """Apply asset renaming corrections (UE5 plugin, legacy contract).
+
+    No api_key field in this legacy contract at all — see scan_assets for
+    why enforce_same_origin is the appropriate gate here (CSRF, security
+    audit 2026-08-25) rather than introducing a new mandatory-key
+    requirement that would break the shipped plugin's existing calls.
+    """
+    enforce_same_origin(request)
     from modules.naming import apply_asset_rename
 
     renamed = 0

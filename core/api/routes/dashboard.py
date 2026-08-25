@@ -3,11 +3,18 @@
 # Web dashboard sync endpoint.
 # POST /dashboard/report  — receive a summary report from the plugin and
 #                           persist it so the web dashboard can display it.
+#
+# No api_key gate (this endpoint has no per-request tier check today, unlike
+# most of the surface) — kept that way to avoid a breaking-change surprise
+# for the shipped plugin. Still CSRF-forgeable from a browser without the
+# Origin check below (security audit 2026-08-25): CORS alone does not stop
+# a "simple" cross-origin POST from being sent and processed server-side.
 
 from datetime import datetime, timezone
 
 from api.database import analysis_results
-from fastapi import APIRouter
+from api.middleware import enforce_same_origin
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -35,12 +42,14 @@ class DashboardReportRequest(BaseModel):
 
 
 @router.post("/dashboard/report")
-async def post_dashboard_report(payload: DashboardReportRequest):
+async def post_dashboard_report(payload: DashboardReportRequest, request: Request):
     """
     Receive a summary report from the UE5/Unity plugin and persist it to
     MongoDB so the web dashboard can display history, trends, and per-project
     analytics.
     """
+    enforce_same_origin(request)
+
     doc: dict = {
         "project_name": payload.project_name,
         "engine": payload.engine,
