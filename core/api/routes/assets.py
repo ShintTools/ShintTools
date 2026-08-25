@@ -313,7 +313,7 @@ async def _persist_unity_scan(findings: list[dict]) -> str:
 
 
 @router.post("/assets/unity/scan")
-async def unity_asset_scan(payload: UnityAssetScanRequest):
+async def unity_asset_scan(payload: UnityAssetScanRequest, request: Request):
     """Scan Unity assets with the new Asset Tool contract (PDF spec).
 
     engine is always 'unity' — no default fallback bug possible.
@@ -338,7 +338,11 @@ async def unity_asset_scan(payload: UnityAssetScanRequest):
     Also returns analysis_id (top level) — the assistant's context_ref for
     "explain this finding" follow-ups, same contract as /assets/scan and
     every Code Validator endpoint.
+
+    api_key is optional here too (the Unity plugin scans on Free with none),
+    so the same CSRF gate as /assets/scan applies — see enforce_same_origin.
     """
+    enforce_same_origin(request)
     from modules.naming import run_all_naming_rules
 
     t0 = time.perf_counter()

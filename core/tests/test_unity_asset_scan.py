@@ -8,6 +8,7 @@
 #   TestLayer3GenericRules   — LLM layer via mocked check_custom_rules
 #   TestTierGating           — free tier only gets layer 1
 #   TestApplyNamingRuleUnit  — unit tests for the _apply_naming_rule helper
+#   TestCrossOriginGate      — CSRF gate (security audit 2026-08-25)
 #
 # resolve_tier is monkeypatched to avoid hitting MongoDB.
 # check_custom_rules is monkeypatched to avoid hitting the LLM.
@@ -598,3 +599,34 @@ class TestApplyNamingRuleUnit:
         )
         assert result["genericRule"] == -1
         assert result["namingRule"] == 2
+
+
+# ── CSRF gate ─────────────────────────────────────────────────────────────
+
+
+class TestCrossOriginGate:
+    """api_key is optional here (Free scans with none), so the Origin check
+    is what keeps a forged cross-origin browser request out. Same gate as
+    /assets/scan and /assets/fix — security audit 2026-08-25."""
+
+    @pytest.mark.anyio
+    async def test_rejects_mismatched_origin(self, async_client):
+        payload = _scan_payload(
+            [{"path": "Assets/Textures/HeroDiffuse.png", "type": "Texture2D"}]
+        )
+        resp = await async_client.post(
+            "/assets/unity/scan",
+            json=payload,
+            headers={"Origin": "https://attacker.example.com"},
+        )
+        assert resp.status_code == 403
+
+    @pytest.mark.anyio
+    async def test_allows_request_without_origin(self, async_client):
+        """The real Unity plugin is a native HTTP client — it never sends an
+        Origin header, so the gate must not touch it."""
+        payload = _scan_payload(
+            [{"path": "Assets/Textures/HeroDiffuse.png", "type": "Texture2D"}]
+        )
+        resp = await async_client.post("/assets/unity/scan", json=payload)
+        assert resp.status_code == 200
