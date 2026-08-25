@@ -79,3 +79,39 @@ async def enforce_studio(
             detail["message"] = hint
         raise HTTPException(status_code=403, detail=detail)
     return tier
+
+
+async def enforce_authenticated(
+    api_key: str,
+    route_label: str,
+    feature_name: str = "This endpoint",
+    resolver=None,
+) -> str:
+    """Auth-only gate: requires a license key that actually resolves, but
+    imposes no minimum tier (unlike :func:`enforce_studio`).
+
+    Same shape and same 401/403-with-reason UX as ``enforce_studio`` —
+    reuses :func:`resolve_tier_detailed` rather than inventing a separate
+    credential. For endpoints that are not feature-gated by subscription
+    plan (every tier is entitled to use them) but still must not be
+    reachable by a caller with no license key at all — e.g. ``POST
+    /config``, which writes to disk and was previously reachable with zero
+    authentication (CWE-306 / CSRF, security audit 2026-08-25).
+
+    ``resolver`` mirrors ``enforce_studio``'s test-monkeypatch seam.
+    """
+    tier, reason = await (resolver or resolve_tier_detailed)(api_key)
+    logger.info("%s: tier=%s reason=%s", route_label, tier, reason or "-")
+    if reason:
+        logger.info(
+            "%s: denied — reason=%s (no resolvable license key)",
+            route_label,
+            reason,
+        )
+        detail = {
+            "error": f"{feature_name} requires a valid license key.",
+            "reason": reason,
+            "message": REASON_MESSAGES.get(reason, ""),
+        }
+        raise HTTPException(status_code=401, detail=detail)
+    return tier

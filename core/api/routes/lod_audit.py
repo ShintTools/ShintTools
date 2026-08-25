@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from api.database import analysis_results, resolve_tier_detailed
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger("shinttools.lod_audit")
@@ -496,14 +496,27 @@ async def lod_audit(payload: LodAuditRequest):
     (default | mobile).
     """
     from lod_auditor import audit_assets
-    from lod_auditor.config import load_profile
+    from lod_auditor.config import UnknownProfileError, available_profiles, load_profile
 
     t0 = time.perf_counter()
     await _enforce_studio(payload.api_key, "/assets/lod/audit")
 
     # Pre-warm the chosen threshold profile so every rule reads the same YAML.
     # load_profile is cached, so the cost is one yaml.safe_load per process.
-    load_profile(payload.profile)
+    # `profile` is client-controlled — validated against the allow-list
+    # inside load_profile(); reject explicitly instead of silently falling
+    # back (see UnknownProfileError docstring — this was a path-traversal /
+    # file-existence oracle).
+    try:
+        load_profile(payload.profile)
+    except UnknownProfileError:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": f"Unknown LOD profile: {payload.profile!r}",
+                "valid_profiles": available_profiles(),
+            },
+        )
 
     engine = _normalize_engine(payload.engine)
     assets_dicts = [_to_audit_dict(f) for f in payload.assets if f.asset_path]
@@ -611,13 +624,22 @@ async def lod_report(payload: LodReportRequest):
     the top N offenders ranked by VRAM saving. Studio-tier only.
     """
     from lod_auditor import audit_assets
-    from lod_auditor.config import load_profile
+    from lod_auditor.config import UnknownProfileError, available_profiles, load_profile
     from lod_auditor.lod_report import build_folder_summary, top_offenders
 
     t0 = time.perf_counter()
     await _enforce_studio(payload.api_key, "/assets/lod/report")
 
-    load_profile(payload.profile)
+    try:
+        load_profile(payload.profile)
+    except UnknownProfileError:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": f"Unknown LOD profile: {payload.profile!r}",
+                "valid_profiles": available_profiles(),
+            },
+        )
     engine = _normalize_engine(payload.engine)
     assets_dicts = [_to_audit_dict(f) for f in payload.assets if f.asset_path]
     logger.info(

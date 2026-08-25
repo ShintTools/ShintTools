@@ -20,6 +20,20 @@ _CONFIG_DIR = Path(__file__).parent / "config"
 DEFAULT_PROFILE = "desktop_60"
 
 
+class UnknownPlatformProfileError(ValueError):
+    """Raised when a requested platform profile name isn't shipped.
+
+    ``name`` reaches here straight from client-controlled input
+    (``AnalyzeRequest.platform_profile`` / ``SimulateRequest.platform_profile``)
+    — see api/routes/predictive.py. Rejecting explicitly (rather than the old
+    silent fall-back to the default profile) closes a path-traversal / file
+    read primitive: the previous implementation parsed whatever ``.yaml`` file
+    the traversed path resolved to and — if it happened to match the
+    PlatformProfile schema — reflected its full contents back to the caller
+    in the PredictiveReport response.
+    """
+
+
 class PlatformProfile(BaseModel):
     """Frame/memory/build budgets for one target platform."""
 
@@ -52,19 +66,36 @@ class PlatformProfile(BaseModel):
         return not self.reference_hw.startswith("Uncalibrated")
 
 
+def _available_profile_names() -> list[str]:
+    """Filenames only — never parses YAML — so :func:`load_platform_profile`
+    can safely call this on every invocation to validate its ``name``
+    argument without recursing into itself (``available_platform_profiles``
+    below DOES parse, and is built on top of ``load_platform_profile``)."""
+    return sorted(
+        p.stem.removeprefix("platform_") for p in _CONFIG_DIR.glob("platform_*.yaml")
+    )
+
+
 @lru_cache(maxsize=16)
 def load_platform_profile(name: str = DEFAULT_PROFILE) -> PlatformProfile:
-    """Load and cache ``platform_{name}.yaml``; falls back to the default."""
+    """Load and cache ``platform_{name}.yaml``.
+
+    *name* MUST be one of :func:`_available_profile_names` — validated
+    against that allow-list before it ever touches a filesystem path, so a
+    crafted name (e.g. containing ``../``) can never resolve outside this
+    directory. Raises :class:`UnknownPlatformProfileError` (a 400 at the API
+    layer) instead of silently substituting the default profile.
+    """
+    if name not in _available_profile_names():
+        raise UnknownPlatformProfileError(
+            f"Unknown platform profile: {name!r}. "
+            f"Valid profiles: {_available_profile_names()}"
+        )
     path = _CONFIG_DIR / f"platform_{name}.yaml"
-    if not path.exists():
-        path = _CONFIG_DIR / f"platform_{DEFAULT_PROFILE}.yaml"
     with path.open(encoding="utf-8") as f:
         return PlatformProfile(**(yaml.safe_load(f) or {}))
 
 
 def available_platform_profiles() -> list[PlatformProfile]:
     """Every shipped profile, sorted by name — the GET /predict/profiles body."""
-    return [
-        load_platform_profile(p.stem.removeprefix("platform_"))
-        for p in sorted(_CONFIG_DIR.glob("platform_*.yaml"))
-    ]
+    return [load_platform_profile(n) for n in _available_profile_names()]
