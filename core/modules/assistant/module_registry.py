@@ -69,6 +69,7 @@ MODULES: tuple[ModuleInfo, ...] = (
             "code_validator_project",
             "code_validator_blueprints",
             "code_validator_unity_graphs",
+            "code_validator_unity",
         ),
         aliases=(
             "code validator", "validador de codigo", "validador de código",
