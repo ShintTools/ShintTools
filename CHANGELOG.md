@@ -5,6 +5,24 @@ follows [Keep a Changelog](https://keepachangelog.com/); versions match
 `core/api/version.py::CORE_VERSION`, bumped in lockstep with the `v*.*.*`
 tag that publishes the image.
 
+## [2.18.1] — 2026-08-26
+
+### Fixed
+
+- **`POST /validate/unity/scan` never persisted a result or returned
+  `analysis_id`** — the one sibling of `/validate/code`, `/validate/project`,
+  `/validate/blueprints` and `/assets/unity/scan` that skipped this step.
+  The Unity Code Validator's Scripts tab hits this endpoint, so
+  `Settings.ANALYSIS_ID` stayed null client-side after every scan and the
+  assistant's "explain this finding" could never resolve a Unity C#
+  finding via `context_ref` — it always answered "I need to know which
+  finding you mean," regardless of what the client sent. Now persists to
+  `analysis_results` (mirroring `_persist_unity_scan` in `assets.py`),
+  mirrors `path` onto `asset_path` on each issue for the selector, and
+  registers `code_validator_unity` in the assistant's module registry.
+  Verified end-to-end against a live Mongo: scan → persisted doc →
+  `/assistant/message` resolves the finding and replies.
+
 ## [2.18.0] — 2026-08-25
 
 ### Security

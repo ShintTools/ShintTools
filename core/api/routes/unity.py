@@ -15,9 +15,11 @@
 
 import sys
 import time
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
-from api.database import resolve_tier
+from api.database import analysis_results, resolve_tier
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
@@ -122,6 +124,39 @@ def _scan_file(
     return result
 
 
+async def _persist_unity_code_scan(issues: list[dict]) -> str:
+    """Persist a Unity C# scan and return its analysis_id.
+
+    Mirrors _persist_result in validate.py and _persist_unity_scan in
+    assets.py — analysis_id doubles as the assistant's context_ref, so it
+    is generated and returned even when the insert fails (then simply
+    unresolvable, which the assistant reports honestly). Before this,
+    /validate/unity/scan never persisted a result at all, so the Unity
+    Code Validator's "Explain" action could never resolve a finding
+    server-side — the client had nothing usable to hand back as
+    context_ref, and Settings.ANALYSIS_ID stayed null forever.
+
+    Issues here key the script path as "path" (this endpoint's own
+    contract), but explain_finding's lookup reads "asset_path"/"file" —
+    mirrored onto each entry so the same resolution logic works
+    regardless of which engine produced the analysis.
+    """
+    analysis_id = f"an-{uuid.uuid4().hex[:12]}"
+    try:
+        doc = {
+            "analysis_id": analysis_id,
+            "report_type": "code_validator_unity",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "issues": [
+                {**i, "asset_path": i.get("path", "")} for i in issues
+            ],
+        }
+        await analysis_results.insert_one(doc)
+    except Exception:
+        pass
+    return analysis_id
+
+
 # ── Endpoint ───────────────────────────────────────────────────────────────────
 
 
@@ -146,6 +181,11 @@ async def unity_scan(payload: UnityScanRequest):
         message       — human-readable description
         rule_name     — short rule title
         is_auto_fixable — whether a one-click fix is available
+
+    Also returns:
+        analysis_id — persisted in analysis_results; the assistant's
+                      "explain this finding" resolves against it via
+                      context_ref (see _persist_unity_code_scan).
     """
     t0 = time.perf_counter()
 
@@ -183,8 +223,11 @@ async def unity_scan(payload: UnityScanRequest):
         except ImportError:
             pass
 
+    analysis_id = await _persist_unity_code_scan(all_issues)
+
     return {
         "error": "",
         "time": round(time.perf_counter() - t0, 4),
         "files": all_issues,
+        "analysis_id": analysis_id,
     }
